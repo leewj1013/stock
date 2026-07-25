@@ -48,6 +48,8 @@ if ($mode -eq "daily") {
     RunStep "daily_summary" "stock_alarm.daily_summary"
     RunStep "daily_check" "stock_alarm.daily_check"
     RunStep "dashboard" "stock_alarm.dashboard"
+}
+if ($mode -eq "daily" -or $mode -eq "issue_alert") {
     RunStep "issue_alert" "stock_alarm.issue_alert"
 }
 exit 0

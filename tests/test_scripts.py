@@ -15,6 +15,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("DONE $name", script)
         self.assertIn('$mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }', script)
         self.assertIn('if ($mode -eq "daily" -or $mode -eq "intraday")', script)
+        self.assertIn('if ($mode -eq "daily" -or $mode -eq "issue_alert")', script)
         self.assertIn("stock_alarm.failure_alert", script)
 
     def test_register_task_adds_intraday_checks(self):
