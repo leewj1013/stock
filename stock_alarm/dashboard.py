@@ -138,9 +138,26 @@ def settings_rows() -> list[dict[str, str]]:
 
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
-    body = "".join("<tr>" + "".join(f"<td>{e(row.get(column, ''))}</td>" for column in columns) + "</tr>" for row in rows)
+    body = "".join("<tr>" + "".join(cell(row.get(column, "")) for column in columns) + "</tr>" for row in rows)
     head = "".join(f"<th>{e(column)}</th>" for column in columns)
     return f"<section><h2>{e(title)}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
+
+
+def cell(value: object) -> str:
+    klass = status_class(str(value or ""))
+    attr = f" class='{klass}'" if klass else ""
+    return f"<td{attr}>{e(value)}</td>"
+
+
+def status_class(value: str) -> str:
+    lowered = value.lower()
+    if lowered in {"ok", "none"} or " ok" in lowered:
+        return "ok"
+    if lowered in {"old"}:
+        return "warn"
+    if any(word in lowered for word in ("missing", "error", "found", "not-ok")):
+        return "bad"
+    return ""
 
 
 def render() -> str:
@@ -160,6 +177,7 @@ h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}}
+td.ok{{color:#147a2e;font-weight:600}} td.warn{{color:#9a6700;font-weight:600}} td.bad{{color:#b42318;font-weight:600}}
 li{{margin:4px 0}}
 </style>
 </head>
