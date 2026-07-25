@@ -227,6 +227,11 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Recommendations with sell alerts", html)
         self.assertIn("Sell alert summary", html)
         self.assertIn("Why recommended", html)
+        self.assertLess(html.index("Issues"), html.index("Today run details"))
+        self.assertLess(html.index("Today run details"), html.index("Why recommended"))
+        self.assertLess(html.index("Why recommended"), html.index("Sell alert summary"))
+        self.assertLess(html.index("Sell alert summary"), html.index("Recent sell alerts"))
+        self.assertLess(html.index("Recent sell alerts"), html.index("Recommendation stats"))
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")
     def test_write(self, _render):
