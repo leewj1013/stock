@@ -16,6 +16,19 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("<table>", html)
         self.assertIn("<td>1</td>", html)
 
+    @patch("stock_alarm.dashboard.latest_error_summary", return_value="none")
+    @patch("stock_alarm.dashboard.position_count", return_value=1)
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_metric_cards_include_latest_error(self, tail_csv, _positions, _error):
+        tail_csv.side_effect = [
+            [{"metric": "rows", "value": "3"}],
+            [{"created_at": "2026-07-25T09:00:00", "channel": "telegram"}],
+        ]
+
+        from stock_alarm.dashboard import metric_cards
+
+        self.assertIn(("latest error", "none"), metric_cards())
+
     @patch("stock_alarm.dashboard.tail_csv")
     def test_performance_summary_rows(self, tail_csv):
         tail_csv.return_value = [

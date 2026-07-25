@@ -9,7 +9,7 @@ from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines
 from .health import lines as health_lines
 from .positions_check import position_count
-from .report import tail_csv, tail_text
+from .report import latest_error_summary, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
@@ -21,6 +21,7 @@ def e(value: object) -> str:
 
 def metric_cards() -> list[tuple[str, str]]:
     summary = {row.get("metric", ""): row.get("value", "") for row in tail_csv("logs/recommendation_performance_summary.csv", 50)}
+    deliveries = tail_csv("logs/deliveries.csv", 50)
     return [
         ("positions", str(position_count())),
         ("performance rows", summary.get("rows", "0")),
@@ -28,6 +29,7 @@ def metric_cards() -> list[tuple[str, str]]:
         ("avg 1d return", value_or_dash(summary.get("avg_1d_return_pct"), "%")),
         ("win rate 1d", value_or_dash(summary.get("win_rate_1d_pct"), "%")),
         ("suggested min score", summary.get("suggested_min_score", "?")),
+        ("latest error", latest_error_summary(deliveries)),
     ]
 
 
