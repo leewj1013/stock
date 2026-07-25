@@ -387,9 +387,23 @@ def format_message(picks: list[Pick]) -> str:
             lines.append(f"- 공시 보너스: +{disclosure:.1f}점")
         if penalty:
             lines.append(f"- 성과 감점: -{penalty:.1f}점")
+        lines.append(f"- 사유 요약: {reason_summary(pick.volume_ratio, news, disclosure, penalty)}")
         lines.append(f"- 사유: {pick.reason}")
     lines.append("※ 조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
+
+
+def reason_summary(volume_ratio: float, news: float, disclosure: float, penalty: float) -> str:
+    parts = []
+    if volume_ratio >= 2:
+        parts.append("거래량 급증")
+    if news > 0:
+        parts.append("뉴스 보너스")
+    if disclosure > 0:
+        parts.append("공시 보너스")
+    if penalty:
+        parts.append("성과 감점")
+    return " + ".join(parts) or "기본 조건 충족"
 
 
 def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None:

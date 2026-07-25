@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.app import Pick, format_message
+from stock_alarm.app import Pick, format_message, reason_summary
 
 
 class FormatMessageTest(unittest.TestCase):
@@ -23,6 +23,11 @@ class FormatMessageTest(unittest.TestCase):
         self.assertIn("005930", message)
         self.assertIn("76.5", message)
         self.assertIn("2.3", message)
+        self.assertIn("사유 요약: 거래량 급증", message)
+
+    def test_reason_summary(self):
+        self.assertEqual("기본 조건 충족", reason_summary(1.5, 0, 0, 0))
+        self.assertEqual("거래량 급증 + 뉴스 보너스 + 공시 보너스 + 성과 감점", reason_summary(2.1, 1, 1, 1))
 
     @patch("stock_alarm.app.performance_penalty", return_value=4)
     def test_includes_performance_penalty_when_present(self, _penalty):
