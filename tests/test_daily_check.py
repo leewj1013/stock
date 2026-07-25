@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import date, datetime
 from io import StringIO
 from unittest.mock import patch
 
@@ -55,8 +55,11 @@ class DailyCheckTest(unittest.TestCase):
 
     def test_task_error_status(self):
         path = self.write_named_log(["line"], [["boom"]])
+        timestamp = datetime(2026, 7, 25).timestamp()
+        os.utime(path, (timestamp, timestamp))
 
-        self.assertEqual("task_error=found", task_error_status(path))
+        self.assertEqual("task_error=found", task_error_status(path, date(2026, 7, 25)))
+        self.assertEqual("task_error=old", task_error_status(path, date(2026, 7, 26)))
         self.assertEqual("task_error=none", task_error_status("does-not-exist.log"))
 
     def test_run_log_statuses(self):

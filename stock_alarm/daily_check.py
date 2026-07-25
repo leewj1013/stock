@@ -30,11 +30,14 @@ def status(today: date | None = None, path: str = "logs/deliveries.csv") -> str:
 
 def lines(today: date | None = None, path: str = "logs/deliveries.csv") -> list[str]:
     deliveries = tail_csv(path, 200)
-    return [status(today, path), *run_log_statuses(today), task_error_status(), f"latest_error={latest_error_summary(deliveries)}"]
+    return [status(today, path), *run_log_statuses(today), task_error_status(today=today), f"latest_error={latest_error_summary(deliveries)}"]
 
 
-def task_error_status(path: str = "logs/task.err.log") -> str:
-    return f"task_error={'found' if tail_text(path, 1) else 'none'}"
+def task_error_status(path: str = "logs/task.err.log", today: date | None = None) -> str:
+    if not tail_text(path, 1):
+        return "task_error=none"
+    modified = date.fromtimestamp(os.path.getmtime(path))
+    return f"task_error={'found' if modified == (today or date.today()) else 'old'}"
 
 
 def run_log_statuses(today: date | None = None, paths: dict[str, str] | None = None) -> list[str]:
