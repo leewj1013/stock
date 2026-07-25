@@ -54,6 +54,7 @@ scheduled tasks: stockAlarmOpen, stockAlarmIntraday1030, stockAlarmIntraday1330,
 telegram: ready
 dart: ready, lookup on, score weight 1
 task_error: none
+dashboard_ready: ok
 dashboard: reports/dashboard.html generated
 ```
 
@@ -87,11 +88,10 @@ DART_SCORE_WEIGHT=1
 
 Keep one combined dashboard at `reports/dashboard.html`.
 
-- Top: today run status, delivery status, latest error, current settings
+- Top: issues, today run details, recommendation reasons, sell alert summary, recent sell alerts
 - Middle: recommendation statistics, best/worst recommendations, sell-alert linked picks
 - Bottom: latest recommendations, positions, raw logs
-- Optional next card: "why recommended" breakdown with price, volume, news bonus, DART bonus, and performance penalty
 
 ## Next best step
 
-Add the "why recommended" card to the existing dashboard instead of making a second dashboard page.
+Watch the next scheduled run, then check `python -m stock_alarm.daily_check` and `reports/dashboard.html`.
