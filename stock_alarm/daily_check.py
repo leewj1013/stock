@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from datetime import date
 
+from .notifier import send_notification
 from .report import latest_error_summary, tail_csv
 
 
@@ -43,7 +45,10 @@ def run_log_statuses(today: date | None = None, paths: dict[str, str] | None = N
 
 def main() -> int:
     result = lines()
-    print("\n".join(result))
+    message = "\n".join(result)
+    print(message)
+    if os.environ.get("SEND_DAILY_CHECK_ALERT", "0") == "1":
+        send_notification(message)
     return 0 if result[0].startswith("daily ok:") else 1
 
 

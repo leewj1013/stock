@@ -2,9 +2,12 @@ import csv
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
+from io import StringIO
+from unittest.mock import patch
 
-from stock_alarm.daily_check import lines, run_log_statuses, status
+from stock_alarm.daily_check import lines, main, run_log_statuses, status
 
 
 class DailyCheckTest(unittest.TestCase):
@@ -67,6 +70,21 @@ class DailyCheckTest(unittest.TestCase):
         path = self.write_named_log(["pick_date"], [["2026-07-24"]])
 
         self.assertEqual(["recommendation_performance=ok"], run_log_statuses(date(2026, 7, 25), {"recommendation_performance": path}))
+
+    @patch.dict(os.environ, {"SEND_DAILY_CHECK_ALERT": "1"})
+    @patch("stock_alarm.daily_check.send_notification", create=True)
+    @patch("stock_alarm.daily_check.lines", return_value=["daily ok: telegram at now"])
+    def test_main_sends_when_enabled(self, _lines, send):
+        with redirect_stdout(StringIO()):
+            self.assertEqual(0, main())
+
+        send.assert_called_once()
+
+    @patch.dict(os.environ, {"SEND_DAILY_CHECK_ALERT": "0"})
+    @patch("stock_alarm.daily_check.lines", return_value=["daily ok: telegram at now"])
+    def test_main_does_not_send_by_default(self, _lines):
+        with redirect_stdout(StringIO()):
+            self.assertEqual(0, main())
 
 
 if __name__ == "__main__":

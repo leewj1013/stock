@@ -347,6 +347,7 @@ After 16:10, check today's delivery result:
 ```
 
 This reports today's delivery status, key run-log presence, and whether any logged error happened after the latest delivery.
+Set `SEND_DAILY_CHECK_ALERT=1` to send this check result through the configured notifier.
 
 ## Healthcheck
 
