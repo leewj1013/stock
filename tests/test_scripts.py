@@ -36,6 +36,8 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.health", script)
         self.assertIn("status_daily_task.ps1", script)
         self.assertIn("stock_alarm.daily_check", script)
+        self.assertIn("stock_alarm.dashboard", script)
+        self.assertIn("Start-Process", script)
 
 
 if __name__ == "__main__":

@@ -308,7 +308,7 @@ After reboot, double-click:
 start_stock_alarm.bat
 ```
 
-It re-registers scheduled tasks and runs health/status/daily checks.
+It re-registers scheduled tasks, runs health/status/daily checks, generates the dashboard, and opens it.
 
 Register open, intraday, and close tasks:
 

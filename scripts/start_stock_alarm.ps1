@@ -35,4 +35,10 @@ Write-Output "== daily check =="
 & $python -m stock_alarm.daily_check
 
 Write-Output ""
+Write-Output "== dashboard =="
+$dashboard = & $python -m stock_alarm.dashboard
+Write-Output $dashboard
+Start-Process -FilePath (Resolve-Path $dashboard)
+
+Write-Output ""
 Write-Output "stockAlarm startup check finished."
