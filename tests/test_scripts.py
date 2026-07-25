@@ -59,6 +59,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("STOCK_ALARM_SETENV_VALUE", script)
         self.assertIn("stock_alarm.app_setenv DART_API_KEY", script)
         self.assertIn("stock_alarm.app_setenv DART_LOOKUP 1", script)
+        self.assertIn("stock_alarm.app_setenv DART_SCORE_WEIGHT $weight", script)
         self.assertIn("stock_alarm.dart_reference 005930", script)
 
 

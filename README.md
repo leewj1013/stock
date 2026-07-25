@@ -113,7 +113,7 @@ Check OpenDART setup for one ticker:
 .\.venv\Scripts\python -m stock_alarm.dart_reference 005930
 ```
 
-Or double-click this after the key is issued:
+Or double-click this after the key is issued. It saves the key, turns on `DART_LOOKUP`, and asks for `DART_SCORE_WEIGHT` with default `1`:
 
 ```text
 set_dart_key.bat

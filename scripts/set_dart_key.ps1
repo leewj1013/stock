@@ -7,6 +7,10 @@ $key = Read-Host "OpenDART API key"
 if (-not $key) {
     throw "OpenDART API key is empty."
 }
+$weight = Read-Host "DART score weight (default 1)"
+if (-not $weight) {
+    $weight = "1"
+}
 
 if (Test-Path ".venv\Scripts\python.exe") {
     $python = ".venv\Scripts\python.exe"
@@ -25,4 +29,5 @@ $env:STOCK_ALARM_SETENV_VALUE = $key
 & $python -m stock_alarm.app_setenv DART_API_KEY
 Remove-Item Env:\STOCK_ALARM_SETENV_VALUE -ErrorAction SilentlyContinue
 & $python -m stock_alarm.app_setenv DART_LOOKUP 1
+& $python -m stock_alarm.app_setenv DART_SCORE_WEIGHT $weight
 & $python -m stock_alarm.dart_reference 005930
