@@ -90,6 +90,7 @@ DART_SCORE_WEIGHT=1
 Keep one combined dashboard at `reports/dashboard.html`.
 
 - Top: issues, today run details, recommendation reasons, sell alert summary, recent sell alerts
+- Recommendation shape: watch candidate, review needed, sell review
 - Middle: recommendation statistics, best/worst recommendations, sell-alert linked picks
 - Bottom: latest recommendations, positions, raw logs
 

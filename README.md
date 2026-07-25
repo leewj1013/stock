@@ -408,6 +408,12 @@ Open:
 reports/dashboard.html
 ```
 
+The dashboard keeps one combined view:
+
+- Recommendation shape: watch candidate, review needed, sell review
+- Why recommended: score, volume, news/disclosure bonus, performance penalty
+- Recommendation stats: best/worst picks and sell-alert-linked picks
+
 ## Cleanup logs
 
 Preview log cleanup:
