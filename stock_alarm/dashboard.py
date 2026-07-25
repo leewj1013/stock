@@ -23,8 +23,28 @@ def metric_cards() -> list[tuple[str, str]]:
         ("positions", str(position_count())),
         ("performance rows", summary.get("rows", "0")),
         ("completed 1d", summary.get("completed_1d", "0")),
+        ("avg 1d return", value_or_dash(summary.get("avg_1d_return_pct"), "%")),
+        ("win rate 1d", value_or_dash(summary.get("win_rate_1d_pct"), "%")),
         ("suggested min score", summary.get("suggested_min_score", "?")),
     ]
+
+
+def value_or_dash(value: str | None, suffix: str = "") -> str:
+    return f"{value}{suffix}" if value else "-"
+
+
+def performance_summary_rows() -> list[dict[str, str]]:
+    summary = {row.get("metric", ""): row.get("value", "") for row in tail_csv("logs/recommendation_performance_summary.csv", 50)}
+    labels = [
+        ("전체 1일 평균", "avg_1d_return_pct", "%"),
+        ("전체 1일 승률", "win_rate_1d_pct", "%"),
+        ("90점 이상 평균", "score_90_plus_avg_1d_return_pct", "%"),
+        ("70~89점 평균", "score_70_89_avg_1d_return_pct", "%"),
+        ("70점 미만 평균", "score_under_70_avg_1d_return_pct", "%"),
+        ("추천 점수 조정", "score_adjustment", ""),
+        ("추천 최소점수 제안", "suggested_min_score", ""),
+    ]
+    return [{"metric": label, "value": value_or_dash(summary.get(key), suffix)} for label, key, suffix in labels]
 
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
@@ -58,6 +78,7 @@ li{{margin:4px 0}}
 <div class="muted">generated {e(datetime.now().isoformat(timespec="seconds"))}</div>
 <div class="cards">{cards}</div>
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
+{table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "reason"])}
