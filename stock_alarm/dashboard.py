@@ -149,6 +149,12 @@ def cell(value: object) -> str:
     return f"<td{attr}>{e(value)}</td>"
 
 
+def card(label: str, value: str) -> str:
+    klass = status_class(value)
+    attr = f" class='{klass}'" if klass else ""
+    return f"<div class='card'><b>{e(label)}</b><span{attr}>{e(value)}</span></div>"
+
+
 def status_class(value: str) -> str:
     lowered = value.lower()
     if lowered in {"ok", "none"} or " ok" in lowered:
@@ -161,7 +167,7 @@ def status_class(value: str) -> str:
 
 
 def render() -> str:
-    cards = "".join(f"<div class='card'><b>{e(label)}</b><span>{e(value)}</span></div>" for label, value in metric_cards())
+    cards = "".join(card(label, value) for label, value in metric_cards())
     checks = "".join(f"<li>{e(line)}</li>" for line in daily_check_lines())
     task_log = "".join(f"<li>{e(line)}</li>" for line in tail_text("logs/task.out.log", 10))
     task_errors = tail_text("logs/task.err.log", 10) or ["none"]
@@ -177,7 +183,7 @@ h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}}
-td.ok{{color:#147a2e;font-weight:600}} td.warn{{color:#9a6700;font-weight:600}} td.bad{{color:#b42318;font-weight:600}}
+.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}}
 li{{margin:4px 0}}
 </style>
 </head>
