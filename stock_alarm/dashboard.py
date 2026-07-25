@@ -13,6 +13,92 @@ from .report import latest_error_summary, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
+LABELS = {
+    "stockAlarm Dashboard": "국내주식 알림 대시보드",
+    "generated": "생성 시각",
+    "positions": "보유 종목",
+    "today recommendations": "오늘 추천",
+    "today sell alerts": "오늘 매도 검토",
+    "today issues": "오늘 문제",
+    "performance rows": "성과 데이터",
+    "completed 1d": "1일 성과 완료",
+    "avg 1d return": "1일 평균 수익률",
+    "win rate 1d": "1일 승률",
+    "suggested min score": "추천 최소점수 제안",
+    "latest error": "최근 오류",
+    "today runs": "오늘 실행",
+    "Issues": "문제",
+    "Today run details": "오늘 실행 상세",
+    "Today recommendations": "오늘 추천 종목",
+    "Recommendation shape": "추천 형태",
+    "Score breakdown": "점수 구성",
+    "Why recommended": "추천 사유",
+    "Sell alert summary": "매도 검토 요약",
+    "Recent sell alerts": "최근 매도 검토",
+    "Recommendation stats": "추천 통계",
+    "Current settings": "현재 설정",
+    "Recent deliveries": "최근 발송",
+    "Top recommendation performance": "추천 성과 상위",
+    "Worst recommendation performance": "추천 성과 하위",
+    "Performance penalties": "성과 감점",
+    "Recommendations with sell alerts": "매도 검토 연결 추천",
+    "Recent recommendations": "최근 추천",
+    "Recommendation performance": "추천 성과",
+    "Positions": "보유 종목",
+    "Recent task log": "최근 작업 로그",
+    "Recent task errors": "최근 작업 오류",
+    "Daily check": "일일 점검",
+    "source": "출처",
+    "item": "항목",
+    "status": "상태",
+    "step": "단계",
+    "created_at": "생성시각",
+    "ticker": "종목코드",
+    "name": "종목명",
+    "close": "종가",
+    "score": "점수",
+    "reason": "사유",
+    "volume_score": "거래량 점수",
+    "trading_value_score": "거래대금 점수",
+    "trend_score": "추세 점수",
+    "type": "유형",
+    "when": "조건",
+    "action": "동작",
+    "total_score": "총점",
+    "volume": "거래량",
+    "trading_value": "거래대금",
+    "trend": "추세",
+    "news": "뉴스",
+    "disclosure": "공시",
+    "penalty": "감점",
+    "volume_ratio": "거래량 배율",
+    "trading_value_억": "거래대금(억)",
+    "news_score": "뉴스 점수",
+    "disclosure_score": "공시 점수",
+    "performance_penalty": "성과 감점",
+    "summary": "요약",
+    "count": "건수",
+    "return_pct": "수익률",
+    "metric": "지표",
+    "value": "값",
+    "setting": "설정",
+    "channel": "채널",
+    "picks": "추천수",
+    "avg_1d_return_pct": "1일 평균 수익률",
+    "win_rate_1d_pct": "1일 승률",
+    "entry_close": "진입 종가",
+    "return_1d_pct": "1일 수익률",
+    "sell_return_pct": "매도검토 수익률",
+    "sell_reason": "매도검토 사유",
+    "pick_date": "추천일",
+    "return_3d_pct": "3일 수익률",
+    "return_5d_pct": "5일 수익률",
+    "entry_price": "진입가",
+}
+
+
+def display_label(value: str) -> str:
+    return LABELS.get(value, value)
 
 
 def e(value: object) -> str:
@@ -164,9 +250,9 @@ def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
 
 def recommendation_shape_rows() -> list[dict[str, str]]:
     return [
-        {"type": "watch candidate", "when": "volume spike + above MA20 + enough trading value", "action": "send recommendation alert"},
-        {"type": "review needed", "when": "news/disclosure/history bonus or penalty exists", "action": "check dashboard reason"},
-        {"type": "sell review", "when": "loss, sharp drop, or profit giveback rule triggers", "action": "send sell-review alert"},
+        {"type": "관심 후보", "when": "거래량 급증 + 20일선 위 + 거래대금 충분", "action": "추천 알림 발송"},
+        {"type": "확인 필요", "when": "뉴스/공시/과거 성과 보너스 또는 감점 있음", "action": "대시보드 사유 확인"},
+        {"type": "매도 검토", "when": "손실, 급락, 수익 반납 조건 발생", "action": "매도 검토 알림 발송"},
     ]
 
 
@@ -272,8 +358,8 @@ def issue_rows() -> list[dict[str, str]]:
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     body = "".join("<tr>" + "".join(cell(row.get(column, "")) for column in columns) + "</tr>" for row in rows)
-    head = "".join(f"<th>{e(column)}</th>" for column in columns)
-    return f"<section><h2>{e(title)}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
+    head = "".join(f"<th>{e(display_label(column))}</th>" for column in columns)
+    return f"<section><h2>{e(display_label(title))}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
 
 
 def cell(value: object) -> str:
@@ -282,10 +368,10 @@ def cell(value: object) -> str:
     return f"<td{attr}>{e(value)}</td>"
 
 
-def card(label: str, value: str) -> str:
-    klass = card_class(label, value)
+def card(name: str, value: str) -> str:
+    klass = card_class(name, value)
     attr = f" class='{klass}'" if klass else ""
-    return f"<div class='card'><b>{e(label)}</b><span{attr}>{e(value)}</span></div>"
+    return f"<div class='card'><b>{e(display_label(name))}</b><span{attr}>{e(value)}</span></div>"
 
 
 def card_class(label: str, value: str) -> str:
@@ -317,7 +403,7 @@ def render() -> str:
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>stockAlarm Dashboard</title>
+<title>{e(display_label("stockAlarm Dashboard"))}</title>
 <style>
 body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7f9;color:#111}}
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
@@ -329,8 +415,8 @@ li{{margin:4px 0}}
 </style>
 </head>
 <body>
-<h1>stockAlarm Dashboard</h1>
-<div class="muted">generated {e(datetime.now().isoformat(timespec="seconds"))}</div>
+<h1>{e(display_label("stockAlarm Dashboard"))}</h1>
+<div class="muted">{e(display_label("generated"))} {e(datetime.now().isoformat(timespec="seconds"))}</div>
 <div class="cards">{cards}</div>
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
@@ -341,7 +427,7 @@ li{{margin:4px 0}}
 {table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
-<section><h2>Daily check</h2><ul>{checks}</ul></section>
+<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section>
 {table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
@@ -351,8 +437,8 @@ li{{margin:4px 0}}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
 {table("Positions", tail_csv("logs/positions_report.csv", 10), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
-<section><h2>Recent task log</h2><ul>{task_log}</ul></section>
-<section><h2>Recent task errors</h2><ul>{task_error_items}</ul></section>
+<section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
+<section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
 </body>
 </html>"""
 
