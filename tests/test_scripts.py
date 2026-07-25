@@ -33,6 +33,7 @@ class ScriptTest(unittest.TestCase):
 
         self.assertIn("NextRunTime", script)
         self.assertIn("next_run=", script)
+        self.assertIn("yyyy-MM-dd HH:mm:ss", script)
 
     def test_start_macro_registers_and_checks(self):
         with open("start_stock_alarm.bat", encoding="utf-8-sig") as file:

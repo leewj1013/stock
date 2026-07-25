@@ -19,5 +19,5 @@ foreach ($name in "stockAlarmOpen", "stockAlarmIntraday1030", "stockAlarmIntrada
 $rows | Format-Table -AutoSize
 $next = $rows | Where-Object { $_.NextRunTime -gt (Get-Date) } | Sort-Object NextRunTime | Select-Object -First 1
 if ($next) {
-    Write-Output "next_run=$($next.TaskName) at $($next.NextRunTime)"
+    Write-Output "next_run=$($next.TaskName) at $($next.NextRunTime.ToString('yyyy-MM-dd HH:mm:ss'))"
 }
