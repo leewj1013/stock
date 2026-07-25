@@ -9,6 +9,7 @@ $mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 $stdout = Join-Path $projectRoot "logs\task.out.log"
 $stderr = Join-Path $projectRoot "logs\task.err.log"
+"" | Set-Content -Path $stdout -Encoding utf8
 
 if (Test-Path ".venv\Scripts\python.exe") {
     $python = ".venv\Scripts\python.exe"
@@ -25,10 +26,10 @@ if (Test-Path ".venv\Scripts\python.exe") {
 
 function RunStep($name, $module) {
     "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
-    & $python -m $module 1>> $stdout 2>> $stderr
+    cmd.exe /d /c "`"$python`" -m $module 1>> `"$stdout`" 2>> `"$stderr`""
     if ($LASTEXITCODE -ne 0) {
         $code = $LASTEXITCODE
-        & $python -m stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
+        cmd.exe /d /c "`"$python`" -m stock_alarm.failure_alert $name $code 1>> `"$stdout`" 2>> `"$stderr`""
         exit $code
     }
     "[$(Get-Date -Format s)] DONE $name" | Out-File -FilePath $stdout -Append -Encoding utf8

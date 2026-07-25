@@ -17,6 +17,8 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('if ($mode -eq "daily" -or $mode -eq "intraday")', script)
         self.assertIn('if ($mode -eq "daily" -or $mode -eq "issue_alert")', script)
         self.assertIn("stock_alarm.failure_alert", script)
+        self.assertIn("cmd.exe /d /c", script)
+        self.assertIn("Set-Content -Path $stdout -Encoding utf8", script)
 
     def test_register_task_adds_intraday_checks(self):
         with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
