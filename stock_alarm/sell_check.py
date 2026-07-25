@@ -135,7 +135,7 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
         if not exists:
-            writer.writerow(["created_at", "ticker", "name", "entry_price", "close", "return_pct", "reason"])
+            writer.writerow(["created_at", "ticker", "name", "entry_price", "close", "return_pct", "summary", "reason"])
         for alert in alerts:
             writer.writerow(
                 [
@@ -145,6 +145,7 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
                     alert.entry_price,
                     alert.close,
                     f"{alert.return_pct:.2f}",
+                    alert_summary(alert),
                     alert.reason,
                 ]
             )

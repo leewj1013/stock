@@ -112,6 +112,15 @@ def sell_alerted_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
     return rows
 
 
+def sell_alert_summary_rows() -> list[dict[str, str]]:
+    counts: dict[str, int] = {}
+    for row in tail_csv("logs/sell_alerts.csv", 1000):
+        summary = row.get("summary") or row.get("reason", "")
+        if summary:
+            counts[summary] = counts.get(summary, 0) + 1
+    return [{"summary": summary, "count": str(count)} for summary, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)]
+
+
 def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
     seen = set()
     rows = []
@@ -273,10 +282,11 @@ li{{margin:4px 0}}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
+{table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
 {table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
-{table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "reason"])}
+{table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
 {table("Positions", tail_csv("logs/positions_report.csv", 10), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
 <section><h2>Recent task log</h2><ul>{task_log}</ul></section>
 <section><h2>Recent task errors</h2><ul>{task_error_items}</ul></section>

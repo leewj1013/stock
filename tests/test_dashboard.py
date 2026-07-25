@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -126,6 +126,19 @@ class DashboardTest(unittest.TestCase):
             rows[0],
         )
 
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_sell_alert_summary_rows(self, tail_csv):
+        tail_csv.return_value = [
+            {"summary": "손실 -6.0%", "reason": "old"},
+            {"summary": "손실 -6.0%", "reason": "old"},
+            {"summary": "", "reason": "20일선 이탈"},
+        ]
+
+        self.assertEqual(
+            [{"summary": "손실 -6.0%", "count": "2"}, {"summary": "20일선 이탈", "count": "1"}],
+            sell_alert_summary_rows(),
+        )
+
     @patch("stock_alarm.dashboard.performance_penalty", return_value=4)
     @patch("stock_alarm.dashboard.tail_csv")
     def test_performance_penalty_rows(self, tail_csv, _penalty):
@@ -212,6 +225,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Worst recommendation performance", html)
         self.assertIn("Performance penalties", html)
         self.assertIn("Recommendations with sell alerts", html)
+        self.assertIn("Sell alert summary", html)
         self.assertIn("Why recommended", html)
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")

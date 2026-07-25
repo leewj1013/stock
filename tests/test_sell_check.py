@@ -77,6 +77,7 @@ class SellCheckTest(unittest.TestCase):
         with open(path, newline="", encoding="utf-8-sig") as file:
             rows = list(csv.DictReader(file))
         self.assertEqual("005930", rows[0]["ticker"])
+        self.assertEqual("손실 -6.0%", rows[0]["summary"])
 
     @patch("stock_alarm.sell_check.latest_naver_trading_day")
     @patch("stock_alarm.sell_check.find_alerts", return_value=[])
