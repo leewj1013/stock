@@ -24,12 +24,14 @@ if (Test-Path ".venv\Scripts\python.exe") {
 }
 
 function RunStep($name, $module) {
+    "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
     & $python -m $module 1>> $stdout 2>> $stderr
     if ($LASTEXITCODE -ne 0) {
         $code = $LASTEXITCODE
         & $python -m stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
         exit $code
     }
+    "[$(Get-Date -Format s)] DONE $name" | Out-File -FilePath $stdout -Append -Encoding utf8
 }
 
 if ($mode -eq "daily" -or $mode -eq "open") {
