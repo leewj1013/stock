@@ -302,6 +302,14 @@ Recommend settings from `logs/tuning.csv`:
 
 ## Daily Windows task
 
+After reboot, double-click:
+
+```text
+start_stock_alarm.bat
+```
+
+It re-registers scheduled tasks and runs health/status/daily checks.
+
 Register open, intraday, and close tasks:
 
 ```powershell

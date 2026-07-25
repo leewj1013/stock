@@ -17,6 +17,7 @@
 - Daily summary: `python -m stock_alarm.daily_summary`
 - Failure alert: `python -m stock_alarm.failure_alert <step> <exit_code>`
 - Scheduled run: `scripts/run_stock_alarm.ps1` supports `open`, `intraday`, `performance`, and default `daily` modes
+- Reboot startup macro: double-click `start_stock_alarm.bat`
 - Position P/L history: `logs/positions_report.csv`, including change since the previous snapshot
 
 ## Verified
