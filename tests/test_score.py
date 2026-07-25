@@ -3,7 +3,7 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from stock_alarm.app import calculate_score, news_bonus, performance_penalty
+from stock_alarm.app import calculate_score, dart_bonus, news_bonus, performance_penalty
 
 
 class ScoreTest(unittest.TestCase):
@@ -24,6 +24,15 @@ class ScoreTest(unittest.TestCase):
     @patch("stock_alarm.news_reference.reference", return_value=("3", "news=3"))
     def test_news_bonus_uses_weight(self, _reference):
         self.assertEqual(6, news_bonus("Samsung"))
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_dart_bonus_is_off_by_default(self):
+        self.assertEqual(0, dart_bonus("005930"))
+
+    @patch.dict("os.environ", {"DART_SCORE_WEIGHT": "2"})
+    @patch("stock_alarm.dart_reference.reference", return_value=("3", "dart=3"))
+    def test_dart_bonus_uses_weight(self, _reference):
+        self.assertEqual(6, dart_bonus("005930"))
 
     def test_performance_penalty_needs_enough_bad_history(self):
         with tempfile.TemporaryDirectory() as directory:

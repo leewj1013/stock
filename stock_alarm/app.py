@@ -136,7 +136,7 @@ def make_pick(ticker: str, end_day: date, min_trading_value: int, volume_multipl
         return None
 
     name = stock.get_market_ticker_name(ticker)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) - performance_penalty(ticker)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
     return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
@@ -207,7 +207,7 @@ def make_naver_pick(
     if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
         return None
     name = stock_name(ticker, name)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) - performance_penalty(ticker)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
     return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
@@ -226,6 +226,19 @@ def news_bonus(name: str) -> float:
         from .news_reference import reference
 
         score, _notes = reference(name)
+        return float(score) * weight
+    except Exception:
+        return 0
+
+
+def dart_bonus(ticker: str) -> float:
+    weight = env_float("DART_SCORE_WEIGHT", 0)
+    if not weight:
+        return 0
+    try:
+        from .dart_reference import reference
+
+        score, _notes = reference(ticker)
         return float(score) * weight
     except Exception:
         return 0

@@ -42,6 +42,7 @@ def lines() -> list[str]:
         f"MIN_RECOMMEND_SCORE={os.environ.get('MIN_RECOMMEND_SCORE', '0')}",
         f"DART_LOOKUP={enabled('DART_LOOKUP')}",
         f"DART_API_KEY={yes(bool(os.environ.get('DART_API_KEY')))}",
+        f"DART_SCORE_WEIGHT={os.environ.get('DART_SCORE_WEIGHT', '0')}",
         task_error_status(),
         f"recommendations_log={yes(os.path.exists('logs/recommendations.csv'))}",
         f"errors_log={yes(os.path.exists('logs/errors.log'))}",

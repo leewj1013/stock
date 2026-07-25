@@ -105,6 +105,7 @@ Set `NEWS_LOOKUP=1` to fill `news_score` and `external_notes` from recent Naver 
 Set `NEWS_SCORE_WEIGHT=2` to add `news_score * 2` to recommendation scores; the default `0` keeps news out of live recommendations.
 Set `MIN_RECOMMEND_SCORE` after enough performance history if you want to ignore low-scoring candidates.
 Set `DART_API_KEY` and `DART_LOOKUP=1` to fill `disclosure_score` from recent OpenDART disclosure titles.
+Set `DART_SCORE_WEIGHT=2` to add `disclosure_score * 2` to recommendation scores; the default `0` keeps DART out of live recommendations.
 
 Check OpenDART setup for one ticker:
 
