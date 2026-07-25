@@ -13,6 +13,36 @@ from .report import latest_error_summary, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
+NUMERIC_COLUMNS = {
+    "close",
+    "score",
+    "volume_score",
+    "trading_value_score",
+    "trend_score",
+    "total_score",
+    "volume",
+    "trading_value",
+    "trend",
+    "news",
+    "disclosure",
+    "penalty",
+    "volume_ratio",
+    "trading_value_억",
+    "news_score",
+    "disclosure_score",
+    "performance_penalty",
+    "count",
+    "return_pct",
+    "picks",
+    "avg_1d_return_pct",
+    "win_rate_1d_pct",
+    "entry_close",
+    "return_1d_pct",
+    "sell_return_pct",
+    "return_3d_pct",
+    "return_5d_pct",
+    "entry_price",
+}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
@@ -357,15 +387,32 @@ def issue_rows() -> list[dict[str, str]]:
 
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
-    body = "".join("<tr>" + "".join(cell(row.get(column, "")) for column in columns) + "</tr>" for row in rows)
-    head = "".join(f"<th>{e(display_label(column))}</th>" for column in columns)
+    body = "".join("<tr>" + "".join(cell(row.get(column, ""), column) for column in columns) + "</tr>" for row in rows)
+    head = "".join(header_cell(column) for column in columns)
     return f"<section><h2>{e(display_label(title))}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
 
 
-def cell(value: object) -> str:
+def header_cell(column: str) -> str:
+    attr = " class='num'" if column in NUMERIC_COLUMNS else ""
+    return f"<th{attr}>{e(display_label(column))}</th>"
+
+
+def cell(value: object, column: str = "") -> str:
     klass = status_class(str(value or ""))
-    attr = f" class='{klass}'" if klass else ""
-    return f"<td{attr}>{e(value)}</td>"
+    classes = [klass] if klass else []
+    if column in NUMERIC_COLUMNS:
+        classes.append("num")
+    attr = f" class='{' '.join(classes)}'" if classes else ""
+    return f"<td{attr}>{e(format_number(value) if column in NUMERIC_COLUMNS else value)}</td>"
+
+
+def format_number(value: object) -> str:
+    text = str(value or "")
+    try:
+        number = float(text.replace(",", ""))
+    except ValueError:
+        return text
+    return f"{int(number):,}" if number.is_integer() else f"{number:,.2f}"
 
 
 def card(name: str, value: str) -> str:
@@ -409,7 +456,7 @@ body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
-table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}}
+table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}}
 li{{margin:4px 0}}
 </style>

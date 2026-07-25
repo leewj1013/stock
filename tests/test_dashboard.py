@@ -25,6 +25,16 @@ class DashboardTest(unittest.TestCase):
     def test_cell_marks_status(self):
         self.assertEqual("<td class='bad'>missing</td>", cell("missing"))
 
+    def test_numeric_cell_formats_and_aligns(self):
+        self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
+        self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
+
+    def test_table_marks_numeric_header(self):
+        html = table("T", [{"score": "12.345"}], ["score"])
+
+        self.assertIn("<th class='num'>", html)
+        self.assertIn("<td class='num'>12.35</td>", html)
+
     def test_card_marks_status(self):
         self.assertIn("<span class='bad'>missing</span>", card("latest error", "missing"))
 
