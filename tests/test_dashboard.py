@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, table, write
+from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, table, today_run_summary, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -28,6 +28,10 @@ class DashboardTest(unittest.TestCase):
         from stock_alarm.dashboard import metric_cards
 
         self.assertIn(("latest error", "none"), metric_cards())
+
+    @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "sell_check=missing", "dashboard=ok"])
+    def test_today_run_summary(self, _statuses):
+        self.assertEqual("2/3 ok", today_run_summary())
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_performance_summary_rows(self, tail_csv):

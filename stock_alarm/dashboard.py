@@ -6,7 +6,7 @@ from datetime import datetime
 from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
-from .daily_check import lines as daily_check_lines
+from .daily_check import lines as daily_check_lines, run_log_statuses
 from .health import lines as health_lines
 from .positions_check import position_count
 from .report import latest_error_summary, tail_csv, tail_text
@@ -30,7 +30,14 @@ def metric_cards() -> list[tuple[str, str]]:
         ("win rate 1d", value_or_dash(summary.get("win_rate_1d_pct"), "%")),
         ("suggested min score", summary.get("suggested_min_score", "?")),
         ("latest error", latest_error_summary(deliveries)),
+        ("today runs", today_run_summary()),
     ]
+
+
+def today_run_summary() -> str:
+    statuses = run_log_statuses()
+    ok = sum(line.endswith("=ok") for line in statuses)
+    return f"{ok}/{len(statuses)} ok" if statuses else "0/0 ok"
 
 
 def value_or_dash(value: str | None, suffix: str = "") -> str:
