@@ -244,9 +244,17 @@ def cell(value: object) -> str:
 
 
 def card(label: str, value: str) -> str:
-    klass = status_class(value)
+    klass = card_class(label, value)
     attr = f" class='{klass}'" if klass else ""
     return f"<div class='card'><b>{e(label)}</b><span{attr}>{e(value)}</span></div>"
+
+
+def card_class(label: str, value: str) -> str:
+    if label == "today issues" and value.isdigit():
+        return "bad" if int(value) else "ok"
+    if label in {"today recommendations", "today sell alerts"} and value.isdigit():
+        return "muted" if int(value) == 0 else "ok"
+    return status_class(value)
 
 
 def status_class(value: str) -> str:

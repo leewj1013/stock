@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -27,6 +27,12 @@ class DashboardTest(unittest.TestCase):
 
     def test_card_marks_status(self):
         self.assertIn("<span class='bad'>missing</span>", card("latest error", "missing"))
+
+    def test_card_class_marks_today_counts(self):
+        self.assertEqual("bad", card_class("today issues", "1"))
+        self.assertEqual("ok", card_class("today issues", "0"))
+        self.assertEqual("muted", card_class("today recommendations", "0"))
+        self.assertEqual("ok", card_class("today recommendations", "2"))
 
     @patch("stock_alarm.dashboard.latest_error_summary", return_value="none")
     @patch("stock_alarm.dashboard.position_count", return_value=1)
