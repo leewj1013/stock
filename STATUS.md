@@ -17,10 +17,12 @@
 - Daily summary: `python -m stock_alarm.daily_summary`
 - Dashboard: `python -m stock_alarm.dashboard` writes `reports/dashboard.html`
 - Dashboard macro: double-click `open_dashboard.bat`
+- Dashboard issues alert: double-click `issue_alert.bat` or run `python -m stock_alarm.issue_alert`
 - Failure alert: `python -m stock_alarm.failure_alert <step> <exit_code>`
 - Scheduled run: `scripts/run_stock_alarm.ps1` supports `open`, `intraday`, `performance`, and default `daily` modes
 - Reboot startup macro: double-click `start_stock_alarm.bat`
 - Position P/L history: `logs/positions_report.csv`, including change since the previous snapshot
+- OpenDART hook: enabled when `DART_LOOKUP=1` and `DART_API_KEY` exists
 
 ## Verified
 
@@ -41,6 +43,18 @@ Last verified full-chain dry run:
 
 ```text
 2026-07-25T02:19:43,console
+```
+
+Last verified local operation check:
+
+```text
+2026-07-25
+start_stock_alarm.bat flow: ok
+scheduled tasks: stockAlarmOpen, stockAlarmIntraday1030, stockAlarmIntraday1330, stockAlarmIntraday1500, stockAlarmDaily ready
+telegram: ready
+dart: ready, lookup on, score weight 1
+task_error: none
+dashboard: reports/dashboard.html generated
 ```
 
 ## Defaults
@@ -64,10 +78,20 @@ NEWS_SCORE_WEIGHT=0
 MIN_RECOMMEND_SCORE=0
 DART_API_KEY=
 DART_LOOKUP=0
+DART_SCORE_WEIGHT=1
 ```
 
 `MIN_MARKET_UP_RATIO` exists for experiments but is off by default because the 45% market filter reduced backtest quality.
 
+## Dashboard shape
+
+Keep one combined dashboard at `reports/dashboard.html`.
+
+- Top: today run status, delivery status, latest error, current settings
+- Middle: recommendation statistics, best/worst recommendations, sell-alert linked picks
+- Bottom: latest recommendations, positions, raw logs
+- Optional next card: "why recommended" breakdown with price, volume, news bonus, DART bonus, and performance penalty
+
 ## Next best step
 
-Register the updated tasks with `scripts/register_daily_task.ps1`, then check `daily_check` after the 16:10 run.
+Add the "why recommended" card to the existing dashboard instead of making a second dashboard page.
