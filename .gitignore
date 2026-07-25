@@ -3,5 +3,6 @@ data/positions.csv
 .venv/
 .cache/
 logs/
+reports/
 __pycache__/
 *.pyc

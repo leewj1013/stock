@@ -373,6 +373,20 @@ Show recent deliveries, recommendations, task status, latest error, and recent s
 .\.venv\Scripts\python -m stock_alarm.report
 ```
 
+## Dashboard
+
+Generate a local HTML dashboard:
+
+```powershell
+.\.venv\Scripts\python -m stock_alarm.dashboard
+```
+
+Open:
+
+```text
+reports/dashboard.html
+```
+
 ## Cleanup logs
 
 Preview log cleanup:
