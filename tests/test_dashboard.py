@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, table, today_run_summary, write
+from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, table, today_run_rows, today_run_summary, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -32,6 +32,13 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "sell_check=missing", "dashboard=ok"])
     def test_today_run_summary(self, _statuses):
         self.assertEqual("2/3 ok", today_run_summary())
+
+    @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "positions_report=missing"])
+    def test_today_run_rows(self, _statuses):
+        self.assertEqual(
+            [{"step": "recommendations", "status": "ok"}, {"step": "positions_report", "status": "missing"}],
+            today_run_rows(),
+        )
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_performance_summary_rows(self, tail_csv):
@@ -109,19 +116,21 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.metric_cards", return_value=[("positions", "1")])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[])
+    @patch("stock_alarm.dashboard.today_run_rows", return_value=[])
     @patch("stock_alarm.dashboard.performance_summary_rows", return_value=[])
     @patch("stock_alarm.dashboard.recommendation_rank_rows", return_value=[])
     @patch("stock_alarm.dashboard.performance_penalty_rows", return_value=[])
     @patch("stock_alarm.dashboard.sell_alerted_recommendation_rows", return_value=[])
     @patch("stock_alarm.dashboard.tail_text", return_value=[])
     @patch("stock_alarm.dashboard.tail_csv", return_value=[])
-    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _settings, _cards, _daily):
+    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _run_rows, _settings, _cards, _daily):
         html = render()
 
         self.assertIn("stockAlarm Dashboard", html)
         self.assertIn("Daily check", html)
         self.assertIn("Current settings", html)
         self.assertIn("Recent deliveries", html)
+        self.assertIn("Today run details", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)

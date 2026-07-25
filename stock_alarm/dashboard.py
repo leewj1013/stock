@@ -40,6 +40,15 @@ def today_run_summary() -> str:
     return f"{ok}/{len(statuses)} ok" if statuses else "0/0 ok"
 
 
+def today_run_rows() -> list[dict[str, str]]:
+    rows = []
+    for line in run_log_statuses():
+        name, separator, status = line.partition("=")
+        if separator:
+            rows.append({"step": name, "status": status})
+    return rows
+
+
 def value_or_dash(value: str | None, suffix: str = "") -> str:
     return f"{value}{suffix}" if value else "-"
 
@@ -161,6 +170,7 @@ li{{margin:4px 0}}
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
 {table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
+{table("Today run details", today_run_rows(), ["step", "status"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
