@@ -23,6 +23,14 @@ Recent 60-trading-day tuning kept the default volume rule at `VOLUME_MULTIPLIER=
 
 ## Daily operation
 
+Double-click shortcuts:
+
+```text
+start_stock_alarm.bat  - register/start local scheduled tasks and open dashboard
+open_dashboard.bat     - refresh and open reports/dashboard.html
+issue_alert.bat        - send current dashboard issues only
+```
+
 Normal daily flow:
 
 ```powershell
