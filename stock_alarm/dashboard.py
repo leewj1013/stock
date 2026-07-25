@@ -150,6 +150,14 @@ def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
     return rows
 
 
+def recommendation_shape_rows() -> list[dict[str, str]]:
+    return [
+        {"type": "watch candidate", "when": "volume spike + above MA20 + enough trading value", "action": "send recommendation alert"},
+        {"type": "review needed", "when": "news/disclosure/history bonus or penalty exists", "action": "check dashboard reason"},
+        {"type": "sell review", "when": "loss, sharp drop, or profit giveback rule triggers", "action": "send sell-review alert"},
+    ]
+
+
 def recommendation_reason_rows(limit: int = 10) -> list[dict[str, str]]:
     performance = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
     rows = []
@@ -295,6 +303,7 @@ li{{margin:4px 0}}
 <div class="cards">{cards}</div>
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
+{table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"])}
 {table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
 {table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
