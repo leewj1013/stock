@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from datetime import date
 
-from .notifier import send_notification
 from .report import latest_error_summary, tail_csv, tail_text
 
 
@@ -55,6 +54,8 @@ def main() -> int:
     message = "\n".join(result)
     print(message)
     if os.environ.get("SEND_DAILY_CHECK_ALERT", "0") == "1":
+        from .notifier import send_notification
+
         send_notification(message)
     return 0 if result[0].startswith("daily ok:") else 1
 

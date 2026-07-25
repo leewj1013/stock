@@ -82,7 +82,7 @@ class DailyCheckTest(unittest.TestCase):
         self.assertEqual(["recommendation_performance=ok"], run_log_statuses(date(2026, 7, 25), {"recommendation_performance": path}))
 
     @patch.dict(os.environ, {"SEND_DAILY_CHECK_ALERT": "1"})
-    @patch("stock_alarm.daily_check.send_notification", create=True)
+    @patch("stock_alarm.notifier.send_notification")
     @patch("stock_alarm.daily_check.lines", return_value=["daily ok: telegram at now"])
     def test_main_sends_when_enabled(self, _lines, send):
         with redirect_stdout(StringIO()):
