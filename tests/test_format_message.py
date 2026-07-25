@@ -41,6 +41,23 @@ class FormatMessageTest(unittest.TestCase):
 
         self.assertIn("성과 감점: -4.0점", message)
 
+    @patch("stock_alarm.app.dart_bonus", return_value=3)
+    def test_includes_dart_bonus_when_present(self, _bonus):
+        message = format_message(
+            [
+                Pick(
+                    ticker="005930",
+                    name="Samsung",
+                    close=80000,
+                    volume_ratio=2.3,
+                    trading_value=123_000_000_000,
+                    score=76.5,
+                )
+            ]
+        )
+
+        self.assertIn("공시 보너스: +3.0점", message)
+
 
 if __name__ == "__main__":
     unittest.main()
