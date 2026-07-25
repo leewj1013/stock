@@ -372,6 +372,12 @@ After 16:10, check today's delivery result:
 This reports today's delivery status, key run-log presence, and whether any logged error happened after the latest delivery.
 Set `SEND_DAILY_CHECK_ALERT=1` to send this check result through the configured notifier.
 
+After the 08:55 open run, check only the morning recommendation:
+
+```powershell
+.\.venv\Scripts\python -m stock_alarm.open_check
+```
+
 ## Healthcheck
 
 Check local configuration without printing secret values:
