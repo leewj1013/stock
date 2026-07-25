@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, write
+from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, recommendation_reason_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -136,6 +136,46 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual([{"ticker": "000001", "name": "A", "penalty": "4.00"}], performance_penalty_rows())
 
+    @patch("stock_alarm.dashboard.performance_penalty", return_value=1.5)
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_recommendation_reason_rows(self, tail_csv, _penalty):
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"ticker": "000001", "news_score": "2.00", "disclosure_score": "3.00"}]
+            return [
+                {
+                    "created_at": "2026-07-25T09:00:00",
+                    "ticker": "000001",
+                    "name": "A",
+                    "score": "80",
+                    "volume_ratio": "2.50",
+                    "trading_value": "12300000000",
+                }
+            ]
+
+        tail_csv.side_effect = fake_tail
+
+        self.assertEqual(
+            [
+                {
+                    "created_at": "2026-07-25T09:00:00",
+                    "ticker": "000001",
+                    "name": "A",
+                    "score": "80",
+                    "volume_ratio": "2.50",
+                    "trading_value_억": "123",
+                    "news_score": "2.00",
+                    "disclosure_score": "3.00",
+                    "performance_penalty": "1.50",
+                }
+            ],
+            recommendation_reason_rows(),
+        )
+
+    def test_trading_value_eok(self):
+        self.assertEqual("123", trading_value_eok("12300000000"))
+        self.assertEqual("", trading_value_eok("bad"))
+
     @patch("stock_alarm.dashboard.health_lines", return_value=["NEWS_SCORE_WEIGHT=2", "task_error=none"])
     def test_settings_rows(self, _health):
         self.assertEqual(
@@ -168,6 +208,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Worst recommendation performance", html)
         self.assertIn("Performance penalties", html)
         self.assertIn("Recommendations with sell alerts", html)
+        self.assertIn("Why recommended", html)
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")
     def test_write(self, _render):
