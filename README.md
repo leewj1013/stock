@@ -106,6 +106,12 @@ Set `NEWS_SCORE_WEIGHT=2` to add `news_score * 2` to recommendation scores; the 
 Set `MIN_RECOMMEND_SCORE` after enough performance history if you want to ignore low-scoring candidates.
 Set `DART_API_KEY` and `DART_LOOKUP=1` to fill `disclosure_score` from recent OpenDART disclosure titles.
 
+Check OpenDART setup for one ticker:
+
+```powershell
+.\.venv\Scripts\python -m stock_alarm.dart_reference 005930
+```
+
 After at least two snapshots, the report also shows average P/L change since the previous snapshot.
 
 If the scheduled task status is unavailable in Python, use:

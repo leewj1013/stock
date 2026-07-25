@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -78,3 +79,29 @@ def keyword_score(titles: list[str]) -> tuple[int, str]:
 def reference(ticker: str) -> tuple[str, str]:
     score, notes = keyword_score(disclosure_titles(ticker))
     return str(score), notes
+
+
+def lines(ticker: str) -> list[str]:
+    corp_code = corp_code_by_stock(ticker)
+    titles = disclosure_titles(ticker) if corp_code else []
+    score, notes = keyword_score(titles)
+    return [
+        f"DART_API_KEY={'ok' if os.environ.get('DART_API_KEY') else 'missing'}",
+        f"ticker={ticker}",
+        f"corp_code={corp_code or 'missing'}",
+        f"score={score}",
+        notes,
+        *[f"- {title}" for title in titles[:5]],
+    ]
+
+
+def main() -> None:
+    from .app import load_env
+
+    load_env()
+    ticker = sys.argv[1] if len(sys.argv) > 1 else "005930"
+    print("\n".join(lines(ticker)))
+
+
+if __name__ == "__main__":
+    main()
