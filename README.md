@@ -150,15 +150,9 @@ Copy-Item .env.example .env
 Copy-Item data\positions.example.csv data\positions.csv
 ```
 
-Set Kakao values in `.env` when Kakao Login setup is ready.
+Set Telegram values in `.env`.
 
 ```text
-KAKAO_REST_API_KEY=...
-KAKAO_JAVASCRIPT_KEY=
-KAKAO_NATIVE_APP_KEY=
-KAKAO_REDIRECT_URI=http://127.0.0.1:8080/oauth
-KAKAO_ACCESS_TOKEN=
-KAKAO_REFRESH_TOKEN=
 NOTIFIER=telegram
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
@@ -225,24 +219,6 @@ $env:FORCE_SEND='1'
 .\.venv\Scripts\python -m stock_alarm
 ```
 
-## Kakao token helper
-
-Kakao is optional now. Use it only if `NOTIFIER=kakao`.
-The app sends KakaoTalk messages with `KAKAO_REST_API_KEY` plus saved access/refresh tokens. JavaScript/native keys are stored for future Kakao features but are not used by the current sender.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.kakao_auth
-```
-
-Open the printed URL, approve Kakao Talk message permission, and the helper saves tokens to `.env`.
-
-If the local redirect server cannot be used, print the URL and manually exchange the `code` value copied from the redirect URL:
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.kakao_auth --print-url
-.\.venv\Scripts\python -m stock_alarm.kakao_auth --code YOUR_AUTH_CODE
-```
-
 ## Run
 
 ```powershell
@@ -256,7 +232,7 @@ When `AUTO_TRACK_PICKS=1`, new recommendations are also appended to `data/positi
 Default Naver mode reads the starter watchlist from `data/watchlist.csv`. Set `STOCKS` only when you want to override it:
 
 ```text
-STOCKS=005930:Samsung Electronics,035720:Kakao
+STOCKS=005930:Samsung Electronics,035420:NAVER
 ```
 
 Check the starter watchlist:

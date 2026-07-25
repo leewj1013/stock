@@ -34,8 +34,7 @@ class HealthTest(unittest.TestCase):
     def test_lines_includes_external_signal_settings(self, _stocks, _task_error, _day):
         text = "\n".join(lines())
 
-        self.assertIn("KAKAO_JAVASCRIPT_KEY=ok", text)
-        self.assertIn("KAKAO_NATIVE_APP_KEY=ok", text)
+        self.assertNotIn("KAKAO_", text)
         self.assertIn("DART_LOOKUP=on", text)
         self.assertIn("DART_API_KEY=ok", text)
         self.assertIn("DART_SCORE_WEIGHT=3", text)
