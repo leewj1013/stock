@@ -51,6 +51,13 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.dashboard", script)
         self.assertIn("Start-Process", script)
 
+    def test_issue_alert_macro(self):
+        with open("issue_alert.bat", encoding="utf-8-sig") as file:
+            batch = file.read()
+
+        self.assertIn("scripts\\run_stock_alarm.ps1", batch)
+        self.assertIn("issue_alert", batch)
+
     def test_set_dart_key_macro(self):
         with open("set_dart_key.bat", encoding="utf-8-sig") as file:
             batch = file.read()
