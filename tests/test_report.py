@@ -6,7 +6,7 @@ import subprocess
 
 from unittest.mock import patch
 
-from stock_alarm.report import delivery_status, format_recommendation, format_sell_alert, latest_error, latest_error_summary, lines, tail_csv
+from stock_alarm.report import delivery_status, format_recommendation, format_sell_alert, latest_error, latest_error_summary, lines, tail_csv, tail_text
 
 
 class ReportTest(unittest.TestCase):
@@ -39,6 +39,14 @@ class ReportTest(unittest.TestCase):
 
     def test_tail_csv_missing(self):
         self.assertEqual([], tail_csv("does-not-exist.csv"))
+
+    def test_tail_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "x.log")
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("a\n\nb\nc\n")
+
+            self.assertEqual(["b", "c"], tail_text(path, 2))
 
     def test_delivery_status_prefers_latest_telegram(self):
         self.assertEqual(
@@ -97,6 +105,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("## tuning", report)
         self.assertIn("- confidence=weak", report)
         self.assertIn("## recent sell alerts", report)
+        self.assertIn("## recent task log", report)
 
 
 if __name__ == "__main__":

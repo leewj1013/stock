@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import subprocess
+import sys
 from datetime import datetime
 
 from .app import latest_naver_trading_day, load_env, write_error_log
@@ -18,6 +19,13 @@ def tail_csv(path: str, count: int = 5) -> list[dict[str, str]]:
     with open(path, newline="", encoding="utf-8-sig") as file:
         rows = list(csv.DictReader(file))
     return rows[-count:]
+
+
+def tail_text(path: str, count: int = 10) -> list[str]:
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8-sig", errors="replace") as file:
+        return [line.rstrip() for line in file if line.strip()][-count:]
 
 
 def latest_error(path: str = "logs/errors.log") -> str:
@@ -137,11 +145,16 @@ def lines() -> list[str]:
     output.append("")
     output.append("## tuning")
     output.extend(f"- {line}" for line in tuning_lines()[1:])
+    output.append("")
+    output.append("## recent task log")
+    output.extend(f"- {line}" for line in tail_text("logs/task.out.log", 10))
     return output
 
 
 def main() -> None:
     try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         print("\n".join(lines()))
     except Exception as error:
         write_error_log(error)
