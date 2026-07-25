@@ -57,6 +57,7 @@ task_error: none
 dashboard_ready: ok
 dashboard: reports/dashboard.html generated
 next_run: shown by scripts/status_daily_task.ps1 as next_run=<task> at <time>
+daily 16:10 run: ok, LastTaskResult=0, next_run=stockAlarmOpen at 2026-07-26 08:55:00
 ```
 
 ## Defaults
