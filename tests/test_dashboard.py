@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -219,6 +219,14 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("watch candidate", rows[0]["type"])
         self.assertEqual("sell review", rows[-1]["type"])
 
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_score_breakdown_rows(self, tail_csv):
+        tail_csv.return_value = [
+            {"ticker": "000001", "name": "A", "score": "70", "volume_score": "30", "trading_value_score": "20", "trend_score": "20"}
+        ]
+
+        self.assertEqual("70", score_breakdown_rows()[0]["total_score"])
+
     def test_trading_value_eok(self):
         self.assertEqual("123", trading_value_eok("12300000000"))
         self.assertEqual("", trading_value_eok("bad"))
@@ -251,6 +259,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Recent deliveries", html)
         self.assertIn("Today run details", html)
         self.assertIn("Recommendation shape", html)
+        self.assertIn("Score breakdown", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)
@@ -260,7 +269,8 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Why recommended", html)
         self.assertLess(html.index("Issues"), html.index("Today run details"))
         self.assertLess(html.index("Today run details"), html.index("Recommendation shape"))
-        self.assertLess(html.index("Recommendation shape"), html.index("Why recommended"))
+        self.assertLess(html.index("Recommendation shape"), html.index("Score breakdown"))
+        self.assertLess(html.index("Score breakdown"), html.index("Why recommended"))
         self.assertLess(html.index("Why recommended"), html.index("Sell alert summary"))
         self.assertLess(html.index("Sell alert summary"), html.index("Recent sell alerts"))
         self.assertLess(html.index("Recent sell alerts"), html.index("Recommendation stats"))
