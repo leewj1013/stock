@@ -17,6 +17,7 @@
 - Daily summary: `python -m stock_alarm.daily_summary`
 - Dashboard: `python -m stock_alarm.dashboard` writes `reports/dashboard.html`
 - Dashboard macro: double-click `open_dashboard.bat`
+- Morning recommendation check: double-click `open_check.bat` or run `python -m stock_alarm.open_check`
 - Dashboard issues alert: double-click `issue_alert.bat` or run `python -m stock_alarm.issue_alert`
 - Failure alert: `python -m stock_alarm.failure_alert <step> <exit_code>`
 - Scheduled run: `scripts/run_stock_alarm.ps1` supports `open`, `intraday`, `performance`, and default `daily` modes
@@ -97,4 +98,4 @@ Keep one combined dashboard at `reports/dashboard.html`.
 
 ## Next best step
 
-Watch `scripts/status_daily_task.ps1` for `next_run=...`, then check `python -m stock_alarm.daily_check` and `reports/dashboard.html`.
+After the 08:55 open run, double-click `open_check.bat` and confirm `recommendations=ok`.
