@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import e, performance_summary_rows, recommendation_rank_rows, render, table, write
+from stock_alarm.dashboard import e, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, table, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -46,19 +46,45 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("3.00", rows[0]["avg_1d_return_pct"])
         self.assertEqual("50.0", rows[1]["win_rate_1d_pct"])
 
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_sell_alerted_recommendation_rows(self, tail_csv):
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"ticker": "000001", "name": "A", "score": "80", "entry_close": "1000", "return_1d_pct": "-1.00"}]
+            return [{"ticker": "000001", "name": "A", "return_pct": "-5.00", "reason": "stop loss"}]
+
+        tail_csv.side_effect = fake_tail
+
+        rows = sell_alerted_recommendation_rows()
+
+        self.assertEqual(
+            {
+                "ticker": "000001",
+                "name": "A",
+                "score": "80",
+                "entry_close": "1000",
+                "return_1d_pct": "-1.00",
+                "sell_return_pct": "-5.00",
+                "sell_reason": "stop loss",
+            },
+            rows[0],
+        )
+
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.metric_cards", return_value=[("positions", "1")])
     @patch("stock_alarm.dashboard.performance_summary_rows", return_value=[])
     @patch("stock_alarm.dashboard.recommendation_rank_rows", return_value=[])
+    @patch("stock_alarm.dashboard.sell_alerted_recommendation_rows", return_value=[])
     @patch("stock_alarm.dashboard.tail_text", return_value=[])
     @patch("stock_alarm.dashboard.tail_csv", return_value=[])
-    def test_render(self, _csv, _text, _rank, _summary, _cards, _daily):
+    def test_render(self, _csv, _text, _sell, _rank, _summary, _cards, _daily):
         html = render()
 
         self.assertIn("stockAlarm Dashboard", html)
         self.assertIn("Daily check", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
+        self.assertIn("Recommendations with sell alerts", html)
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")
     def test_write(self, _render):
