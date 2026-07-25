@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from importlib.util import find_spec
 
 from .app import configured_stocks, latest_naver_trading_day, load_env, write_error_log
 from .daily_check import task_error_status
@@ -12,6 +13,14 @@ def yes(value: bool) -> str:
 
 def enabled(name: str, default: str = "0") -> str:
     return "on" if os.environ.get(name, default) == "1" else "off"
+
+
+def dashboard_ready() -> str:
+    try:
+        os.makedirs("reports", exist_ok=True)
+        return yes(find_spec("stock_alarm.dashboard") is not None and os.path.isdir("reports"))
+    except OSError:
+        return "missing"
 
 
 def lines() -> list[str]:
@@ -44,6 +53,7 @@ def lines() -> list[str]:
         f"DART_API_KEY={yes(bool(os.environ.get('DART_API_KEY')))}",
         f"DART_SCORE_WEIGHT={os.environ.get('DART_SCORE_WEIGHT', '0')}",
         task_error_status(),
+        f"dashboard_ready={dashboard_ready()}",
         f"recommendations_log={yes(os.path.exists('logs/recommendations.csv'))}",
         f"errors_log={yes(os.path.exists('logs/errors.log'))}",
     ]

@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.health import enabled, lines, yes
+from stock_alarm.health import dashboard_ready, enabled, lines, yes
 
 
 class HealthTest(unittest.TestCase):
@@ -23,6 +23,10 @@ class HealthTest(unittest.TestCase):
             else:
                 os.environ["X_ENABLED"] = old
 
+    @patch("stock_alarm.health.find_spec", return_value=object())
+    def test_dashboard_ready(self, _spec):
+        self.assertEqual("ok", dashboard_ready())
+
     @patch("stock_alarm.health.latest_naver_trading_day")
     @patch("stock_alarm.health.task_error_status", return_value="task_error=old")
     @patch("stock_alarm.health.configured_stocks", return_value={"005930": "Samsung"})
@@ -35,6 +39,7 @@ class HealthTest(unittest.TestCase):
         self.assertIn("DART_SCORE_WEIGHT=3", text)
         self.assertIn("NEWS_SCORE_WEIGHT=2", text)
         self.assertIn("task_error=old", text)
+        self.assertIn("dashboard_ready=ok", text)
 
 
 if __name__ == "__main__":
