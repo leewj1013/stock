@@ -136,7 +136,7 @@ def make_pick(ticker: str, end_day: date, min_trading_value: int, volume_multipl
         return None
 
     name = stock.get_market_ticker_name(ticker)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) - performance_penalty(ticker)
     return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
@@ -207,7 +207,7 @@ def make_naver_pick(
     if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
         return None
     name = stock_name(ticker, name)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) - performance_penalty(ticker)
     return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
@@ -229,6 +229,20 @@ def news_bonus(name: str) -> float:
         return float(score) * weight
     except Exception:
         return 0
+
+
+def performance_penalty(ticker: str, path: str = "logs/recommendation_performance.csv") -> float:
+    if not os.path.exists(path):
+        return 0
+    values = []
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            if row.get("ticker") == ticker and row.get("return_1d_pct"):
+                values.append(float(row["return_1d_pct"]))
+    if len(values) < 3:
+        return 0
+    avg = mean(values)
+    return min(abs(avg), 10) if avg < 0 else 0
 
 
 @lru_cache(maxsize=512)

@@ -1,7 +1,9 @@
 import unittest
+import os
+import tempfile
 from unittest.mock import patch
 
-from stock_alarm.app import calculate_score, news_bonus
+from stock_alarm.app import calculate_score, news_bonus, performance_penalty
 
 
 class ScoreTest(unittest.TestCase):
@@ -22,6 +24,24 @@ class ScoreTest(unittest.TestCase):
     @patch("stock_alarm.news_reference.reference", return_value=("3", "news=3"))
     def test_news_bonus_uses_weight(self, _reference):
         self.assertEqual(6, news_bonus("Samsung"))
+
+    def test_performance_penalty_needs_enough_bad_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "performance.csv")
+            with open(path, "w", encoding="utf-8-sig") as file:
+                file.write("ticker,return_1d_pct\n000001,-2\n000001,-4\n000002,-9\n")
+
+            self.assertEqual(0, performance_penalty("000001", path))
+            self.assertEqual(0, performance_penalty("000002", path))
+
+    def test_performance_penalty_uses_bad_average(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "performance.csv")
+            with open(path, "w", encoding="utf-8-sig") as file:
+                file.write("ticker,return_1d_pct\n000001,-2\n000001,-4\n000001,-6\n000002,3\n000002,-1\n000002,1\n")
+
+            self.assertEqual(4, performance_penalty("000001", path))
+            self.assertEqual(0, performance_penalty("000002", path))
 
 
 if __name__ == "__main__":
