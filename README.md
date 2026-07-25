@@ -112,6 +112,12 @@ Check OpenDART setup for one ticker:
 .\.venv\Scripts\python -m stock_alarm.dart_reference 005930
 ```
 
+Or double-click this after the key is issued:
+
+```text
+set_dart_key.bat
+```
+
 After at least two snapshots, the report also shows average P/L change since the previous snapshot.
 
 If the scheduled task status is unavailable in Python, use:

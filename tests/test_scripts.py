@@ -49,6 +49,18 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.dashboard", script)
         self.assertIn("Start-Process", script)
 
+    def test_set_dart_key_macro(self):
+        with open("set_dart_key.bat", encoding="utf-8-sig") as file:
+            batch = file.read()
+        with open("scripts/set_dart_key.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("scripts\\set_dart_key.ps1", batch)
+        self.assertIn("STOCK_ALARM_SETENV_VALUE", script)
+        self.assertIn("stock_alarm.app_setenv DART_API_KEY", script)
+        self.assertIn("stock_alarm.app_setenv DART_LOOKUP 1", script)
+        self.assertIn("stock_alarm.dart_reference 005930", script)
+
 
 if __name__ == "__main__":
     unittest.main()
