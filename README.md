@@ -359,7 +359,7 @@ Check local configuration without printing secret values:
 
 ## Report
 
-Show recent deliveries, recommendations, task status, and latest error:
+Show recent deliveries, recommendations, task status, latest error, and recent scheduled task logs/errors:
 
 ```powershell
 .\.venv\Scripts\python -m stock_alarm.report
