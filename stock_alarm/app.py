@@ -362,9 +362,12 @@ def format_message(picks: list[Pick]) -> str:
         return "오늘 조건에 맞는 관심 종목이 없습니다."
     lines = ["[오늘의 국내주식 관심 종목]"]
     for index, pick in enumerate(picks, 1):
+        penalty = performance_penalty(pick.ticker)
         lines.append(f"{index}. {pick.name}({pick.ticker})")
         lines.append(f"- 종가: {pick.close:,}원")
         lines.append(f"- 점수: {pick.score:.1f}")
+        if penalty:
+            lines.append(f"- 성과 감점: -{penalty:.1f}점")
         lines.append(f"- 사유: {pick.reason}")
     lines.append("※ 조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
