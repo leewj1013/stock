@@ -30,10 +30,12 @@ class HealthTest(unittest.TestCase):
     @patch("stock_alarm.health.latest_naver_trading_day")
     @patch("stock_alarm.health.task_error_status", return_value="task_error=old")
     @patch("stock_alarm.health.configured_stocks", return_value={"005930": "Samsung"})
-    @patch.dict(os.environ, {"DART_LOOKUP": "1", "DART_API_KEY": "x", "DART_SCORE_WEIGHT": "3", "NEWS_SCORE_WEIGHT": "2"}, clear=True)
+    @patch.dict(os.environ, {"DART_LOOKUP": "1", "DART_API_KEY": "x", "DART_SCORE_WEIGHT": "3", "NEWS_SCORE_WEIGHT": "2", "KAKAO_JAVASCRIPT_KEY": "x", "KAKAO_NATIVE_APP_KEY": "x"}, clear=True)
     def test_lines_includes_external_signal_settings(self, _stocks, _task_error, _day):
         text = "\n".join(lines())
 
+        self.assertIn("KAKAO_JAVASCRIPT_KEY=ok", text)
+        self.assertIn("KAKAO_NATIVE_APP_KEY=ok", text)
         self.assertIn("DART_LOOKUP=on", text)
         self.assertIn("DART_API_KEY=ok", text)
         self.assertIn("DART_SCORE_WEIGHT=3", text)

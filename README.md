@@ -154,6 +154,8 @@ Set Kakao values in `.env` when Kakao Login setup is ready.
 
 ```text
 KAKAO_REST_API_KEY=...
+KAKAO_JAVASCRIPT_KEY=
+KAKAO_NATIVE_APP_KEY=
 KAKAO_REDIRECT_URI=http://127.0.0.1:8080/oauth
 KAKAO_ACCESS_TOKEN=
 KAKAO_REFRESH_TOKEN=
@@ -226,6 +228,7 @@ $env:FORCE_SEND='1'
 ## Kakao token helper
 
 Kakao is optional now. Use it only if `NOTIFIER=kakao`.
+The app sends KakaoTalk messages with `KAKAO_REST_API_KEY` plus saved access/refresh tokens. JavaScript/native keys are stored for future Kakao features but are not used by the current sender.
 
 ```powershell
 .\.venv\Scripts\python -m stock_alarm.kakao_auth

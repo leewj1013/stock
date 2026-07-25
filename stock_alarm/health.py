@@ -36,6 +36,8 @@ def lines() -> list[str]:
         f"TELEGRAM_SEND_READY={yes(bool(os.environ.get('TELEGRAM_BOT_TOKEN') and os.environ.get('TELEGRAM_CHAT_ID')))}",
         f"KAKAO_REDIRECT_URI={os.environ.get('KAKAO_REDIRECT_URI', '') or 'missing'}",
         f"KAKAO_REST_API_KEY={yes(bool(os.environ.get('KAKAO_REST_API_KEY')))}",
+        f"KAKAO_JAVASCRIPT_KEY={yes(bool(os.environ.get('KAKAO_JAVASCRIPT_KEY')))}",
+        f"KAKAO_NATIVE_APP_KEY={yes(bool(os.environ.get('KAKAO_NATIVE_APP_KEY')))}",
         f"KAKAO_ACCESS_TOKEN={yes(bool(os.environ.get('KAKAO_ACCESS_TOKEN')))}",
         f"KAKAO_REFRESH_TOKEN={yes(bool(os.environ.get('KAKAO_REFRESH_TOKEN')))}",
         f"KAKAO_SEND_READY={yes(bool(os.environ.get('KAKAO_ACCESS_TOKEN')))}",
