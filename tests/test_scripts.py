@@ -50,6 +50,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.daily_check", script)
         self.assertIn("stock_alarm.dashboard", script)
         self.assertIn("Start-Process", script)
+        self.assertIn("open_check.bat", script)
 
     def test_open_dashboard_macro(self):
         with open("open_dashboard.bat", encoding="utf-8-sig") as file:

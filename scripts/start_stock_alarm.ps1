@@ -42,3 +42,4 @@ Start-Process -FilePath (Resolve-Path $dashboard)
 
 Write-Output ""
 Write-Output "stockAlarm startup check finished."
+Write-Output "After the 08:55 open run, double-click open_check.bat."
