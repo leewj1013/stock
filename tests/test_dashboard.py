@@ -221,11 +221,19 @@ class DashboardTest(unittest.TestCase):
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_score_breakdown_rows(self, tail_csv):
-        tail_csv.return_value = [
-            {"ticker": "000001", "name": "A", "score": "70", "volume_score": "30", "trading_value_score": "20", "trend_score": "20"}
-        ]
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"ticker": "000001", "news_score": "2", "disclosure_score": "3"}]
+            return [
+                {"ticker": "000001", "name": "A", "score": "70", "volume_score": "30", "trading_value_score": "20", "trend_score": "20"}
+            ]
 
-        self.assertEqual("70", score_breakdown_rows()[0]["total_score"])
+        tail_csv.side_effect = fake_tail
+
+        row = score_breakdown_rows()[0]
+        self.assertEqual("70", row["total_score"])
+        self.assertEqual("2", row["news"])
+        self.assertEqual("3", row["disclosure"])
 
     def test_trading_value_eok(self):
         self.assertEqual("123", trading_value_eok("12300000000"))
@@ -260,6 +268,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Today run details", html)
         self.assertIn("Recommendation shape", html)
         self.assertIn("Score breakdown", html)
+        self.assertIn("disclosure", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)

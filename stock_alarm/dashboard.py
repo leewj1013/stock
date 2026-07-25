@@ -159,6 +159,7 @@ def recommendation_shape_rows() -> list[dict[str, str]]:
 
 
 def score_breakdown_rows(limit: int = 10) -> list[dict[str, str]]:
+    performance = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
     return [
         {
             "created_at": row.get("created_at", ""),
@@ -168,6 +169,9 @@ def score_breakdown_rows(limit: int = 10) -> list[dict[str, str]]:
             "volume": row.get("volume_score", ""),
             "trading_value": row.get("trading_value_score", ""),
             "trend": row.get("trend_score", ""),
+            "news": performance.get(row.get("ticker", ""), {}).get("news_score", ""),
+            "disclosure": performance.get(row.get("ticker", ""), {}).get("disclosure_score", ""),
+            "penalty": f"{performance_penalty(row.get('ticker', '')):.2f}",
         }
         for row in reversed(tail_csv("logs/recommendations.csv", 1000))
     ][:limit]
@@ -319,7 +323,7 @@ li{{margin:4px 0}}
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
 {table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"])}
-{table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend"])}
+{table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
 {table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
 {table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
