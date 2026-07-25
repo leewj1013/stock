@@ -50,7 +50,13 @@ def today_csv_count(path: str) -> int:
 
 def today_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
     today = datetime.now().date().isoformat()
-    rows = [row for row in reversed(tail_csv("logs/recommendations.csv", 1000)) if row.get("created_at", "").startswith(today)]
+    performance = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
+    rows = []
+    for row in reversed(tail_csv("logs/recommendations.csv", 1000)):
+        if not row.get("created_at", "").startswith(today):
+            continue
+        ticker = row.get("ticker", "")
+        rows.append({**row, "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker))})
     return rows[:limit]
 
 
@@ -328,7 +334,7 @@ li{{margin:4px 0}}
 <div class="cards">{cards}</div>
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
-{table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
+{table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "reason", "volume_score", "trading_value_score", "trend_score"])}
 {table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"])}
 {table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
 {table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}

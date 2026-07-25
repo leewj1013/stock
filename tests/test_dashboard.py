@@ -64,9 +64,16 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.tail_csv")
     def test_today_recommendation_rows(self, tail_csv, datetime):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
-        tail_csv.return_value = [{"created_at": "2026-07-24T09:00:00"}, {"created_at": "2026-07-25T09:00:00", "ticker": "A"}]
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"ticker": "A", "news_score": "1"}]
+            return [{"created_at": "2026-07-24T09:00:00"}, {"created_at": "2026-07-25T09:00:00", "ticker": "A"}]
 
-        self.assertEqual("A", today_recommendation_rows()[0]["ticker"])
+        tail_csv.side_effect = fake_tail
+
+        row = today_recommendation_rows()[0]
+        self.assertEqual("A", row["ticker"])
+        self.assertEqual("뉴스 보너스", row["reason"])
 
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
