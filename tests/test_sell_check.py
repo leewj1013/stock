@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, check_position, format_message, max_returns, read_positions, run, write_log
+from stock_alarm.sell_check import SellAlert, alert_summary, check_position, format_message, max_returns, read_positions, run, write_log
 
 
 class SellCheckTest(unittest.TestCase):
@@ -60,6 +60,11 @@ class SellCheckTest(unittest.TestCase):
         self.assertIn("매도 검토 알림", message)
         self.assertIn("005930", message)
         self.assertIn("-6.0%", message)
+        self.assertIn("매도 경고 요약: 손실 -6.0%", message)
+
+    def test_alert_summary(self):
+        self.assertEqual("고점 대비 수익 반납", alert_summary(SellAlert("005930", "Samsung", 100, 102, 2.0, "profit giveback")))
+        self.assertEqual("20일선 이탈", alert_summary(SellAlert("005930", "Samsung", 100, 101, 1.0, "20일선 이탈")))
 
     def test_write_log(self):
         with tempfile.NamedTemporaryFile(delete=False) as file:

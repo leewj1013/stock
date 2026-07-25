@@ -113,9 +113,20 @@ def format_message(alerts: list[SellAlert]) -> str:
         lines.append(f"- 현재가: {alert.close:,}원")
         lines.append(f"- 진입가: {alert.entry_price:,}원")
         lines.append(f"- 손익률: {alert.return_pct:.1f}%")
+        lines.append(f"- 매도 경고 요약: {alert_summary(alert)}")
         lines.append(f"- 사유: {alert.reason}")
     lines.append("※ 조건 기반 매도 검토 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
+
+
+def alert_summary(alert: SellAlert) -> str:
+    if "profit giveback" in alert.reason:
+        return "고점 대비 수익 반납"
+    if alert.return_pct <= -abs(env_float("SELL_LOSS_PCT", 5)):
+        return f"손실 {alert.return_pct:.1f}%"
+    if "20" in alert.reason:
+        return "20일선 이탈"
+    return "수익률 악화"
 
 
 def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
