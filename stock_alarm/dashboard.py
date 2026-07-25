@@ -151,6 +151,7 @@ li{{margin:4px 0}}
 <div class="cards">{cards}</div>
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
 {table("Current settings", settings_rows(), ["setting", "value"])}
+{table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}

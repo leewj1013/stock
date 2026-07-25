@@ -104,6 +104,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("stockAlarm Dashboard", html)
         self.assertIn("Daily check", html)
         self.assertIn("Current settings", html)
+        self.assertIn("Recent deliveries", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)
