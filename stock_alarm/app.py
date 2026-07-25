@@ -23,6 +23,9 @@ class Pick:
     volume_ratio: float
     trading_value: int
     score: float
+    volume_score: float = 0
+    trading_value_score: float = 0
+    trend_score: float = 0
 
     @property
     def reason(self) -> str:
@@ -136,8 +139,9 @@ def make_pick(ticker: str, end_day: date, min_trading_value: int, volume_multipl
         return None
 
     name = stock.get_market_ticker_name(ticker)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
-    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
+    volume_score, trading_value_score, trend_score = calculate_score_parts(close, ma20, volume_ratio, trading_value)
+    score = volume_score + trading_value_score + trend_score + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
+    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2), volume_score, trading_value_score, trend_score)
 
 
 def naver_rows(ticker: str, start_day: date, end_day: date) -> list[list]:
@@ -207,15 +211,20 @@ def make_naver_pick(
     if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
         return None
     name = stock_name(ticker, name)
-    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
-    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
+    volume_score, trading_value_score, trend_score = calculate_score_parts(close, ma20, volume_ratio, trading_value)
+    score = volume_score + trading_value_score + trend_score + news_bonus(name) + dart_bonus(ticker) - performance_penalty(ticker)
+    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2), volume_score, trading_value_score, trend_score)
 
 
 def calculate_score(close: int, ma20: float, volume_ratio: float, trading_value: int) -> float:
+    return round(sum(calculate_score_parts(close, ma20, volume_ratio, trading_value)), 2)
+
+
+def calculate_score_parts(close: int, ma20: float, volume_ratio: float, trading_value: int) -> tuple[float, float, float]:
     volume_score = min(volume_ratio / 3, 1) * 45
-    value_score = min(trading_value / 300_000_000_000, 1) * 35
+    trading_value_score = min(trading_value / 300_000_000_000, 1) * 35
     trend_score = min(max(close / ma20 - 1, 0) / 0.10, 1) * 20
-    return round(volume_score + value_score + trend_score, 2)
+    return round(volume_score, 2), round(trading_value_score, 2), round(trend_score, 2)
 
 
 def news_bonus(name: str) -> float:
@@ -412,7 +421,7 @@ def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
         if not exists:
-            writer.writerow(["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score"])
+            writer.writerow(["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score"])
         for pick in picks:
             writer.writerow(
                 [
@@ -423,6 +432,9 @@ def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None
                     f"{pick.volume_ratio:.2f}",
                     pick.trading_value,
                     f"{pick.score:.2f}",
+                    f"{pick.volume_score:.2f}",
+                    f"{pick.trading_value_score:.2f}",
+                    f"{pick.trend_score:.2f}",
                 ]
             )
 

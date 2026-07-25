@@ -3,7 +3,7 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from stock_alarm.app import calculate_score, dart_bonus, news_bonus, performance_penalty
+from stock_alarm.app import Pick, calculate_score, calculate_score_parts, dart_bonus, news_bonus, performance_penalty, write_log
 
 
 class ScoreTest(unittest.TestCase):
@@ -15,6 +15,22 @@ class ScoreTest(unittest.TestCase):
         strong = calculate_score(108, 100, 2.5, 200_000_000_000)
 
         self.assertGreater(strong, weak)
+
+    def test_score_parts_match_total(self):
+        parts = calculate_score_parts(108, 100, 2.5, 200_000_000_000)
+
+        self.assertEqual(calculate_score(108, 100, 2.5, 200_000_000_000), round(sum(parts), 2))
+
+    def test_write_log_includes_score_parts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "recommendations.csv")
+            write_log([Pick("000001", "A", 1000, 2, 100_000_000_000, 70, 30, 20, 20)], path)
+
+            with open(path, encoding="utf-8-sig") as file:
+                text = file.read()
+
+            self.assertIn("volume_score,trading_value_score,trend_score", text)
+            self.assertIn("30.00,20.00,20.00", text)
 
     @patch.dict("os.environ", {}, clear=True)
     def test_news_bonus_is_off_by_default(self):
