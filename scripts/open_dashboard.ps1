@@ -17,4 +17,7 @@ if (Test-Path ".venv\Scripts\python.exe") {
 }
 
 $dashboard = & $python -m stock_alarm.dashboard
+if ($LASTEXITCODE -ne 0 -or -not $dashboard) {
+    throw "Dashboard generation failed."
+}
 Start-Process -FilePath (Resolve-Path $dashboard)

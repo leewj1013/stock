@@ -49,6 +49,7 @@ class ScriptTest(unittest.TestCase):
 
         self.assertIn("scripts\\open_dashboard.ps1", batch)
         self.assertIn("stock_alarm.dashboard", script)
+        self.assertIn("Dashboard generation failed.", script)
         self.assertIn("Start-Process", script)
 
     def test_issue_alert_macro(self):
