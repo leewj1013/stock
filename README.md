@@ -337,7 +337,7 @@ Registered schedule:
 10:30 intraday  sell_check + positions_report
 13:30 intraday  sell_check + positions_report
 15:00 intraday  sell_check + positions_report
-16:10 daily     recommendation + sell_check + positions_report + performance + summary
+16:10 daily     recommendation + sell_check + positions_report + performance + summary + daily_check
 ```
 
 After 16:10, check today's delivery result:

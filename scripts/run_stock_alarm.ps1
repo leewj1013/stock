@@ -44,5 +44,6 @@ if ($mode -eq "daily" -or $mode -eq "performance") {
 }
 if ($mode -eq "daily") {
     RunStep "daily_summary" "stock_alarm.daily_summary"
+    RunStep "daily_check" "stock_alarm.daily_check"
 }
 exit 0
