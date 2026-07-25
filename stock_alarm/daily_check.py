@@ -28,8 +28,10 @@ def status(today: date | None = None, path: str = "logs/deliveries.csv") -> str:
 
 
 def lines(today: date | None = None, path: str = "logs/deliveries.csv") -> list[str]:
+    from .health import dashboard_ready
+
     deliveries = tail_csv(path, 200)
-    return [status(today, path), *run_log_statuses(today), task_error_status(today=today), f"latest_error={latest_error_summary(deliveries)}"]
+    return [status(today, path), *run_log_statuses(today), task_error_status(today=today), f"dashboard_ready={dashboard_ready()}", f"latest_error={latest_error_summary(deliveries)}"]
 
 
 def task_error_status(path: str = "logs/task.err.log", today: date | None = None) -> str:

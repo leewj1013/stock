@@ -51,6 +51,7 @@ class DailyCheckTest(unittest.TestCase):
 
         self.assertIn("daily ok: telegram", text)
         self.assertIn("task_error=", text)
+        self.assertIn("dashboard_ready=", text)
         self.assertIn("latest_error=", text)
 
     def test_task_error_status(self):
