@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-@(
+$rows = @(
 foreach ($name in "stockAlarmOpen", "stockAlarmIntraday1030", "stockAlarmIntraday1330", "stockAlarmIntraday1500", "stockAlarmDaily") {
     $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
     $info = Get-ScheduledTaskInfo -TaskName $name
@@ -15,4 +15,9 @@ foreach ($name in "stockAlarmOpen", "stockAlarmIntraday1030", "stockAlarmIntrada
         NumberOfMissedRuns = $info.NumberOfMissedRuns
     }
 }
-) | Format-Table -AutoSize
+)
+$rows | Format-Table -AutoSize
+$next = $rows | Where-Object { $_.NextRunTime -gt (Get-Date) } | Sort-Object NextRunTime | Select-Object -First 1
+if ($next) {
+    Write-Output "next_run=$($next.TaskName) at $($next.NextRunTime)"
+}

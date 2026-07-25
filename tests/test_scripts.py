@@ -27,6 +27,13 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stockAlarmIntraday1330", script)
         self.assertIn("stockAlarmIntraday1500", script)
 
+    def test_status_task_shows_next_run(self):
+        with open("scripts/status_daily_task.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("NextRunTime", script)
+        self.assertIn("next_run=", script)
+
     def test_start_macro_registers_and_checks(self):
         with open("start_stock_alarm.bat", encoding="utf-8-sig") as file:
             batch = file.read()
