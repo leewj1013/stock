@@ -137,6 +137,18 @@ def settings_rows() -> list[dict[str, str]]:
     return rows
 
 
+def issue_rows() -> list[dict[str, str]]:
+    rows = []
+    for label, value in metric_cards():
+        if status_class(value) in {"bad", "warn"}:
+            rows.append({"source": "card", "item": label, "status": value})
+    for row in [*settings_rows(), *today_run_rows()]:
+        value = row.get("value", row.get("status", ""))
+        if status_class(value) in {"bad", "warn"}:
+            rows.append({"source": row.get("setting") and "setting" or "run", "item": row.get("setting", row.get("step", "")), "status": value})
+    return rows or [{"source": "dashboard", "item": "issues", "status": "none"}]
+
+
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     body = "".join("<tr>" + "".join(cell(row.get(column, "")) for column in columns) + "</tr>" for row in rows)
     head = "".join(f"<th>{e(column)}</th>" for column in columns)
@@ -191,6 +203,7 @@ li{{margin:4px 0}}
 <h1>stockAlarm Dashboard</h1>
 <div class="muted">generated {e(datetime.now().isoformat(timespec="seconds"))}</div>
 <div class="cards">{cards}</div>
+{table("Issues", issue_rows(), ["source", "item", "status"])}
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
 {table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, write
+from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -51,6 +51,24 @@ class DashboardTest(unittest.TestCase):
             [{"step": "recommendations", "status": "ok"}, {"step": "positions_report", "status": "missing"}],
             today_run_rows(),
         )
+
+    @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "positions_report", "status": "missing"}])
+    @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "DART_API_KEY", "value": "missing"}])
+    @patch("stock_alarm.dashboard.metric_cards", return_value=[("latest error", "none")])
+    def test_issue_rows(self, _cards, _settings, _runs):
+        self.assertEqual(
+            [
+                {"source": "setting", "item": "DART_API_KEY", "status": "missing"},
+                {"source": "run", "item": "positions_report", "status": "missing"},
+            ],
+            issue_rows(),
+        )
+
+    @patch("stock_alarm.dashboard.today_run_rows", return_value=[])
+    @patch("stock_alarm.dashboard.settings_rows", return_value=[])
+    @patch("stock_alarm.dashboard.metric_cards", return_value=[("latest error", "none")])
+    def test_issue_rows_shows_none(self, _cards, _settings, _runs):
+        self.assertEqual([{"source": "dashboard", "item": "issues", "status": "none"}], issue_rows())
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_performance_summary_rows(self, tail_csv):
@@ -127,6 +145,7 @@ class DashboardTest(unittest.TestCase):
 
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.metric_cards", return_value=[("positions", "1")])
+    @patch("stock_alarm.dashboard.issue_rows", return_value=[])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[])
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[])
     @patch("stock_alarm.dashboard.performance_summary_rows", return_value=[])
@@ -135,10 +154,11 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.sell_alerted_recommendation_rows", return_value=[])
     @patch("stock_alarm.dashboard.tail_text", return_value=[])
     @patch("stock_alarm.dashboard.tail_csv", return_value=[])
-    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _run_rows, _settings, _cards, _daily):
+    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _run_rows, _settings, _issues, _cards, _daily):
         html = render()
 
         self.assertIn("stockAlarm Dashboard", html)
+        self.assertIn("Issues", html)
         self.assertIn("Daily check", html)
         self.assertIn("Current settings", html)
         self.assertIn("Recent deliveries", html)
