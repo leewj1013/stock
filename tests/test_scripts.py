@@ -39,6 +39,16 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.dashboard", script)
         self.assertIn("Start-Process", script)
 
+    def test_open_dashboard_macro(self):
+        with open("open_dashboard.bat", encoding="utf-8-sig") as file:
+            batch = file.read()
+        with open("scripts/open_dashboard.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("scripts\\open_dashboard.ps1", batch)
+        self.assertIn("stock_alarm.dashboard", script)
+        self.assertIn("Start-Process", script)
+
 
 if __name__ == "__main__":
     unittest.main()

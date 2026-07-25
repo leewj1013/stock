@@ -381,6 +381,12 @@ Generate a local HTML dashboard:
 .\.venv\Scripts\python -m stock_alarm.dashboard
 ```
 
+Or double-click:
+
+```text
+open_dashboard.bat
+```
+
 Open:
 
 ```text

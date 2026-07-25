@@ -16,6 +16,7 @@
 - Recommendation performance: `python -m stock_alarm.recommendation_performance`
 - Daily summary: `python -m stock_alarm.daily_summary`
 - Dashboard: `python -m stock_alarm.dashboard` writes `reports/dashboard.html`
+- Dashboard macro: double-click `open_dashboard.bat`
 - Failure alert: `python -m stock_alarm.failure_alert <step> <exit_code>`
 - Scheduled run: `scripts/run_stock_alarm.ps1` supports `open`, `intraday`, `performance`, and default `daily` modes
 - Reboot startup macro: double-click `start_stock_alarm.bat`
