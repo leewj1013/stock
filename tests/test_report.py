@@ -74,6 +74,15 @@ class ReportTest(unittest.TestCase):
         self.assertIn("permission denied", task_status())
 
     @patch("stock_alarm.report.subprocess.run")
+    def test_task_status_checks_all_tasks(self, run):
+        from stock_alarm.report import task_status
+
+        run.return_value = subprocess.CompletedProcess(["pwsh"], 0, b"stockAlarmDaily: LastTaskResult=0", b"")
+
+        self.assertIn("stockAlarmDaily", task_status())
+        self.assertIn("stockAlarmOpen", run.call_args.args[0][-1])
+
+    @patch("stock_alarm.report.subprocess.run")
     def test_task_status_explains_generic_failure(self, run):
         from stock_alarm.report import task_status
 

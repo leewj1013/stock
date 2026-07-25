@@ -1,7 +1,8 @@
 import os
 import unittest
+from unittest.mock import patch
 
-from stock_alarm.health import enabled, yes
+from stock_alarm.health import enabled, lines, yes
 
 
 class HealthTest(unittest.TestCase):
@@ -21,6 +22,16 @@ class HealthTest(unittest.TestCase):
                 os.environ.pop("X_ENABLED", None)
             else:
                 os.environ["X_ENABLED"] = old
+
+    @patch("stock_alarm.health.latest_naver_trading_day")
+    @patch("stock_alarm.health.configured_stocks", return_value={"005930": "Samsung"})
+    @patch.dict(os.environ, {"DART_LOOKUP": "1", "DART_API_KEY": "x", "NEWS_SCORE_WEIGHT": "2"}, clear=True)
+    def test_lines_includes_external_signal_settings(self, _stocks, _day):
+        text = "\n".join(lines())
+
+        self.assertIn("DART_LOOKUP=on", text)
+        self.assertIn("DART_API_KEY=ok", text)
+        self.assertIn("NEWS_SCORE_WEIGHT=2", text)
 
 
 if __name__ == "__main__":

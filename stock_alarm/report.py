@@ -50,12 +50,15 @@ def delivery_status(deliveries: list[dict[str, str]]) -> str:
 
 
 def task_status() -> str:
+    names = "stockAlarmOpen", "stockAlarmIntraday1030", "stockAlarmIntraday1330", "stockAlarmIntraday1500", "stockAlarmDaily"
     command = [
         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
         "-NoProfile",
         "-Command",
-        "$i=Get-ScheduledTaskInfo -TaskName stockAlarmDaily; "
-        "Write-Output ('LastTaskResult={0}; NextRunTime={1}' -f $i.LastTaskResult,$i.NextRunTime)",
+        "; ".join(
+            f"$i=Get-ScheduledTaskInfo -TaskName {name}; Write-Output ('{name}: LastTaskResult={{0}}; NextRunTime={{1}}' -f $i.LastTaskResult,$i.NextRunTime)"
+            for name in names
+        ),
     ]
     try:
         result = subprocess.run(command, capture_output=True, timeout=10)
