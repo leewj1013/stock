@@ -148,6 +148,12 @@ def lines() -> list[str]:
     output.append("")
     output.append("## recent task log")
     output.extend(f"- {line}" for line in tail_text("logs/task.out.log", 10))
+    output.append("")
+    output.append("## recent task errors")
+    task_errors = tail_text("logs/task.err.log", 10)
+    output.extend(f"- {line}" for line in task_errors)
+    if not task_errors:
+        output.append("- none")
     return output
 
 

@@ -106,6 +106,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("- confidence=weak", report)
         self.assertIn("## recent sell alerts", report)
         self.assertIn("## recent task log", report)
+        self.assertIn("## recent task errors", report)
 
 
 if __name__ == "__main__":
