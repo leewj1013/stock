@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, table, write
+from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, settings_rows, table, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -82,19 +82,28 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual([{"ticker": "000001", "name": "A", "penalty": "4.00"}], performance_penalty_rows())
 
+    @patch("stock_alarm.dashboard.health_lines", return_value=["NEWS_SCORE_WEIGHT=2", "task_error=none"])
+    def test_settings_rows(self, _health):
+        self.assertEqual(
+            [{"setting": "NEWS_SCORE_WEIGHT", "value": "2"}, {"setting": "task_error", "value": "none"}],
+            settings_rows(),
+        )
+
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.metric_cards", return_value=[("positions", "1")])
+    @patch("stock_alarm.dashboard.settings_rows", return_value=[])
     @patch("stock_alarm.dashboard.performance_summary_rows", return_value=[])
     @patch("stock_alarm.dashboard.recommendation_rank_rows", return_value=[])
     @patch("stock_alarm.dashboard.performance_penalty_rows", return_value=[])
     @patch("stock_alarm.dashboard.sell_alerted_recommendation_rows", return_value=[])
     @patch("stock_alarm.dashboard.tail_text", return_value=[])
     @patch("stock_alarm.dashboard.tail_csv", return_value=[])
-    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _cards, _daily):
+    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _settings, _cards, _daily):
         html = render()
 
         self.assertIn("stockAlarm Dashboard", html)
         self.assertIn("Daily check", html)
+        self.assertIn("Current settings", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)

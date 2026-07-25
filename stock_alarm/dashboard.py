@@ -7,6 +7,7 @@ from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines
+from .health import lines as health_lines
 from .positions_check import position_count
 from .report import tail_csv, tail_text
 
@@ -109,6 +110,15 @@ def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
     return rows
 
 
+def settings_rows() -> list[dict[str, str]]:
+    rows = []
+    for line in health_lines():
+        key, separator, value = line.partition("=")
+        if separator:
+            rows.append({"setting": key, "value": value})
+    return rows
+
+
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     body = "".join("<tr>" + "".join(f"<td>{e(row.get(column, ''))}</td>" for column in columns) + "</tr>" for row in rows)
     head = "".join(f"<th>{e(column)}</th>" for column in columns)
@@ -140,6 +150,7 @@ li{{margin:4px 0}}
 <div class="muted">generated {e(datetime.now().isoformat(timespec="seconds"))}</div>
 <div class="cards">{cards}</div>
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
+{table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
