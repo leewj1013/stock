@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, recommendation_reason_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -162,6 +162,7 @@ class DashboardTest(unittest.TestCase):
                     "ticker": "000001",
                     "name": "A",
                     "score": "80",
+                    "reason": "거래량 급증 + 뉴스 보너스 + 공시 보너스 + 성과 감점",
                     "volume_ratio": "2.50",
                     "trading_value_억": "123",
                     "news_score": "2.00",
@@ -171,6 +172,9 @@ class DashboardTest(unittest.TestCase):
             ],
             recommendation_reason_rows(),
         )
+
+    def test_reason_summary(self):
+        self.assertEqual("기본 조건 충족", reason_summary({"volume_ratio": "1.5"}, {}, 0))
 
     def test_trading_value_eok(self):
         self.assertEqual("123", trading_value_eok("12300000000"))

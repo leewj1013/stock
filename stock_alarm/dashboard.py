@@ -138,22 +138,47 @@ def recommendation_reason_rows(limit: int = 10) -> list[dict[str, str]]:
             continue
         seen.add(ticker)
         performance_row = performance.get(ticker, {})
+        penalty = performance_penalty(ticker)
         rows.append(
             {
                 "created_at": recommendation.get("created_at", ""),
                 "ticker": ticker,
                 "name": recommendation.get("name", ""),
                 "score": recommendation.get("score", ""),
+                "reason": reason_summary(recommendation, performance_row, penalty),
                 "volume_ratio": recommendation.get("volume_ratio", ""),
                 "trading_value_억": trading_value_eok(recommendation.get("trading_value", "")),
                 "news_score": performance_row.get("news_score", ""),
                 "disclosure_score": performance_row.get("disclosure_score", ""),
-                "performance_penalty": f"{performance_penalty(ticker):.2f}",
+                "performance_penalty": f"{penalty:.2f}",
             }
         )
         if len(rows) >= limit:
             return rows
     return rows
+
+
+def reason_summary(recommendation: dict[str, str], performance: dict[str, str], penalty: float) -> str:
+    parts = []
+    try:
+        if float(recommendation.get("volume_ratio", 0)) >= 2:
+            parts.append("거래량 급증")
+    except ValueError:
+        pass
+    if positive(performance.get("news_score", "")):
+        parts.append("뉴스 보너스")
+    if positive(performance.get("disclosure_score", "")):
+        parts.append("공시 보너스")
+    if penalty:
+        parts.append("성과 감점")
+    return " + ".join(parts) or "기본 조건 충족"
+
+
+def positive(value: str) -> bool:
+    try:
+        return float(value) > 0
+    except ValueError:
+        return False
 
 
 def trading_value_eok(value: str) -> str:
@@ -248,7 +273,7 @@ li{{margin:4px 0}}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
-{table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
+{table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "reason"])}
