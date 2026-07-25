@@ -7,7 +7,7 @@ from datetime import date
 from io import StringIO
 from unittest.mock import patch
 
-from stock_alarm.daily_check import lines, main, run_log_statuses, status
+from stock_alarm.daily_check import lines, main, run_log_statuses, status, task_error_status
 
 
 class DailyCheckTest(unittest.TestCase):
@@ -50,7 +50,14 @@ class DailyCheckTest(unittest.TestCase):
         text = "\n".join(lines(date(2026, 7, 25), path))
 
         self.assertIn("daily ok: telegram", text)
+        self.assertIn("task_error=", text)
         self.assertIn("latest_error=", text)
+
+    def test_task_error_status(self):
+        path = self.write_named_log(["line"], [["boom"]])
+
+        self.assertEqual("task_error=found", task_error_status(path))
+        self.assertEqual("task_error=none", task_error_status("does-not-exist.log"))
 
     def test_run_log_statuses(self):
         today_path = self.write_named_log(["created_at"], [["2026-07-25T09:00:00"]])
