@@ -56,6 +56,7 @@ dart: ready, lookup on, score weight 1
 task_error: none
 dashboard_ready: ok
 dashboard: reports/dashboard.html generated
+next_run: shown by scripts/status_daily_task.ps1 as next_run=<task> at <time>
 ```
 
 ## Defaults
@@ -94,4 +95,4 @@ Keep one combined dashboard at `reports/dashboard.html`.
 
 ## Next best step
 
-Watch the next scheduled run, then check `python -m stock_alarm.daily_check` and `reports/dashboard.html`.
+Watch `scripts/status_daily_task.ps1` for `next_run=...`, then check `python -m stock_alarm.daily_check` and `reports/dashboard.html`.
