@@ -58,6 +58,23 @@ class FormatMessageTest(unittest.TestCase):
 
         self.assertIn("공시 보너스: +3.0점", message)
 
+    @patch("stock_alarm.app.news_bonus", return_value=2)
+    def test_includes_news_bonus_when_present(self, _bonus):
+        message = format_message(
+            [
+                Pick(
+                    ticker="005930",
+                    name="Samsung",
+                    close=80000,
+                    volume_ratio=2.3,
+                    trading_value=123_000_000_000,
+                    score=76.5,
+                )
+            ]
+        )
+
+        self.assertIn("뉴스 보너스: +2.0점", message)
+
 
 if __name__ == "__main__":
     unittest.main()

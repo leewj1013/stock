@@ -375,11 +375,14 @@ def format_message(picks: list[Pick]) -> str:
         return "오늘 조건에 맞는 관심 종목이 없습니다."
     lines = ["[오늘의 국내주식 관심 종목]"]
     for index, pick in enumerate(picks, 1):
+        news = news_bonus(pick.name)
         penalty = performance_penalty(pick.ticker)
         disclosure = dart_bonus(pick.ticker)
         lines.append(f"{index}. {pick.name}({pick.ticker})")
         lines.append(f"- 종가: {pick.close:,}원")
         lines.append(f"- 점수: {pick.score:.1f}")
+        if news:
+            lines.append(f"- 뉴스 보너스: +{news:.1f}점")
         if disclosure:
             lines.append(f"- 공시 보너스: +{disclosure:.1f}점")
         if penalty:
