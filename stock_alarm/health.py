@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from .app import configured_stocks, latest_naver_trading_day, load_env, write_error_log
+from .report import tail_text
 
 
 def yes(value: bool) -> str:
@@ -41,6 +42,7 @@ def lines() -> list[str]:
         f"MIN_RECOMMEND_SCORE={os.environ.get('MIN_RECOMMEND_SCORE', '0')}",
         f"DART_LOOKUP={enabled('DART_LOOKUP')}",
         f"DART_API_KEY={yes(bool(os.environ.get('DART_API_KEY')))}",
+        f"task_error={'found' if tail_text('logs/task.err.log', 1) else 'none'}",
         f"recommendations_log={yes(os.path.exists('logs/recommendations.csv'))}",
         f"errors_log={yes(os.path.exists('logs/errors.log'))}",
     ]

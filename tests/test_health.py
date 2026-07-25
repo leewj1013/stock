@@ -24,14 +24,16 @@ class HealthTest(unittest.TestCase):
                 os.environ["X_ENABLED"] = old
 
     @patch("stock_alarm.health.latest_naver_trading_day")
+    @patch("stock_alarm.health.tail_text", return_value=["boom"])
     @patch("stock_alarm.health.configured_stocks", return_value={"005930": "Samsung"})
     @patch.dict(os.environ, {"DART_LOOKUP": "1", "DART_API_KEY": "x", "NEWS_SCORE_WEIGHT": "2"}, clear=True)
-    def test_lines_includes_external_signal_settings(self, _stocks, _day):
+    def test_lines_includes_external_signal_settings(self, _stocks, _tail, _day):
         text = "\n".join(lines())
 
         self.assertIn("DART_LOOKUP=on", text)
         self.assertIn("DART_API_KEY=ok", text)
         self.assertIn("NEWS_SCORE_WEIGHT=2", text)
+        self.assertIn("task_error=found", text)
 
 
 if __name__ == "__main__":
