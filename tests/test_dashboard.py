@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, render, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -30,16 +30,34 @@ class DashboardTest(unittest.TestCase):
 
     @patch("stock_alarm.dashboard.latest_error_summary", return_value="none")
     @patch("stock_alarm.dashboard.position_count", return_value=1)
+    @patch("stock_alarm.dashboard.today_issue_count", return_value=2)
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_metric_cards_include_latest_error(self, tail_csv, _positions, _error):
+    def test_metric_cards_include_latest_error(self, tail_csv, _issues, _positions, _error):
         tail_csv.side_effect = [
             [{"metric": "rows", "value": "3"}],
             [{"created_at": "2026-07-25T09:00:00", "channel": "telegram"}],
+            [{"created_at": "2026-07-25T09:00:00"}],
+            [{"created_at": "2026-07-25T10:00:00"}],
         ]
 
         from stock_alarm.dashboard import metric_cards
 
-        self.assertIn(("latest error", "none"), metric_cards())
+        cards = metric_cards()
+        self.assertIn(("latest error", "none"), cards)
+        self.assertIn(("today issues", "2"), cards)
+
+    @patch("stock_alarm.dashboard.datetime")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_csv_count(self, tail_csv, datetime):
+        datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
+        tail_csv.return_value = [{"created_at": "2026-07-25T09:00:00"}, {"created_at": "2026-07-24T09:00:00"}]
+
+        self.assertEqual(1, today_csv_count("logs/recommendations.csv"))
+
+    @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
+    @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
+    def test_today_issue_count(self, _settings, _runs):
+        self.assertEqual(1, today_issue_count())
 
     @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "sell_check=missing", "dashboard=ok"])
     def test_today_run_summary(self, _statuses):

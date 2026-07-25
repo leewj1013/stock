@@ -24,6 +24,9 @@ def metric_cards() -> list[tuple[str, str]]:
     deliveries = tail_csv("logs/deliveries.csv", 50)
     return [
         ("positions", str(position_count())),
+        ("today recommendations", str(today_csv_count("logs/recommendations.csv"))),
+        ("today sell alerts", str(today_csv_count("logs/sell_alerts.csv"))),
+        ("today issues", str(today_issue_count())),
         ("performance rows", summary.get("rows", "0")),
         ("completed 1d", summary.get("completed_1d", "0")),
         ("avg 1d return", value_or_dash(summary.get("avg_1d_return_pct"), "%")),
@@ -38,6 +41,16 @@ def today_run_summary() -> str:
     statuses = run_log_statuses()
     ok = sum(line.endswith("=ok") for line in statuses)
     return f"{ok}/{len(statuses)} ok" if statuses else "0/0 ok"
+
+
+def today_csv_count(path: str) -> int:
+    today = datetime.now().date().isoformat()
+    return sum(row.get("created_at", "").startswith(today) for row in tail_csv(path, 1000))
+
+
+def today_issue_count() -> int:
+    rows = [*settings_rows(), *today_run_rows()]
+    return sum(status_class(row.get("value", row.get("status", ""))) in {"bad", "warn"} for row in rows)
 
 
 def today_run_rows() -> list[dict[str, str]]:
