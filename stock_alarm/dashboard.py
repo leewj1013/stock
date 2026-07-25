@@ -48,7 +48,7 @@ def performance_summary_rows() -> list[dict[str, str]]:
     return [{"metric": label, "value": value_or_dash(summary.get(key), suffix)} for label, key, suffix in labels]
 
 
-def recommendation_rank_rows(limit: int = 10) -> list[dict[str, str]]:
+def recommendation_rank_rows(limit: int = 10, worst: bool = False) -> list[dict[str, str]]:
     grouped: dict[tuple[str, str], list[float]] = {}
     for row in tail_csv("logs/recommendation_performance.csv", 1000):
         value = row.get("return_1d_pct")
@@ -66,7 +66,7 @@ def recommendation_rank_rows(limit: int = 10) -> list[dict[str, str]]:
         }
         for (ticker, name), values in grouped.items()
     ]
-    return sorted(rows, key=lambda row: float(row["avg_1d_return_pct"]), reverse=True)[:limit]
+    return sorted(rows, key=lambda row: float(row["avg_1d_return_pct"]), reverse=not worst)[:limit]
 
 
 def sell_alerted_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
@@ -126,6 +126,7 @@ li{{margin:4px 0}}
 <section><h2>Daily check</h2><ul>{checks}</ul></section>
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
+{table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}

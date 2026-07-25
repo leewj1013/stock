@@ -46,6 +46,8 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("3.00", rows[0]["avg_1d_return_pct"])
         self.assertEqual("50.0", rows[1]["win_rate_1d_pct"])
 
+        self.assertEqual("000001", recommendation_rank_rows(worst=True)[0]["ticker"])
+
     @patch("stock_alarm.dashboard.tail_csv")
     def test_sell_alerted_recommendation_rows(self, tail_csv):
         def fake_tail(path, _count):
@@ -84,6 +86,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Daily check", html)
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
+        self.assertIn("Worst recommendation performance", html)
         self.assertIn("Recommendations with sell alerts", html)
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")
