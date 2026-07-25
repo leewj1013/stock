@@ -1,0 +1,436 @@
+from __future__ import annotations
+
+import csv
+import json
+import os
+import ast
+import traceback
+import urllib.parse
+import urllib.request
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from functools import lru_cache
+from io import StringIO
+from statistics import mean
+
+
+@dataclass(frozen=True)
+class Pick:
+    ticker: str
+    name: str
+    close: int
+    volume_ratio: float
+    trading_value: int
+    score: float
+
+    @property
+    def reason(self) -> str:
+        return (
+            f"거래량 {self.volume_ratio:.1f}배, "
+            f"20일선 상회, 거래대금 {self.trading_value / 100_000_000:.0f}억 원"
+        )
+
+
+DEFAULT_STOCKS = {
+    "005930": "Samsung Electronics",
+    "000660": "SK hynix",
+    "035420": "NAVER",
+    "035720": "Kakao",
+    "005380": "Hyundai Motor",
+    "051910": "LG Chem",
+    "006400": "Samsung SDI",
+    "068270": "Celltrion",
+    "105560": "KB Financial",
+    "055550": "Shinhan Financial",
+}
+
+WATCHLIST_PATH = "data/watchlist.csv"
+POSITIONS_PATH = "data/positions.csv"
+
+
+def load_env(path: str = ".env") -> None:
+    os.makedirs(".cache/matplotlib", exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", os.path.abspath(".cache/matplotlib"))
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as file:
+        for raw in file:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+def save_env_value(key: str, value: str, path: str = ".env") -> None:
+    lines = []
+    found = False
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as file:
+            lines = file.readlines()
+    for index, raw in enumerate(lines):
+        if raw.strip().startswith(f"{key}="):
+            lines[index] = f"{key}={value}\n"
+            found = True
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(path, "w", encoding="utf-8") as file:
+        file.writelines(lines)
+
+
+def yyyymmdd(day: date) -> str:
+    return day.strftime("%Y%m%d")
+
+
+def env_date(name: str, default: date) -> date:
+    value = os.environ.get(name, "")
+    return datetime.strptime(value, "%Y-%m-%d").date() if value else default
+
+
+def env_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "")
+    return float(value) if value else default
+
+
+def latest_trading_day() -> date:
+    from pykrx import stock
+
+    day = env_date("AS_OF_DATE", date.today())
+    for _ in range(900):
+        try:
+            frame = stock.get_market_ohlcv_by_ticker(yyyymmdd(day), market="KOSPI")
+            if not frame.empty:
+                return day
+        except Exception:
+            pass
+        day -= timedelta(days=1)
+    raise RuntimeError("Could not find a recent trading day.")
+
+
+def make_pick(ticker: str, end_day: date, min_trading_value: int, volume_multiplier: float) -> Pick | None:
+    from pykrx import stock
+
+    start_day = end_day - timedelta(days=60)
+    frame = stock.get_market_ohlcv_by_date(yyyymmdd(start_day), yyyymmdd(end_day), ticker)
+    if len(frame) < 21 or len(frame.columns) < 6:
+        return None
+
+    closes = [int(value) for value in frame.iloc[:, 3].tail(20)]
+    highs = [int(value) for value in frame.iloc[:, 1].tail(10)]
+    lows = [int(value) for value in frame.iloc[:, 2].tail(10)]
+    volumes = [int(value) for value in frame.iloc[:, 4].tail(21)]
+    today_volume = volumes[-1]
+    avg_volume = mean(volumes[:-1])
+    close = closes[-1]
+    ma20 = mean(closes)
+    trading_value = int(frame.iloc[-1, 5])
+
+    if avg_volume <= 0:
+        return None
+    volume_ratio = today_volume / avg_volume
+    previous_close = int(frame.iloc[-2, 3])
+    if not passes_risk_filters(previous_close, close, highs, lows, closes[-10:]):
+        return None
+    if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
+        return None
+
+    name = stock.get_market_ticker_name(ticker)
+    score = calculate_score(close, ma20, volume_ratio, trading_value)
+    return Pick(ticker, name, close, volume_ratio, trading_value, score)
+
+
+def naver_rows(ticker: str, start_day: date, end_day: date) -> list[list]:
+    cache_path = naver_cache_path(ticker, start_day, end_day)
+    if os.environ.get("NO_CACHE", "0") != "1" and os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as file:
+            return json.load(file)
+
+    url = "https://api.finance.naver.com/siseJson.naver?" + urllib.parse.urlencode(
+        {
+            "symbol": ticker,
+            "requestType": 1,
+            "startTime": yyyymmdd(start_day),
+            "endTime": yyyymmdd(end_day),
+            "timeframe": "day",
+        }
+    )
+    with urllib.request.urlopen(url, timeout=10) as response:
+        body = response.read()
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        text = body.decode("cp949")
+    rows = ast.literal_eval(text.strip())
+    data = [row for row in rows[1:] if row]
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False)
+    return data
+
+
+def naver_cache_path(ticker: str, start_day: date, end_day: date) -> str:
+    return os.path.join(".cache", "naver", f"{ticker}-{yyyymmdd(start_day)}-{yyyymmdd(end_day)}.json")
+
+
+def latest_naver_trading_day() -> date:
+    end_day = env_date("AS_OF_DATE", date.today())
+    rows = naver_rows("005930", end_day - timedelta(days=30), end_day)
+    if not rows:
+        raise RuntimeError("Could not find a recent Naver trading day.")
+    return datetime.strptime(str(rows[-1][0]), "%Y%m%d").date()
+
+
+def make_naver_pick(
+    ticker: str, name: str, end_day: date, min_trading_value: int, volume_multiplier: float
+) -> Pick | None:
+    rows = naver_rows(ticker, end_day - timedelta(days=90), end_day)
+    if len(rows) < 21:
+        return None
+
+    closes = [int(row[4]) for row in rows[-20:]]
+    highs = [int(row[2]) for row in rows[-10:]]
+    lows = [int(row[3]) for row in rows[-10:]]
+    volumes = [int(row[5]) for row in rows[-21:]]
+    today_volume = volumes[-1]
+    avg_volume = mean(volumes[:-1])
+    close = closes[-1]
+    ma20 = mean(closes)
+    trading_value = close * today_volume
+
+    if avg_volume <= 0:
+        return None
+    volume_ratio = today_volume / avg_volume
+    previous_close = int(rows[-2][4])
+    if not passes_risk_filters(previous_close, close, highs, lows, closes[-10:]):
+        return None
+    if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
+        return None
+    score = calculate_score(close, ma20, volume_ratio, trading_value)
+    return Pick(ticker, stock_name(ticker, name), close, volume_ratio, trading_value, score)
+
+
+def calculate_score(close: int, ma20: float, volume_ratio: float, trading_value: int) -> float:
+    volume_score = min(volume_ratio / 3, 1) * 45
+    value_score = min(trading_value / 300_000_000_000, 1) * 35
+    trend_score = min(max(close / ma20 - 1, 0) / 0.10, 1) * 20
+    return round(volume_score + value_score + trend_score, 2)
+
+
+@lru_cache(maxsize=512)
+def stock_name(ticker: str, fallback: str) -> str:
+    if os.environ.get("KOREAN_STOCK_NAMES", "1") != "1":
+        return fallback
+    try:
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            from pykrx import stock
+
+            return stock.get_market_ticker_name(ticker) or fallback
+    except Exception:
+        return fallback
+
+
+def day_change_pct(previous_close: int, close: int) -> float:
+    return (close - previous_close) / previous_close * 100 if previous_close else 0
+
+
+def average_intraday_range_pct(highs: list[int], lows: list[int], closes: list[int]) -> float:
+    ranges = [(high - low) / close * 100 for high, low, close in zip(highs, lows, closes) if close]
+    return mean(ranges) if ranges else 0
+
+
+def passes_risk_filters(previous_close: int, close: int, highs: list[int], lows: list[int], closes: list[int]) -> bool:
+    max_day_change = env_float("MAX_DAY_CHANGE_PCT", 8)
+    max_range = env_float("MAX_AVG_RANGE_PCT", 12)
+    if abs(day_change_pct(previous_close, close)) > max_day_change:
+        return False
+    return average_intraday_range_pct(highs, lows, closes) <= max_range
+
+
+def market_up_ratio(moves: list[bool]) -> float:
+    return sum(moves) / len(moves) if moves else 0
+
+
+def naver_market_up_ratio(end_day: date) -> float:
+    moves = []
+    for ticker in configured_stocks():
+        rows = naver_rows(ticker, end_day - timedelta(days=10), end_day)
+        if len(rows) >= 2:
+            moves.append(int(rows[-1][4]) > int(rows[-2][4]))
+    return market_up_ratio(moves)
+
+
+def passes_market_filter(end_day: date) -> bool:
+    minimum = env_float("MIN_MARKET_UP_RATIO", 0)
+    return naver_market_up_ratio(end_day) >= minimum
+
+
+def configured_stocks() -> dict[str, str]:
+    raw = os.environ.get("STOCKS", "")
+    stocks: dict[str, str] = {}
+    if raw:
+        for item in raw.split(","):
+            ticker, _, name = item.partition(":")
+            ticker = ticker.strip()
+            if ticker:
+                stocks[ticker] = name.strip() or ticker
+        return stocks
+    if os.path.exists(WATCHLIST_PATH):
+        with open(WATCHLIST_PATH, newline="", encoding="utf-8") as file:
+            for row in csv.DictReader(file):
+                ticker = row.get("ticker", "").strip()
+                name = row.get("name", "").strip()
+                if ticker:
+                    stocks[ticker] = name or ticker
+        return stocks
+    return DEFAULT_STOCKS
+
+
+def recommend_naver(end_day: date, top_n: int, min_trading_value: int, volume_multiplier: float) -> list[Pick]:
+    if not passes_market_filter(end_day):
+        return []
+    picks = []
+    for ticker, name in configured_stocks().items():
+        pick = make_naver_pick(ticker, name, end_day, min_trading_value, volume_multiplier)
+        if pick:
+            picks.append(pick)
+    return sorted(picks, key=lambda item: item.score, reverse=True)[:top_n]
+
+
+def recommend_for_day(
+    end_day: date,
+    markets: list[str],
+    top_n: int,
+    min_trading_value: int,
+    volume_multiplier: float,
+    ticker_provider=None,
+) -> list[Pick]:
+    if ticker_provider is None:
+        from pykrx import stock
+
+        ticker_provider = stock.get_market_ticker_list
+    picks: list[Pick] = []
+    for market in markets:
+        for ticker in ticker_provider(yyyymmdd(end_day), market=market):
+            pick = make_pick(ticker, end_day, min_trading_value, volume_multiplier)
+            if pick:
+                picks.append(pick)
+    return sorted(picks, key=lambda item: item.score, reverse=True)[:top_n]
+
+
+def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_multiplier: float) -> list[Pick]:
+    if os.environ.get("DATA_SOURCE", "naver").lower() == "naver":
+        return recommend_naver(latest_naver_trading_day(), top_n, min_trading_value, volume_multiplier)
+    return recommend_for_day(latest_trading_day(), markets, top_n, min_trading_value, volume_multiplier)
+
+
+def format_message(picks: list[Pick]) -> str:
+    if not picks:
+        return "오늘 조건에 맞는 관심 종목이 없습니다."
+    lines = ["[오늘의 국내주식 관심 종목]"]
+    for index, pick in enumerate(picks, 1):
+        lines.append(f"{index}. {pick.name}({pick.ticker})")
+        lines.append(f"- 종가: {pick.close:,}원")
+        lines.append(f"- 점수: {pick.score:.1f}")
+        lines.append(f"- 사유: {pick.reason}")
+    lines.append("※ 조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
+    return "\n".join(lines)
+
+
+def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    exists = os.path.exists(path)
+    with open(path, "a", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+        if not exists:
+            writer.writerow(["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score"])
+        for pick in picks:
+            writer.writerow(
+                [
+                    datetime.now().isoformat(timespec="seconds"),
+                    pick.ticker,
+                    pick.name,
+                    pick.close,
+                    f"{pick.volume_ratio:.2f}",
+                    pick.trading_value,
+                    f"{pick.score:.2f}",
+                ]
+            )
+
+
+def track_positions(picks: list[Pick], path: str = POSITIONS_PATH) -> int:
+    if os.environ.get("AUTO_TRACK_PICKS", "1") != "1":
+        return 0
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    existing = set()
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8-sig") as file:
+            existing = {row.get("ticker", "") for row in csv.DictReader(file)}
+    exists = os.path.exists(path)
+    added = 0
+    with open(path, "a", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+        if not exists:
+            writer.writerow(["ticker", "name", "entry_price", "entry_date"])
+        for pick in picks:
+            if pick.ticker in existing:
+                continue
+            writer.writerow([pick.ticker, pick.name, pick.close, date.today().isoformat()])
+            added += 1
+    return added
+
+
+def write_error_log(error: BaseException, path: str = "logs/errors.log") -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as file:
+        file.write(f"\n[{datetime.now().isoformat(timespec='seconds')}] {type(error).__name__}: {error}\n")
+        file.write("".join(traceback.format_exception(error)))
+
+
+def refresh_kakao_token() -> bool:
+    import json
+
+    rest_api_key = os.environ.get("KAKAO_REST_API_KEY", "")
+    refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN", "")
+    if not rest_api_key or not refresh_token:
+        return False
+
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": rest_api_key,
+            "refresh_token": refresh_token,
+        }
+    ).encode()
+    request = urllib.request.Request("https://kauth.kakao.com/oauth/token", data=data, method="POST")
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = json.loads(response.read().decode())
+
+    os.environ["KAKAO_ACCESS_TOKEN"] = body["access_token"]
+    save_env_value("KAKAO_ACCESS_TOKEN", body["access_token"])
+    if "refresh_token" in body:
+        os.environ["KAKAO_REFRESH_TOKEN"] = body["refresh_token"]
+        save_env_value("KAKAO_REFRESH_TOKEN", body["refresh_token"])
+    return True
+
+
+def run() -> None:
+    load_env()
+    markets = [item.strip() for item in os.environ.get("MARKETS", "KOSPI,KOSDAQ").split(",") if item.strip()]
+    top_n = int(os.environ.get("TOP_N", "5"))
+    min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
+    volume_multiplier = float(os.environ.get("VOLUME_MULTIPLIER", "1.5"))
+    picks = recommend(markets, top_n, min_trading_value, volume_multiplier)
+    write_log(picks)
+    track_positions(picks)
+    from .notifier import send_notification
+
+    send_notification(format_message(picks))
+
+
+def main() -> None:
+    try:
+        run()
+    except Exception as error:
+        write_error_log(error)
+        raise
