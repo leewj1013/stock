@@ -10,6 +10,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('RunStep "sell_check" "stock_alarm.sell_check"', script)
         self.assertIn('RunStep "daily_check" "stock_alarm.daily_check"', script)
         self.assertIn('RunStep "dashboard" "stock_alarm.dashboard"', script)
+        self.assertIn('RunStep "issue_alert" "stock_alarm.issue_alert"', script)
         self.assertIn("START $name", script)
         self.assertIn("DONE $name", script)
         self.assertIn('$mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }', script)
