@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -59,6 +59,14 @@ class DashboardTest(unittest.TestCase):
         tail_csv.return_value = [{"created_at": "2026-07-25T09:00:00"}, {"created_at": "2026-07-24T09:00:00"}]
 
         self.assertEqual(1, today_csv_count("logs/recommendations.csv"))
+
+    @patch("stock_alarm.dashboard.datetime")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_recommendation_rows(self, tail_csv, datetime):
+        datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
+        tail_csv.return_value = [{"created_at": "2026-07-24T09:00:00"}, {"created_at": "2026-07-25T09:00:00", "ticker": "A"}]
+
+        self.assertEqual("A", today_recommendation_rows()[0]["ticker"])
 
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
@@ -266,6 +274,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Current settings", html)
         self.assertIn("Recent deliveries", html)
         self.assertIn("Today run details", html)
+        self.assertIn("Today recommendations", html)
         self.assertIn("Recommendation shape", html)
         self.assertIn("Score breakdown", html)
         self.assertIn("disclosure", html)
@@ -277,7 +286,8 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Sell alert summary", html)
         self.assertIn("Why recommended", html)
         self.assertLess(html.index("Issues"), html.index("Today run details"))
-        self.assertLess(html.index("Today run details"), html.index("Recommendation shape"))
+        self.assertLess(html.index("Today run details"), html.index("Today recommendations"))
+        self.assertLess(html.index("Today recommendations"), html.index("Recommendation shape"))
         self.assertLess(html.index("Recommendation shape"), html.index("Score breakdown"))
         self.assertLess(html.index("Score breakdown"), html.index("Why recommended"))
         self.assertLess(html.index("Why recommended"), html.index("Sell alert summary"))
