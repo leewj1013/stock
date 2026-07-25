@@ -4,6 +4,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 $env:PYTHONIOENCODING = "utf-8"
+$mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }
 
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 $stdout = Join-Path $projectRoot "logs\task.out.log"
@@ -31,8 +32,17 @@ function RunStep($name, $module) {
     }
 }
 
-RunStep "recommendation" "stock_alarm"
-RunStep "sell_check" "stock_alarm.sell_check"
-RunStep "positions_report" "stock_alarm.positions_report"
-RunStep "daily_summary" "stock_alarm.daily_summary"
+if ($mode -eq "daily" -or $mode -eq "open") {
+    RunStep "recommendation" "stock_alarm"
+}
+if ($mode -eq "daily" -or $mode -eq "intraday") {
+    RunStep "sell_check" "stock_alarm.sell_check"
+    RunStep "positions_report" "stock_alarm.positions_report"
+}
+if ($mode -eq "daily" -or $mode -eq "performance") {
+    RunStep "recommendation_performance" "stock_alarm.recommendation_performance"
+}
+if ($mode -eq "daily") {
+    RunStep "daily_summary" "stock_alarm.daily_summary"
+}
 exit 0

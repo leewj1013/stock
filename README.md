@@ -32,6 +32,7 @@ Normal daily flow:
 .\.venv\Scripts\python -m stock_alarm.sell_check
 .\.venv\Scripts\python -m stock_alarm.positions_check
 .\.venv\Scripts\python -m stock_alarm.positions_report
+.\.venv\Scripts\python -m stock_alarm.recommendation_performance
 .\.venv\Scripts\python -m stock_alarm.daily_summary
 ```
 
@@ -64,7 +65,7 @@ Sell-review alert for positions in `data/positions.csv`:
 .\.venv\Scripts\python -m stock_alarm.sell_check
 ```
 
-Sell-review also alerts when a position return worsens by `SELL_DROP_PCT` points or more since the latest position snapshot.
+Sell-review also alerts when a position return worsens by `SELL_DROP_PCT` points or more since the latest position snapshot, or when a profitable position gives back `SELL_GIVEBACK_PCT` points after reaching `SELL_PROTECT_PROFIT_PCT`.
 
 By default, no separate sell-review message is sent when there are no sell-review candidates. Set `SEND_EMPTY_SELL_ALERT=1` if you want the old "none" message too.
 
@@ -89,6 +90,21 @@ Position P/L reports are logged to:
 ```text
 logs/positions_report.csv
 ```
+
+Recommendation performance is logged to:
+
+```text
+logs/recommendation_performance.csv
+logs/recommendation_performance_summary.csv
+```
+
+The summary includes 1-day completion counts and score-bucket stats for 90+, 70-89, and under 70.
+It suggests score weighting only after enough completed 1-day outcomes are available.
+The performance CSV reserves columns for news, disclosure, financial, and notes data.
+Set `NEWS_LOOKUP=1` to fill `news_score` and `external_notes` from recent Naver news title keywords.
+Set `NEWS_SCORE_WEIGHT=2` to add `news_score * 2` to recommendation scores; the default `0` keeps news out of live recommendations.
+Set `MIN_RECOMMEND_SCORE` after enough performance history if you want to ignore low-scoring candidates.
+Set `DART_API_KEY` and `DART_LOOKUP=1` to fill `disclosure_score` from recent OpenDART disclosure titles.
 
 After at least two snapshots, the report also shows average P/L change since the previous snapshot.
 
@@ -280,7 +296,7 @@ Recommend settings from `logs/tuning.csv`:
 
 ## Daily Windows task
 
-Register a daily 16:10 task:
+Register open, intraday, and close tasks:
 
 ```powershell
 .\scripts\register_daily_task.ps1
@@ -296,6 +312,9 @@ Manual script run:
 
 ```powershell
 .\scripts\run_stock_alarm.ps1
+.\scripts\run_stock_alarm.ps1 open
+.\scripts\run_stock_alarm.ps1 intraday
+.\scripts\run_stock_alarm.ps1 performance
 ```
 
 Scheduled runs append console output to:
@@ -305,13 +324,14 @@ logs/task.out.log
 logs/task.err.log
 ```
 
-The scheduled script runs both:
+Registered schedule:
 
 ```text
-python -m stock_alarm
-python -m stock_alarm.sell_check
-python -m stock_alarm.positions_report
-python -m stock_alarm.daily_summary
+08:55 open      recommendation
+10:30 intraday  sell_check + positions_report
+13:30 intraday  sell_check + positions_report
+15:00 intraday  sell_check + positions_report
+16:10 daily     recommendation + sell_check + positions_report + performance + summary
 ```
 
 After 16:10, check today's delivery result:

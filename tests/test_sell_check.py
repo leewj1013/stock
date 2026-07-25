@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, check_position, format_message, read_positions, run, write_log
+from stock_alarm.sell_check import SellAlert, check_position, format_message, max_returns, read_positions, run, write_log
 
 
 class SellCheckTest(unittest.TestCase):
@@ -34,6 +34,25 @@ class SellCheckTest(unittest.TestCase):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), 5)
 
         self.assertIn("직전 점검 대비 수익률 5.0%p 악화", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows")
+    def test_check_position_alerts_on_profit_giveback(self, naver_rows, _name):
+        naver_rows.return_value = [[20260701, 0, 0, 0, 102, 1]] * 20
+
+        alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), max_return=8)
+
+        self.assertIn("profit giveback", alert.reason)
+
+    def test_max_returns(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["created_at", "ticker", "name", "entry_price", "close", "return_pct"])
+            writer.writerow(["now", "005930", "Samsung", "100", "108", "8"])
+            writer.writerow(["later", "005930", "Samsung", "100", "102", "2"])
+        self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
+
+        self.assertEqual(8.0, max_returns(file.name)["005930"])
 
     def test_format_message(self):
         message = format_message([SellAlert("005930", "Samsung", 100, 94, -6.0, "손절 기준 -5.0% 이탈")])

@@ -103,6 +103,7 @@ def lines() -> list[str]:
     recommendations = tail_csv("logs/recommendations.csv", 5)
     sell_alerts = tail_csv("logs/sell_alerts.csv", 5)
     backtest_summary = tail_csv("logs/backtest_summary.csv", 20)
+    performance_summary = tail_csv("logs/recommendation_performance_summary.csv", 20)
     output = [
         "# stockAlarm report",
         f"notifier={os.environ.get('NOTIFIER', 'telegram')}",
@@ -127,6 +128,9 @@ def lines() -> list[str]:
     output.append("")
     output.append("## backtest summary")
     output.extend(f"- {row.get('metric')}: {row.get('value')}" for row in backtest_summary)
+    output.append("")
+    output.append("## recommendation performance")
+    output.extend(f"- {row.get('metric')}: {row.get('value')}" for row in performance_summary)
     output.append("")
     output.append("## tuning")
     output.extend(f"- {line}" for line in tuning_lines()[1:])

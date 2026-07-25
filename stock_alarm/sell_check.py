@@ -31,7 +31,12 @@ def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
         return [row for row in csv.DictReader(file) if row.get("ticker") and row.get("entry_price")]
 
 
-def check_position(position: dict[str, str], end_day: date, previous_return: float | None = None) -> SellAlert | None:
+def check_position(
+    position: dict[str, str],
+    end_day: date,
+    previous_return: float | None = None,
+    max_return: float | None = None,
+) -> SellAlert | None:
     ticker = position["ticker"].strip()
     entry_price = int(float(position["entry_price"]))
     rows = naver_rows(ticker, end_day - timedelta(days=90), end_day)
@@ -53,6 +58,10 @@ def check_position(position: dict[str, str], end_day: date, previous_return: flo
         drop = previous_return - return_pct
         if drop >= env_float("SELL_DROP_PCT", 3):
             reasons.append(f"직전 점검 대비 수익률 {drop:.1f}%p 악화")
+    if max_return is not None and max_return >= env_float("SELL_PROTECT_PROFIT_PCT", 5):
+        giveback = max_return - return_pct
+        if giveback >= env_float("SELL_GIVEBACK_PCT", 4):
+            reasons.append(f"profit giveback from {max_return:.1f}% by {giveback:.1f}%p")
     if not reasons:
         return None
 
@@ -71,12 +80,25 @@ def previous_returns(path: str = POSITIONS_REPORT_LOG) -> dict[str, float]:
     return latest
 
 
+def max_returns(path: str = POSITIONS_REPORT_LOG) -> dict[str, float]:
+    if not os.path.exists(path):
+        return {}
+    result: dict[str, float] = {}
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            ticker = row.get("ticker")
+            if ticker:
+                result[ticker] = max(result.get(ticker, float("-inf")), float(row.get("return_pct") or 0))
+    return result
+
+
 def find_alerts(positions: list[dict[str, str]], end_day: date) -> list[SellAlert]:
     previous = previous_returns()
+    best = max_returns()
     alerts = []
     for position in positions:
         ticker = position["ticker"].strip()
-        alert = check_position(position, end_day, previous.get(ticker))
+        alert = check_position(position, end_day, previous.get(ticker), best.get(ticker))
         if alert:
             alerts.append(alert)
     return alerts

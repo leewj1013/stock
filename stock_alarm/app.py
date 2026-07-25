@@ -136,8 +136,8 @@ def make_pick(ticker: str, end_day: date, min_trading_value: int, volume_multipl
         return None
 
     name = stock.get_market_ticker_name(ticker)
-    score = calculate_score(close, ma20, volume_ratio, trading_value)
-    return Pick(ticker, name, close, volume_ratio, trading_value, score)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name)
+    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
 def naver_rows(ticker: str, start_day: date, end_day: date) -> list[list]:
@@ -206,8 +206,9 @@ def make_naver_pick(
         return None
     if volume_ratio < volume_multiplier or close <= ma20 or trading_value < min_trading_value:
         return None
-    score = calculate_score(close, ma20, volume_ratio, trading_value)
-    return Pick(ticker, stock_name(ticker, name), close, volume_ratio, trading_value, score)
+    name = stock_name(ticker, name)
+    score = calculate_score(close, ma20, volume_ratio, trading_value) + news_bonus(name)
+    return Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2))
 
 
 def calculate_score(close: int, ma20: float, volume_ratio: float, trading_value: int) -> float:
@@ -215,6 +216,19 @@ def calculate_score(close: int, ma20: float, volume_ratio: float, trading_value:
     value_score = min(trading_value / 300_000_000_000, 1) * 35
     trend_score = min(max(close / ma20 - 1, 0) / 0.10, 1) * 20
     return round(volume_score + value_score + trend_score, 2)
+
+
+def news_bonus(name: str) -> float:
+    weight = env_float("NEWS_SCORE_WEIGHT", 0)
+    if not weight:
+        return 0
+    try:
+        from .news_reference import reference
+
+        score, _notes = reference(name)
+        return float(score) * weight
+    except Exception:
+        return 0
 
 
 @lru_cache(maxsize=512)
@@ -294,7 +308,7 @@ def recommend_naver(end_day: date, top_n: int, min_trading_value: int, volume_mu
         pick = make_naver_pick(ticker, name, end_day, min_trading_value, volume_multiplier)
         if pick:
             picks.append(pick)
-    return sorted(picks, key=lambda item: item.score, reverse=True)[:top_n]
+    return top_picks(picks, top_n)
 
 
 def recommend_for_day(
@@ -315,7 +329,12 @@ def recommend_for_day(
             pick = make_pick(ticker, end_day, min_trading_value, volume_multiplier)
             if pick:
                 picks.append(pick)
-    return sorted(picks, key=lambda item: item.score, reverse=True)[:top_n]
+    return top_picks(picks, top_n)
+
+
+def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
+    minimum = env_float("MIN_RECOMMEND_SCORE", 0)
+    return sorted([pick for pick in picks if pick.score >= minimum], key=lambda item: item.score, reverse=True)[:top_n]
 
 
 def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_multiplier: float) -> list[Pick]:
