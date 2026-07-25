@@ -6,6 +6,11 @@ from .report import latest_error_summary, tail_csv
 
 
 OK_CHANNELS = {"telegram", "skipped_duplicate"}
+RUN_LOGS = {
+    "recommendations": "logs/recommendations.csv",
+    "positions_report": "logs/positions_report.csv",
+    "recommendation_performance": "logs/recommendation_performance.csv",
+}
 
 
 def status(today: date | None = None, path: str = "logs/deliveries.csv") -> str:
@@ -23,7 +28,17 @@ def status(today: date | None = None, path: str = "logs/deliveries.csv") -> str:
 
 def lines(today: date | None = None, path: str = "logs/deliveries.csv") -> list[str]:
     deliveries = tail_csv(path, 200)
-    return [status(today, path), f"latest_error={latest_error_summary(deliveries)}"]
+    return [status(today, path), *run_log_statuses(today), f"latest_error={latest_error_summary(deliveries)}"]
+
+
+def run_log_statuses(today: date | None = None, paths: dict[str, str] | None = None) -> list[str]:
+    day = (today or date.today()).isoformat()
+    result = []
+    for name, path in (paths or RUN_LOGS).items():
+        rows = tail_csv(path, 500)
+        ok = bool(rows) if name == "recommendation_performance" else any((row.get("created_at") or row.get("pick_date") or "").startswith(day) for row in rows)
+        result.append(f"{name}={'ok' if ok else 'missing'}")
+    return result
 
 
 def main() -> int:

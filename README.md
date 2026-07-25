@@ -346,7 +346,7 @@ After 16:10, check today's delivery result:
 .\.venv\Scripts\python -m stock_alarm.daily_check
 ```
 
-This reports today's delivery status and whether any logged error happened after the latest delivery.
+This reports today's delivery status, key run-log presence, and whether any logged error happened after the latest delivery.
 
 ## Healthcheck
 
