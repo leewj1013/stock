@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import e, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, table, write
+from stock_alarm.dashboard import e, performance_penalty_rows, performance_summary_rows, recommendation_rank_rows, render, sell_alerted_recommendation_rows, table, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -72,14 +72,25 @@ class DashboardTest(unittest.TestCase):
             rows[0],
         )
 
+    @patch("stock_alarm.dashboard.performance_penalty", return_value=4)
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_performance_penalty_rows(self, tail_csv, _penalty):
+        tail_csv.return_value = [
+            {"ticker": "000001", "name": "A"},
+            {"ticker": "000001", "name": "A"},
+        ]
+
+        self.assertEqual([{"ticker": "000001", "name": "A", "penalty": "4.00"}], performance_penalty_rows())
+
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.metric_cards", return_value=[("positions", "1")])
     @patch("stock_alarm.dashboard.performance_summary_rows", return_value=[])
     @patch("stock_alarm.dashboard.recommendation_rank_rows", return_value=[])
+    @patch("stock_alarm.dashboard.performance_penalty_rows", return_value=[])
     @patch("stock_alarm.dashboard.sell_alerted_recommendation_rows", return_value=[])
     @patch("stock_alarm.dashboard.tail_text", return_value=[])
     @patch("stock_alarm.dashboard.tail_csv", return_value=[])
-    def test_render(self, _csv, _text, _sell, _rank, _summary, _cards, _daily):
+    def test_render(self, _csv, _text, _sell, _penalties, _rank, _summary, _cards, _daily):
         html = render()
 
         self.assertIn("stockAlarm Dashboard", html)
@@ -87,6 +98,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Recommendation stats", html)
         self.assertIn("Top recommendation performance", html)
         self.assertIn("Worst recommendation performance", html)
+        self.assertIn("Performance penalties", html)
         self.assertIn("Recommendations with sell alerts", html)
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")

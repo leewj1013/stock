@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from statistics import mean
 
-from .app import load_env, write_error_log
+from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines
 from .positions_check import position_count
 from .report import tail_csv, tail_text
@@ -93,6 +93,22 @@ def sell_alerted_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
     return rows
 
 
+def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
+    seen = set()
+    rows = []
+    for row in reversed(tail_csv("logs/recommendation_performance.csv", 1000)):
+        ticker = row.get("ticker", "")
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        penalty = performance_penalty(ticker)
+        if penalty:
+            rows.append({"ticker": ticker, "name": row.get("name", ""), "penalty": f"{penalty:.2f}"})
+        if len(rows) >= limit:
+            return rows
+    return rows
+
+
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     body = "".join("<tr>" + "".join(f"<td>{e(row.get(column, ''))}</td>" for column in columns) + "</tr>" for row in rows)
     head = "".join(f"<th>{e(column)}</th>" for column in columns)
@@ -127,6 +143,7 @@ li{{margin:4px 0}}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
+{table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 {table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score"])}
 {table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
