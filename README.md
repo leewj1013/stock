@@ -28,6 +28,7 @@ Double-click shortcuts:
 ```text
 start_stock_alarm.bat  - register/start local scheduled tasks and open dashboard
 open_dashboard.bat     - refresh and open reports/dashboard.html
+open_check.bat         - check the 08:55 recommendation run
 issue_alert.bat        - send current dashboard issues only
 ```
 
