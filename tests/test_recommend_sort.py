@@ -2,15 +2,15 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.app import Pick, recommend_for_day, top_picks
+from stock_alarm.app import Pick, open_recommended_tickers, recommend_for_day, top_picks
 
 
 class RecommendSortTest(unittest.TestCase):
     @patch("stock_alarm.app.make_pick")
     def test_returns_top_scored_picks(self, make_pick):
         make_pick.side_effect = [
-            Pick("A", "A", 100, 2, 5_000_000_000, 1),
-            Pick("B", "B", 100, 2, 5_000_000_000, 9),
+            Pick("A", "A", 100, 2, 5_000_000_000, 51),
+            Pick("B", "B", 100, 2, 5_000_000_000, 90),
         ]
 
         picks = recommend_for_day(date(2026, 1, 2), ["KOSPI"], 1, 0, 2, lambda *_args, **_kwargs: ["A", "B"])
@@ -28,6 +28,51 @@ class RecommendSortTest(unittest.TestCase):
         )
 
         self.assertEqual(["B"], [pick.ticker for pick in picks])
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_top_picks_defaults_to_score_50(self):
+        picks = top_picks(
+            [
+                Pick("A", "A", 100, 2, 5_000_000_000, 49),
+                Pick("B", "B", 100, 2, 5_000_000_000, 50),
+            ],
+            5,
+        )
+
+        self.assertEqual(["B"], [pick.ticker for pick in picks])
+
+    @patch("stock_alarm.app.open_recommended_tickers", return_value={"A"})
+    def test_top_picks_skips_open_recommendations(self, _open_tickers):
+        picks = top_picks(
+            [
+                Pick("A", "A", 100, 2, 5_000_000_000, 90),
+                Pick("B", "B", 100, 2, 5_000_000_000, 80),
+            ],
+            5,
+        )
+
+        self.assertEqual(["B"], [pick.ticker for pick in picks])
+
+    def test_sell_alert_allows_recommendation_again(self):
+        with self.subTest("positions minus sell alerts"):
+            import csv
+            import os
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as directory:
+                positions = os.path.join(directory, "positions.csv")
+                alerts = os.path.join(directory, "sell_alerts.csv")
+                with open(positions, "w", newline="", encoding="utf-8-sig") as file:
+                    writer = csv.writer(file)
+                    writer.writerow(["ticker", "name", "entry_price", "entry_date"])
+                    writer.writerow(["A", "A", "100", "2026-07-27"])
+                    writer.writerow(["B", "B", "100", "2026-07-27"])
+                with open(alerts, "w", newline="", encoding="utf-8-sig") as file:
+                    writer = csv.writer(file)
+                    writer.writerow(["created_at", "ticker"])
+                    writer.writerow(["2026-07-27T15:00:00", "A"])
+
+                self.assertEqual({"B"}, open_recommended_tickers(positions, alerts))
 
 
 if __name__ == "__main__":

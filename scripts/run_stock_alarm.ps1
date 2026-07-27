@@ -35,15 +35,22 @@ function RunStep($name, $module) {
     "[$(Get-Date -Format s)] DONE $name" | Out-File -FilePath $stdout -Append -Encoding utf8
 }
 
+function RunFreshStep($name, $module) {
+    $previousNoCache = $env:NO_CACHE
+    $env:NO_CACHE = "1"
+    RunStep $name $module
+    $env:NO_CACHE = $previousNoCache
+}
+
 if ($mode -eq "daily" -or $mode -eq "open") {
     RunStep "recommendation" "stock_alarm"
 }
 if ($mode -eq "daily" -or $mode -eq "intraday") {
-    RunStep "sell_check" "stock_alarm.sell_check"
-    RunStep "positions_report" "stock_alarm.positions_report"
+    RunFreshStep "sell_check" "stock_alarm.sell_check"
+    RunFreshStep "positions_report" "stock_alarm.positions_report"
 }
 if ($mode -eq "daily" -or $mode -eq "performance") {
-    RunStep "recommendation_performance" "stock_alarm.recommendation_performance"
+    RunFreshStep "recommendation_performance" "stock_alarm.recommendation_performance"
 }
 if ($mode -eq "daily") {
     RunStep "daily_summary" "stock_alarm.daily_summary"

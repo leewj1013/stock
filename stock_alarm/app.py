@@ -50,6 +50,7 @@ DEFAULT_STOCKS = {
 
 WATCHLIST_PATH = "data/watchlist.csv"
 POSITIONS_PATH = "data/positions.csv"
+SELL_ALERTS_PATH = "logs/sell_alerts.csv"
 
 
 def load_env(path: str = ".env") -> None:
@@ -369,8 +370,20 @@ def recommend_for_day(
 
 
 def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
-    minimum = env_float("MIN_RECOMMEND_SCORE", 0)
-    return sorted([pick for pick in picks if pick.score >= minimum], key=lambda item: item.score, reverse=True)[:top_n]
+    minimum = env_float("MIN_RECOMMEND_SCORE", 50)
+    blocked = open_recommended_tickers()
+    return sorted([pick for pick in picks if pick.score >= minimum and pick.ticker not in blocked], key=lambda item: item.score, reverse=True)[:top_n]
+
+
+def open_recommended_tickers(positions_path: str = POSITIONS_PATH, sell_alerts_path: str = SELL_ALERTS_PATH) -> set[str]:
+    return read_tickers(positions_path) - read_tickers(sell_alerts_path)
+
+
+def read_tickers(path: str) -> set[str]:
+    if not os.path.exists(path):
+        return set()
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        return {row.get("ticker", "").strip() for row in csv.DictReader(file) if row.get("ticker")}
 
 
 def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_multiplier: float) -> list[Pick]:

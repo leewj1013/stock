@@ -85,6 +85,25 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("A", row["ticker"])
         self.assertEqual("뉴스 보너스", row["reason"])
 
+    @patch("stock_alarm.dashboard.datetime")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_recommendation_rows_shows_latest_batch_only(self, tail_csv, datetime):
+        datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-27"
+
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return []
+            return [
+                {"created_at": "2026-07-27T08:55:00", "ticker": "OLD1"},
+                {"created_at": "2026-07-27T08:55:00", "ticker": "OLD2"},
+                {"created_at": "2026-07-27T16:10:00", "ticker": "NEW1"},
+                {"created_at": "2026-07-27T16:10:00", "ticker": "NEW2"},
+            ]
+
+        tail_csv.side_effect = fake_tail
+
+        self.assertEqual(["NEW2", "NEW1"], [row["ticker"] for row in today_recommendation_rows()])
+
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
     def test_today_issue_count(self, _settings, _runs):

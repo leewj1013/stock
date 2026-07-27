@@ -7,7 +7,9 @@ class ScriptTest(unittest.TestCase):
             script = file.read()
 
         self.assertIn('RunStep "recommendation" "stock_alarm"', script)
-        self.assertIn('RunStep "sell_check" "stock_alarm.sell_check"', script)
+        self.assertIn('RunFreshStep "sell_check" "stock_alarm.sell_check"', script)
+        self.assertIn('RunFreshStep "positions_report" "stock_alarm.positions_report"', script)
+        self.assertIn('RunFreshStep "recommendation_performance" "stock_alarm.recommendation_performance"', script)
         self.assertIn('RunStep "daily_check" "stock_alarm.daily_check"', script)
         self.assertIn('RunStep "dashboard" "stock_alarm.dashboard"', script)
         self.assertIn('RunStep "issue_alert" "stock_alarm.issue_alert"', script)
@@ -19,15 +21,19 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.failure_alert", script)
         self.assertIn("cmd.exe /d /c", script)
         self.assertIn("Set-Content -Path $stdout -Encoding utf8", script)
+        self.assertIn('$env:NO_CACHE = "1"', script)
 
     def test_register_task_adds_intraday_checks(self):
         with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
             script = file.read()
 
         self.assertIn("stockAlarmOpen", script)
-        self.assertIn("stockAlarmIntraday1030", script)
-        self.assertIn("stockAlarmIntraday1330", script)
-        self.assertIn("stockAlarmIntraday1500", script)
+        self.assertIn("stockAlarmIntradayEveryMinute", script)
+        self.assertIn("schtasks.exe /Create", script)
+        self.assertIn("/SC DAILY /ST 09:00 /RI 1 /DU 006:30", script)
+        self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1030\"", script)
+        self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1330\"", script)
+        self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1500\"", script)
 
     def test_status_task_shows_next_run(self):
         with open("scripts/status_daily_task.ps1", encoding="utf-8-sig") as file:
@@ -36,6 +42,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("NextRunTime", script)
         self.assertIn("next_run=", script)
         self.assertIn("yyyy-MM-dd HH:mm:ss", script)
+        self.assertIn("stockAlarmIntradayEveryMinute", script)
 
     def test_start_macro_registers_and_checks(self):
         with open("start_stock_alarm.bat", encoding="utf-8-sig") as file:
