@@ -32,6 +32,7 @@ NUMERIC_COLUMNS = {
     "disclosure_score",
     "performance_penalty",
     "count",
+    "entry_count",
     "return_pct",
     "picks",
     "avg_1d_return_pct",
@@ -43,6 +44,7 @@ NUMERIC_COLUMNS = {
     "return_5d_pct",
     "entry_price",
 }
+RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
@@ -108,6 +110,7 @@ LABELS = {
     "performance_penalty": "성과 감점",
     "summary": "요약",
     "count": "건수",
+    "entry_count": "추천 횟수",
     "return_pct": "수익률",
     "metric": "지표",
     "value": "값",
@@ -236,6 +239,45 @@ def recommendation_rank_rows(limit: int = 10, worst: bool = False) -> list[dict[
     return sorted(rows, key=lambda row: float(row["avg_1d_return_pct"]), reverse=not worst)[:limit]
 
 
+def recommendation_performance_rows(limit: int = 20) -> list[dict[str, str]]:
+    grouped: dict[tuple[str, str], dict[str, list[float] | str]] = {}
+    for row in tail_csv("logs/recommendation_performance.csv", 1000):
+        ticker = row.get("ticker", "")
+        if not ticker:
+            continue
+        key = (ticker, row.get("name", ""))
+        bucket = grouped.setdefault(
+            key,
+            {"score": [], "entry_close": [], "return_1d_pct": [], "return_3d_pct": [], "return_5d_pct": [], "news_score": [], "disclosure_score": [], "last_pick_date": ""},
+        )
+        bucket["last_pick_date"] = row.get("pick_date", "")
+        for column in ["score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"]:
+            if row.get(column):
+                bucket[column].append(float(row[column]))  # type: ignore[union-attr]
+    rows = []
+    for (ticker, name), values in grouped.items():
+        rows.append(
+            {
+                "pick_date": str(values["last_pick_date"]),
+                "ticker": ticker,
+                "name": name,
+                "entry_count": str(len(values["score"])),  # type: ignore[arg-type]
+                "score": avg_value(values["score"]),  # type: ignore[arg-type]
+                "entry_close": avg_value(values["entry_close"], decimals=0),  # type: ignore[arg-type]
+                "return_1d_pct": avg_value(values["return_1d_pct"]),  # type: ignore[arg-type]
+                "return_3d_pct": avg_value(values["return_3d_pct"]),  # type: ignore[arg-type]
+                "return_5d_pct": avg_value(values["return_5d_pct"]),  # type: ignore[arg-type]
+                "news_score": avg_value(values["news_score"]),  # type: ignore[arg-type]
+                "disclosure_score": avg_value(values["disclosure_score"]),  # type: ignore[arg-type]
+            }
+        )
+    return sorted(rows, key=lambda row: row["pick_date"], reverse=True)[:limit]
+
+
+def avg_value(values: list[float], decimals: int = 2) -> str:
+    return f"{mean(values):.{decimals}f}" if values else ""
+
+
 def sell_alerted_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
     recommendations = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
     rows = []
@@ -308,8 +350,22 @@ def score_breakdown_rows(limit: int = 10) -> list[dict[str, str]]:
             "disclosure": performance.get(row.get("ticker", ""), {}).get("disclosure_score", ""),
             "penalty": f"{performance_penalty(row.get('ticker', '')):.2f}",
         }
-        for row in reversed(tail_csv("logs/recommendations.csv", 1000))
+        for row in latest_recommendation_rows(limit)
     ][:limit]
+
+
+def latest_recommendation_rows(limit: int = 10) -> list[dict[str, str]]:
+    rows = []
+    seen = set()
+    for row in reversed(tail_csv("logs/recommendations.csv", 1000)):
+        ticker = row.get("ticker", "")
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def recommendation_reason_rows(limit: int = 10) -> list[dict[str, str]]:
@@ -399,6 +455,39 @@ def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     return f"<section><h2>{e(display_label(title))}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
 
 
+def stock_highlights() -> str:
+    summary = {row.get("metric", ""): row.get("value", "") for row in tail_csv("logs/recommendation_performance_summary.csv", 50)}
+    position_rows = latest_batch(tail_csv("logs/positions_report.csv", 100))
+    returns = [float(row.get("return_pct") or 0) for row in position_rows]
+    worst = min(position_rows, key=lambda row: float(row.get("return_pct") or 0), default={})
+    cards = [
+        ("최근 추천", f"{len(today_recommendation_rows())}개", ""),
+        ("1일 평균 수익률", value_or_dash(summary.get("avg_1d_return_pct"), "%"), signed_class(summary.get("avg_1d_return_pct"))),
+        ("1일 승률", value_or_dash(summary.get("win_rate_1d_pct"), "%"), ""),
+        ("보유 최저 수익률", f"{worst.get('name', '-')}: {float(worst.get('return_pct') or 0):.2f}%" if worst else "-", signed_class(worst.get("return_pct", ""))),
+    ]
+    return "<div class='highlight-grid'>" + "".join(f"<div class='highlight {klass}'><b>{e(label)}</b><span>{e(value)}</span></div>" for label, value, klass in cards) + "</div>"
+
+
+def latest_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    latest = rows[-1].get("created_at", "") if rows else ""
+    return [row for row in rows if row.get("created_at") == latest]
+
+
+def latest_position_rows(limit: int = 10) -> list[dict[str, str]]:
+    rows = []
+    seen = set()
+    for row in reversed(tail_csv("logs/positions_report.csv", 1000)):
+        ticker = row.get("ticker", "")
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def header_cell(column: str) -> str:
     attr = " class='num'" if column in NUMERIC_COLUMNS else ""
     return f"<th{attr}>{e(display_label(column))}</th>"
@@ -409,8 +498,23 @@ def cell(value: object, column: str = "") -> str:
     classes = [klass] if klass else []
     if column in NUMERIC_COLUMNS:
         classes.append("num")
+    signed = signed_class(value) if column in RETURN_COLUMNS else ""
+    if signed:
+        classes.append(signed)
     attr = f" class='{' '.join(classes)}'" if classes else ""
     return f"<td{attr}>{e(format_number(value) if column in NUMERIC_COLUMNS else value)}</td>"
+
+
+def signed_class(value: object) -> str:
+    try:
+        number = float(str(value or "").replace("%", "").replace(",", ""))
+    except ValueError:
+        return ""
+    if number > 0:
+        return "pos"
+    if number < 0:
+        return "neg"
+    return "zero"
 
 
 def format_number(value: object) -> str:
@@ -448,15 +552,15 @@ def status_class(value: str) -> str:
 
 
 def render() -> str:
-    cards = "".join(card(label, value) for label, value in metric_cards())
     checks = "".join(f"<li>{e(line)}</li>" for line in daily_check_lines())
     task_log = "".join(f"<li>{e(line)}</li>" for line in tail_text("logs/task.out.log", 10))
     task_errors = tail_text("logs/task.err.log", 10) or ["none"]
     task_error_items = "".join(f"<li>{e(line)}</li>" for line in task_errors)
     stock_tab = f"""
+{stock_highlights()}
 {table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "reason", "volume_score", "trading_value_score", "trend_score"])}
-{table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
-{table("Positions", tail_csv("logs/positions_report.csv", 10), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
+{table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
+{table("Positions", latest_position_rows(), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
@@ -464,7 +568,7 @@ def render() -> str:
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 {table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
 {table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
-{table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
+{table("Recent recommendations", latest_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
 """
     settings_tab = f"""
 {table("Issues", issue_rows(), ["source", "item", "status"])}
@@ -487,20 +591,22 @@ def render() -> str:
 body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7f9;color:#111}}
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
+.highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
+.highlight{{background:#111827;color:white;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd}} .highlight b{{display:block;color:#cbd5e1}} .highlight span{{display:block;font-size:24px;font-weight:800;margin-top:8px}}
+.highlight.pos{{background:#0f766e}} .highlight.neg{{background:#b42318}} .highlight.zero{{background:#475569}}
 .tabs{{margin-top:18px}} .tab-input{{display:none}} .tab-label{{display:inline-block;background:#e9edf3;border-radius:999px;padding:10px 16px;margin-right:8px;cursor:pointer;font-weight:600}}
 .tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"]{{background:#111;color:white}}
 #tab-stocks:checked~#stocks-panel,#tab-settings:checked~#settings-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
-.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}}
+.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
 li{{margin:4px 0}}
 </style>
 </head>
 <body>
 <h1>{e(display_label("stockAlarm Dashboard"))}</h1>
 <div class="muted">{e(display_label("generated"))} {e(datetime.now().isoformat(timespec="seconds"))}</div>
-<div class="cards">{cards}</div>
 <div class="legacy-order">{e(display_label("Issues"))} {e(display_label("Today run details"))} {e(display_label("Today recommendations"))} {e(display_label("Recommendation shape"))} {e(display_label("Score breakdown"))} {e(display_label("Why recommended"))} {e(display_label("Sell alert summary"))} {e(display_label("Recent sell alerts"))} {e(display_label("Recommendation stats"))}</div>
 <div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
@@ -529,9 +635,9 @@ li{{margin:4px 0}}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
-{table("Recent recommendations", tail_csv("logs/recommendations.csv", 10), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
-{table("Recommendation performance", tail_csv("logs/recommendation_performance.csv", 20), ["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
-{table("Positions", tail_csv("logs/positions_report.csv", 10), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
+{table("Recent recommendations", latest_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
+{table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
+{table("Positions", latest_position_rows(), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
 <section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
 <section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
 </div>

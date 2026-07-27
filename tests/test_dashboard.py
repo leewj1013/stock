@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, status_class, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -28,6 +28,12 @@ class DashboardTest(unittest.TestCase):
     def test_numeric_cell_formats_and_aligns(self):
         self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
         self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
+        self.assertEqual("<td class='num neg'>-10.30</td>", cell("-10.30", "return_1d_pct"))
+
+    def test_signed_class(self):
+        self.assertEqual("pos", signed_class("1.2%"))
+        self.assertEqual("neg", signed_class("-1.2"))
+        self.assertEqual("zero", signed_class("0"))
 
     def test_table_marks_numeric_header(self):
         html = table("T", [{"score": "12.345"}], ["score"])
@@ -169,6 +175,48 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("50.0", rows[1]["win_rate_1d_pct"])
 
         self.assertEqual("000001", recommendation_rank_rows(worst=True)[0]["ticker"])
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_recommendation_performance_rows_averages_duplicates(self, tail_csv):
+        tail_csv.return_value = [
+            {"pick_date": "2026-07-25", "ticker": "000001", "name": "A", "score": "80", "entry_close": "1000", "return_1d_pct": "2.00", "news_score": "1"},
+            {"pick_date": "2026-07-26", "ticker": "000001", "name": "A", "score": "60", "entry_close": "1100", "return_1d_pct": "-4.00", "news_score": "3"},
+            {"pick_date": "2026-07-26", "ticker": "000002", "name": "B", "score": "90", "entry_close": "2000", "return_1d_pct": "5.00"},
+        ]
+
+        rows = recommendation_performance_rows()
+
+        self.assertEqual("000001", rows[0]["ticker"])
+        self.assertEqual("2", rows[0]["entry_count"])
+        self.assertEqual("70.00", rows[0]["score"])
+        self.assertEqual("1050", rows[0]["entry_close"])
+        self.assertEqual("-1.00", rows[0]["return_1d_pct"])
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_latest_recommendation_rows_dedupes_ticker(self, tail_csv):
+        tail_csv.return_value = [
+            {"created_at": "2026-07-26T09:00:00", "ticker": "A", "score": "50"},
+            {"created_at": "2026-07-26T10:00:00", "ticker": "B", "score": "60"},
+            {"created_at": "2026-07-26T11:00:00", "ticker": "A", "score": "70"},
+        ]
+
+        rows = latest_recommendation_rows()
+
+        self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
+        self.assertEqual("70", rows[0]["score"])
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_latest_position_rows_dedupes_ticker(self, tail_csv):
+        tail_csv.return_value = [
+            {"created_at": "2026-07-26T09:00:00", "ticker": "A", "return_pct": "0"},
+            {"created_at": "2026-07-26T10:00:00", "ticker": "B", "return_pct": "1"},
+            {"created_at": "2026-07-26T11:00:00", "ticker": "A", "return_pct": "-2"},
+        ]
+
+        rows = latest_position_rows()
+
+        self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
+        self.assertEqual("-2", rows[0]["return_pct"])
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_sell_alerted_recommendation_rows(self, tail_csv):
