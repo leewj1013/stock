@@ -92,12 +92,22 @@ def max_returns(path: str = POSITIONS_REPORT_LOG) -> dict[str, float]:
     return result
 
 
+def alerted_tickers(path: str = SELL_ALERTS_LOG) -> set[str]:
+    if not os.path.exists(path):
+        return set()
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        return {row["ticker"].strip() for row in csv.DictReader(file) if row.get("ticker")}
+
+
 def find_alerts(positions: list[dict[str, str]], end_day: date) -> list[SellAlert]:
     previous = previous_returns()
     best = max_returns()
+    already_alerted = alerted_tickers()
     alerts = []
     for position in positions:
         ticker = position["ticker"].strip()
+        if ticker in already_alerted:
+            continue
         alert = check_position(position, end_day, previous.get(ticker), best.get(ticker))
         if alert:
             alerts.append(alert)

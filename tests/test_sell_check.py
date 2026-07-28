@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, alert_summary, check_position, format_message, max_returns, read_positions, run, write_log
+from stock_alarm.sell_check import SellAlert, alert_summary, alerted_tickers, check_position, find_alerts, format_message, max_returns, read_positions, run, write_log
 
 
 class SellCheckTest(unittest.TestCase):
@@ -53,6 +53,23 @@ class SellCheckTest(unittest.TestCase):
         self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
 
         self.assertEqual(8.0, max_returns(file.name)["005930"])
+
+    def test_alerted_tickers(self):
+        with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["created_at", "ticker", "name"])
+            writer.writerow(["now", "005930", "Samsung"])
+        self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
+
+        self.assertEqual({"005930"}, alerted_tickers(file.name))
+
+    @patch("stock_alarm.sell_check.alerted_tickers", return_value={"005930"})
+    @patch("stock_alarm.sell_check.check_position")
+    def test_find_alerts_skips_already_alerted_ticker(self, check_position, _alerted):
+        alerts = find_alerts([{"ticker": "005930", "name": "Samsung", "entry_price": "100"}], date(2026, 7, 24))
+
+        self.assertEqual([], alerts)
+        check_position.assert_not_called()
 
     def test_format_message(self):
         message = format_message([SellAlert("005930", "Samsung", 100, 94, -6.0, "손절 기준 -5.0% 이탈")])
