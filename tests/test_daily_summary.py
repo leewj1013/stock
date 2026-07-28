@@ -2,7 +2,7 @@ import unittest
 
 from unittest.mock import patch
 
-from stock_alarm.daily_summary import message
+from stock_alarm.daily_summary import message, run
 
 
 class DailySummaryTest(unittest.TestCase):
@@ -27,6 +27,14 @@ class DailySummaryTest(unittest.TestCase):
 
         self.assertIn("추천 TOP3:", text)
         self.assertIn("1. Alpha(A)", text)
+
+
+    @patch("stock_alarm.daily_summary.load_env")
+    @patch("stock_alarm.daily_summary.is_trading_day", return_value=False)
+    @patch("stock_alarm.daily_summary.send_notification")
+    def test_run_skips_when_market_closed(self, send, _trading, _env):
+        self.assertEqual("market_closed", run())
+        send.assert_not_called()
 
 
 if __name__ == "__main__":

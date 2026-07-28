@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .app import load_env, write_error_log
+from .app import is_trading_day, load_env, write_error_log
 from .notifier import send_notification
 from .positions_check import position_count
 from .positions_report import change_summary
@@ -47,6 +47,8 @@ def message() -> str:
 
 def run() -> str:
     load_env()
+    if not is_trading_day():
+        return "market_closed"
     return send_notification(message())
 
 

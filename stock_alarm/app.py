@@ -186,6 +186,11 @@ def latest_naver_trading_day() -> date:
     return datetime.strptime(str(rows[-1][0]), "%Y%m%d").date()
 
 
+def is_trading_day(today: date | None = None) -> bool:
+    today = today or env_date("AS_OF_DATE", date.today())
+    return latest_naver_trading_day() == today
+
+
 def make_naver_pick(
     ticker: str, name: str, end_day: date, min_trading_value: int, volume_multiplier: float
 ) -> Pick | None:
@@ -510,6 +515,8 @@ def refresh_kakao_token() -> bool:
 
 def run() -> None:
     load_env()
+    if not is_trading_day():
+        return
     markets = [item.strip() for item in os.environ.get("MARKETS", "KOSPI,KOSDAQ").split(",") if item.strip()]
     top_n = int(os.environ.get("TOP_N", "5"))
     min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
