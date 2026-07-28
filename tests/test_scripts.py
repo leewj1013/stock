@@ -6,7 +6,7 @@ class ScriptTest(unittest.TestCase):
         with open("scripts/run_stock_alarm.ps1", encoding="utf-8-sig") as file:
             script = file.read()
 
-        self.assertIn('RunStep "recommendation" "stock_alarm"', script)
+        self.assertIn('RunFreshStep "recommendation" "stock_alarm"', script)
         self.assertIn('RunFreshStep "sell_check" "stock_alarm.sell_check"', script)
         self.assertIn('RunFreshStep "positions_report" "stock_alarm.positions_report"', script)
         self.assertIn('RunFreshStep "recommendation_performance" "stock_alarm.recommendation_performance"', script)
@@ -17,6 +17,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("DONE $name", script)
         self.assertIn('$mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }', script)
         self.assertIn('if ($mode -eq "daily" -or $mode -eq "intraday")', script)
+        self.assertIn('if ($mode -eq "daily" -or $mode -eq "open" -or $mode -eq "intraday")', script)
         self.assertIn('if ($mode -eq "daily" -or $mode -eq "issue_alert")', script)
         self.assertIn("stock_alarm.failure_alert", script)
         self.assertIn("cmd.exe /d /c", script)

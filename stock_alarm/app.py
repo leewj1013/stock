@@ -517,6 +517,8 @@ def run() -> None:
     picks = recommend(markets, top_n, min_trading_value, volume_multiplier)
     write_log(picks)
     track_positions(picks)
+    if not picks and os.environ.get("SEND_EMPTY_RECOMMENDATION", "0") != "1":
+        return
     from .notifier import send_notification
 
     send_notification(format_message(picks))
