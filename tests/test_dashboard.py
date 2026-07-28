@@ -41,6 +41,12 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("<th class='num'>", html)
         self.assertIn("<td class='num'>12.35</td>", html)
 
+    def test_table_adds_pager_after_15_rows(self):
+        html = table("T", [{"a": str(index)} for index in range(16)], ["a"])
+
+        self.assertIn("data-page-size='15'", html)
+        self.assertIn("data-row='15'", html)
+
     def test_card_marks_status(self):
         self.assertIn("<span class='bad'>missing</span>", card("latest error", "missing"))
 
@@ -207,16 +213,37 @@ class DashboardTest(unittest.TestCase):
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_latest_position_rows_dedupes_ticker(self, tail_csv):
-        tail_csv.return_value = [
-            {"created_at": "2026-07-26T09:00:00", "ticker": "A", "return_pct": "0"},
-            {"created_at": "2026-07-26T10:00:00", "ticker": "B", "return_pct": "1"},
-            {"created_at": "2026-07-26T11:00:00", "ticker": "A", "return_pct": "-2"},
-        ]
+        def fake_tail(path, _count):
+            if path.endswith("sell_alerts.csv"):
+                return []
+            return [
+                {"created_at": "2026-07-26T09:00:00", "ticker": "A", "return_pct": "0"},
+                {"created_at": "2026-07-26T10:00:00", "ticker": "B", "return_pct": "1"},
+                {"created_at": "2026-07-26T11:00:00", "ticker": "A", "return_pct": "-2"},
+            ]
+
+        tail_csv.side_effect = fake_tail
 
         rows = latest_position_rows()
 
         self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
         self.assertEqual("-2", rows[0]["return_pct"])
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_latest_position_rows_skips_sell_alerted_ticker(self, tail_csv):
+        def fake_tail(path, _count):
+            if path.endswith("sell_alerts.csv"):
+                return [{"ticker": "A"}]
+            return [
+                {"created_at": "2026-07-26T10:00:00", "ticker": "B", "return_pct": "1"},
+                {"created_at": "2026-07-26T11:00:00", "ticker": "A", "return_pct": "-2"},
+            ]
+
+        tail_csv.side_effect = fake_tail
+
+        rows = latest_position_rows()
+
+        self.assertEqual(["B"], [row["ticker"] for row in rows])
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_sell_alerted_recommendation_rows(self, tail_csv):

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import os
@@ -13,6 +13,7 @@ from .report import latest_error_summary, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
+PAGE_SIZE = 15
 NUMERIC_COLUMNS = {
     "close",
     "score",
@@ -22,12 +23,12 @@ NUMERIC_COLUMNS = {
     "total_score",
     "volume",
     "trading_value",
+    "trading_value_억",
     "trend",
     "news",
     "disclosure",
     "penalty",
     "volume_ratio",
-    "trading_value_억",
     "news_score",
     "disclosure_score",
     "performance_penalty",
@@ -99,12 +100,12 @@ LABELS = {
     "total_score": "총점",
     "volume": "거래량",
     "trading_value": "거래대금",
+    "trading_value_억": "거래대금(억)",
     "trend": "추세",
     "news": "뉴스",
     "disclosure": "공시",
     "penalty": "감점",
     "volume_ratio": "거래량 배율",
-    "trading_value_억": "거래대금(억)",
     "news_score": "뉴스 점수",
     "disclosure_score": "공시 점수",
     "performance_penalty": "성과 감점",
@@ -329,9 +330,9 @@ def performance_penalty_rows(limit: int = 10) -> list[dict[str, str]]:
 
 def recommendation_shape_rows() -> list[dict[str, str]]:
     return [
-        {"type": "관심 후보", "when": "거래량 급증 + 20일선 위 + 거래대금 충분", "action": "추천 알림 발송"},
+        {"type": "관심 후보", "when": "거래량 급증 + 20일선 상회 + 거래대금 충분", "action": "추천 알림 발송"},
         {"type": "확인 필요", "when": "뉴스/공시/과거 성과 보너스 또는 감점 있음", "action": "대시보드 사유 확인"},
-        {"type": "매도 검토", "when": "손실, 급락, 수익 반납 조건 발생", "action": "매도 검토 알림 발송"},
+        {"type": "매도 검토", "when": "손절, 급락, 수익 반납 조건 발생", "action": "매도 검토 알림 발송"},
     ]
 
 
@@ -450,9 +451,13 @@ def issue_rows() -> list[dict[str, str]]:
 
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
-    body = "".join("<tr>" + "".join(cell(row.get(column, ""), column) for column in columns) + "</tr>" for row in rows)
+    body = "".join(
+        f"<tr data-row='{index}'>" + "".join(cell(row.get(column, ""), column) for column in columns) + "</tr>"
+        for index, row in enumerate(rows)
+    )
     head = "".join(header_cell(column) for column in columns)
-    return f"<section><h2>{e(display_label(title))}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></section>"
+    pager = f"<div class='pager' data-page-size='{PAGE_SIZE}'></div>" if len(rows) > PAGE_SIZE else ""
+    return f"<section><h2>{e(display_label(title))}</h2><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{pager}</section>"
 
 
 def stock_highlights() -> str:
@@ -477,9 +482,10 @@ def latest_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
 def latest_position_rows(limit: int = 10) -> list[dict[str, str]]:
     rows = []
     seen = set()
+    sold = {row.get("ticker", "").strip() for row in tail_csv("logs/sell_alerts.csv", 1000) if row.get("ticker")}
     for row in reversed(tail_csv("logs/positions_report.csv", 1000)):
         ticker = row.get("ticker", "")
-        if not ticker or ticker in seen:
+        if not ticker or ticker in seen or ticker in sold:
             continue
         seen.add(ticker)
         rows.append(row)
@@ -559,16 +565,11 @@ def render() -> str:
     stock_tab = f"""
 {stock_highlights()}
 {table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "reason", "volume_score", "trading_value_score", "trend_score"])}
-{table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
 {table("Positions", latest_position_rows(), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
-{table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 {table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
-{table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
-{table("Recent recommendations", latest_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
+{table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
 """
     settings_tab = f"""
 {table("Issues", issue_rows(), ["source", "item", "status"])}
@@ -579,6 +580,9 @@ def render() -> str:
 {table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
 {table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
+{table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
+{table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
+{table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 <section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
 <section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
 """
@@ -592,7 +596,7 @@ body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
-.highlight{{background:#111827;color:white;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd}} .highlight b{{display:block;color:#cbd5e1}} .highlight span{{display:block;font-size:24px;font-weight:800;margin-top:8px}}
+.highlight{{background:#111827;color:white;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd}} .highlight b{{display:block;color:#f8fafc}} .highlight span{{display:block;color:white;font-size:24px;font-weight:800;margin-top:8px}}
 .highlight.pos{{background:#0f766e}} .highlight.neg{{background:#b42318}} .highlight.zero{{background:#475569}}
 .tabs{{margin-top:18px}} .tab-input{{display:none}} .tab-label{{display:inline-block;background:#e9edf3;border-radius:999px;padding:10px 16px;margin-right:8px;cursor:pointer;font-weight:600}}
 .tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"]{{background:#111;color:white}}
@@ -600,7 +604,8 @@ h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-
 .legacy-sections,.legacy-order{{display:none}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
-.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
+.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}} .highlight.pos,.highlight.neg,.highlight.zero{{color:white}} .highlight.pos b,.highlight.neg b,.highlight.zero b,.highlight.pos span,.highlight.neg span,.highlight.zero span{{color:white}}
+.pager{{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:10px}} .pager button{{border:1px solid #d0d5dd;background:white;border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:#111;color:white;border-color:#111}}
 li{{margin:4px 0}}
 </style>
 </head>
@@ -613,34 +618,32 @@ li{{margin:4px 0}}
 <input class="tab-input" id="tab-settings" name="tabs" type="radio">
 <div class="tab-labels">
 <label class="tab-label" for="tab-stocks">주식 정보</label>
-<label class="tab-label" for="tab-settings">설정/오류</label>
+<label class="tab-label" for="tab-settings">설정/진단</label>
 </div>
 <div class="tab-panel" id="stocks-panel">{stock_tab}</div>
 <div class="tab-panel" id="settings-panel">{settings_tab}</div>
 </div>
-<div class="legacy-sections">
-{table("Issues", issue_rows(), ["source", "item", "status"])}
-{table("Today run details", today_run_rows(), ["step", "status"])}
-{table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "reason", "volume_score", "trading_value_score", "trend_score"])}
-{table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"])}
-{table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
-{table("Why recommended", recommendation_reason_rows(), ["created_at", "ticker", "name", "score", "reason", "volume_ratio", "trading_value_억", "news_score", "disclosure_score", "performance_penalty"])}
-{table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
-{table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
-{table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
-<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section>
-{table("Current settings", settings_rows(), ["setting", "value"])}
-{table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
-{table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
-{table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
-{table("Recent recommendations", latest_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "volume_score", "trading_value_score", "trend_score"])}
-{table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
-{table("Positions", latest_position_rows(), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
-<section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
-<section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
-</div>
+<script>
+document.querySelectorAll("section").forEach((section) => {{
+  const rows = [...section.querySelectorAll("tbody tr")];
+  const pager = section.querySelector(".pager");
+  if (!pager) return;
+  const pageSize = Number(pager.dataset.pageSize || {PAGE_SIZE});
+  const pageCount = Math.ceil(rows.length / pageSize);
+  const show = (page) => {{
+    rows.forEach((row, index) => row.style.display = Math.floor(index / pageSize) === page ? "" : "none");
+    [...pager.children].forEach((button, index) => button.classList.toggle("active", index === page));
+  }};
+  for (let page = 0; page < pageCount; page++) {{
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = String(page + 1);
+    button.addEventListener("click", () => show(page));
+    pager.appendChild(button);
+  }}
+  show(0);
+}});
+</script>
 </body>
 </html>"""
 
@@ -663,3 +666,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
