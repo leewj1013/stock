@@ -7,6 +7,7 @@ class ScriptTest(unittest.TestCase):
             script = file.read()
 
         self.assertIn('RunFreshStep "recommendation" "stock_alarm"', script)
+        self.assertIn('RunFreshStep "market_summary" "stock_alarm.market_summary"', script)
         self.assertIn('RunFreshStep "sell_check" "stock_alarm.sell_check"', script)
         self.assertIn('RunFreshStep "positions_report" "stock_alarm.positions_report"', script)
         self.assertIn('RunFreshStep "recommendation_performance" "stock_alarm.recommendation_performance"', script)

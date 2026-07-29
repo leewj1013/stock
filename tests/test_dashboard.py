@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -55,6 +55,27 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("ok", card_class("today issues", "0"))
         self.assertEqual("muted", card_class("today recommendations", "0"))
         self.assertEqual("ok", card_class("today recommendations", "2"))
+
+    @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[{"ticker": "A"}])
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_stock_highlights_show_total_average_return(self, tail_csv, _recommendations):
+        def fake_tail(path, _count):
+            if path.endswith("positions_report.csv"):
+                return [
+                    {"created_at": "now", "ticker": "A", "return_pct": "2"},
+                    {"created_at": "now", "ticker": "B", "return_pct": "-4"},
+                ]
+            if path.endswith("recommendation_performance_summary.csv"):
+                return [{"metric": "avg_1d_return_pct", "value": "1.2"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
+
+        html = stock_highlights()
+
+        self.assertIn("총 평균 수익률", html)
+        self.assertIn("-1.00%", html)
+        self.assertNotIn("최근 추천", html)
 
     @patch("stock_alarm.dashboard.latest_error_summary", return_value="none")
     @patch("stock_alarm.dashboard.position_count", return_value=1)

@@ -1,8 +1,8 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
-from stock_alarm.app import is_trading_day, latest_naver_trading_day
+from stock_alarm.app import is_market_alert_time, is_trading_day, latest_naver_trading_day
 
 
 class NaverDateTest(unittest.TestCase):
@@ -19,6 +19,12 @@ class NaverDateTest(unittest.TestCase):
     @patch("stock_alarm.app.latest_naver_trading_day", return_value=date(2026, 7, 24))
     def test_is_trading_day_false_on_weekend_or_holiday(self, _latest):
         self.assertFalse(is_trading_day(date(2026, 7, 26)))
+
+    @patch("stock_alarm.app.is_trading_day", return_value=True)
+    def test_is_market_alert_time_only_during_market_hours(self, _trading):
+        self.assertTrue(is_market_alert_time(datetime(2026, 7, 27, 9, 0)))
+        self.assertTrue(is_market_alert_time(datetime(2026, 7, 27, 15, 30)))
+        self.assertFalse(is_market_alert_time(datetime(2026, 7, 27, 19, 15)))
 
 
 if __name__ == "__main__":

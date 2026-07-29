@@ -62,6 +62,7 @@ class RecommendSortTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 positions = os.path.join(directory, "positions.csv")
                 alerts = os.path.join(directory, "sell_alerts.csv")
+                recommendations = os.path.join(directory, "recommendations.csv")
                 with open(positions, "w", newline="", encoding="utf-8-sig") as file:
                     writer = csv.writer(file)
                     writer.writerow(["ticker", "name", "entry_price", "entry_date"])
@@ -72,7 +73,52 @@ class RecommendSortTest(unittest.TestCase):
                     writer.writerow(["created_at", "ticker"])
                     writer.writerow(["2026-07-27T15:00:00", "A"])
 
-                self.assertEqual({"B"}, open_recommended_tickers(positions, alerts))
+                self.assertEqual({"B"}, open_recommended_tickers(positions, alerts, recommendations))
+
+    def test_new_position_after_sell_alert_blocks_recommendation_again(self):
+        import csv
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            positions = os.path.join(directory, "positions.csv")
+            alerts = os.path.join(directory, "sell_alerts.csv")
+            recommendations = os.path.join(directory, "recommendations.csv")
+            with open(positions, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["ticker", "name", "entry_price", "entry_date"])
+                writer.writerow(["A", "A", "100", "2026-07-27"])
+                writer.writerow(["A", "A", "110", "2026-07-29"])
+            with open(alerts, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["created_at", "ticker"])
+                writer.writerow(["2026-07-28T15:00:00", "A"])
+
+            self.assertEqual({"A"}, open_recommended_tickers(positions, alerts, recommendations))
+
+    def test_recommendation_after_sell_alert_blocks_recommendation_again(self):
+        import csv
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            positions = os.path.join(directory, "positions.csv")
+            alerts = os.path.join(directory, "sell_alerts.csv")
+            recommendations = os.path.join(directory, "recommendations.csv")
+            with open(positions, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["ticker", "name", "entry_price", "entry_date"])
+                writer.writerow(["A", "A", "100", "2026-07-29"])
+            with open(alerts, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["created_at", "ticker"])
+                writer.writerow(["2026-07-29T13:55:00", "A"])
+            with open(recommendations, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["created_at", "ticker"])
+                writer.writerow(["2026-07-29T14:05:00", "A"])
+
+            self.assertEqual({"A"}, open_recommended_tickers(positions, alerts, recommendations))
 
 
 if __name__ == "__main__":

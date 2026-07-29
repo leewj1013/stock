@@ -97,14 +97,14 @@ class SellCheckTest(unittest.TestCase):
         self.assertEqual("손실 -6.0%", rows[0]["summary"])
 
     @patch("stock_alarm.sell_check.latest_naver_trading_day")
-    @patch("stock_alarm.sell_check.is_trading_day", return_value=True)
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
     @patch("stock_alarm.sell_check.find_alerts", return_value=[])
     @patch("stock_alarm.sell_check.read_positions", return_value=[])
     @patch("stock_alarm.sell_check.write_log")
     def test_run_skips_empty_alert_by_default(self, _write, _positions, _alerts, _trading, _day):
         self.assertEqual("no_alerts", run())
 
-    @patch("stock_alarm.sell_check.is_trading_day", return_value=False)
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=False)
     @patch("stock_alarm.sell_check.read_positions")
     def test_run_skips_when_market_closed(self, positions, _trading):
         self.assertEqual("market_closed", run())

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from statistics import mean
 
-from .app import env_float, is_trading_day, latest_naver_trading_day, load_env, naver_rows, stock_name, write_error_log
+from .app import env_float, is_market_alert_time, latest_naver_trading_day, load_env, naver_rows, stock_name, write_error_log
 
 
 POSITIONS_PATH = "data/positions.csv"
@@ -163,7 +163,7 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
 
 def run() -> str:
     load_env()
-    if not is_trading_day():
+    if not is_market_alert_time():
         return "market_closed"
     alerts = find_alerts(read_positions(), latest_naver_trading_day())
     write_log(alerts)

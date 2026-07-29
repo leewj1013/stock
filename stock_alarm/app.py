@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from io import StringIO
 from statistics import mean
@@ -189,6 +189,11 @@ def latest_naver_trading_day() -> date:
 def is_trading_day(today: date | None = None) -> bool:
     today = today or env_date("AS_OF_DATE", date.today())
     return latest_naver_trading_day() == today
+
+
+def is_market_alert_time(now: datetime | None = None) -> bool:
+    now = now or datetime.now()
+    return is_trading_day(now.date()) and time(9, 0) <= now.time() <= time(15, 30)
 
 
 def make_naver_pick(
@@ -380,8 +385,66 @@ def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
     return sorted([pick for pick in picks if pick.score >= minimum and pick.ticker not in blocked], key=lambda item: item.score, reverse=True)[:top_n]
 
 
-def open_recommended_tickers(positions_path: str = POSITIONS_PATH, sell_alerts_path: str = SELL_ALERTS_PATH) -> set[str]:
-    return read_tickers(positions_path) - read_tickers(sell_alerts_path)
+def open_recommended_tickers(
+    positions_path: str = POSITIONS_PATH,
+    sell_alerts_path: str = SELL_ALERTS_PATH,
+    recommendations_path: str = "logs/recommendations.csv",
+) -> set[str]:
+    sell_alerts = latest_sell_alert_times(sell_alerts_path)
+    result = set()
+    for ticker, entry_time in latest_position_times(positions_path).items():
+        sell_time = sell_alerts.get(ticker)
+        if not sell_time or entry_time > sell_time:
+            result.add(ticker)
+    for ticker, recommend_time in latest_recommendation_times(recommendations_path).items():
+        sell_time = sell_alerts.get(ticker)
+        if not sell_time or recommend_time > sell_time:
+            result.add(ticker)
+    return result
+
+
+def latest_position_times(path: str) -> dict[str, datetime]:
+    result: dict[str, datetime] = {}
+    if not os.path.exists(path):
+        return result
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            ticker = row.get("ticker", "").strip()
+            entry_time = parse_time(row.get("entry_date", ""))
+            if ticker and entry_time:
+                result[ticker] = max(result.get(ticker, entry_time), entry_time)
+    return result
+
+
+def latest_sell_alert_times(path: str) -> dict[str, datetime]:
+    return latest_event_times(path, "created_at")
+
+
+def latest_recommendation_times(path: str) -> dict[str, datetime]:
+    return latest_event_times(path, "created_at")
+
+
+def latest_event_times(path: str, column: str) -> dict[str, datetime]:
+    result: dict[str, datetime] = {}
+    if not os.path.exists(path):
+        return result
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            ticker = row.get("ticker", "").strip()
+            event_time = parse_time(row.get(column, ""))
+            if ticker and event_time:
+                result[ticker] = max(result.get(ticker, event_time), event_time)
+    return result
+
+
+def parse_time(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            return datetime.fromisoformat(value[:10])
+        except ValueError:
+            return None
 
 
 def read_tickers(path: str) -> set[str]:
@@ -461,10 +524,7 @@ def track_positions(picks: list[Pick], path: str = POSITIONS_PATH) -> int:
     if os.environ.get("AUTO_TRACK_PICKS", "1") != "1":
         return 0
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    existing = set()
-    if os.path.exists(path):
-        with open(path, newline="", encoding="utf-8-sig") as file:
-            existing = {row.get("ticker", "") for row in csv.DictReader(file)}
+    existing = open_recommended_tickers(path)
     exists = os.path.exists(path)
     added = 0
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
@@ -515,7 +575,7 @@ def refresh_kakao_token() -> bool:
 
 def run() -> None:
     load_env()
-    if not is_trading_day():
+    if not is_market_alert_time():
         return
     markets = [item.strip() for item in os.environ.get("MARKETS", "KOSPI,KOSDAQ").split(",") if item.strip()]
     top_n = int(os.environ.get("TOP_N", "5"))

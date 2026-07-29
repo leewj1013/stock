@@ -6,7 +6,7 @@ from stock_alarm.app import Pick, run
 
 class AppRunTest(unittest.TestCase):
     @patch.dict("os.environ", {}, clear=True)
-    @patch("stock_alarm.app.is_trading_day", return_value=True)
+    @patch("stock_alarm.app.is_market_alert_time", return_value=True)
     @patch("stock_alarm.app.load_env")
     @patch("stock_alarm.app.track_positions")
     @patch("stock_alarm.app.write_log")
@@ -18,7 +18,7 @@ class AppRunTest(unittest.TestCase):
         send.assert_not_called()
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("stock_alarm.app.is_trading_day", return_value=True)
+    @patch("stock_alarm.app.is_market_alert_time", return_value=True)
     @patch("stock_alarm.app.load_env")
     @patch("stock_alarm.app.track_positions")
     @patch("stock_alarm.app.write_log")
@@ -30,7 +30,7 @@ class AppRunTest(unittest.TestCase):
         send.assert_called_once()
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("stock_alarm.app.is_trading_day", return_value=False)
+    @patch("stock_alarm.app.is_market_alert_time", return_value=False)
     @patch("stock_alarm.app.load_env")
     @patch("stock_alarm.app.recommend")
     @patch("stock_alarm.notifier.send_notification")

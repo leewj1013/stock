@@ -464,14 +464,15 @@ def stock_highlights() -> str:
     summary = {row.get("metric", ""): row.get("value", "") for row in tail_csv("logs/recommendation_performance_summary.csv", 50)}
     position_rows = latest_batch(tail_csv("logs/positions_report.csv", 100))
     returns = [float(row.get("return_pct") or 0) for row in position_rows]
+    avg_return = sum(returns) / len(returns) if returns else None
     worst = min(position_rows, key=lambda row: float(row.get("return_pct") or 0), default={})
     cards = [
-        ("최근 추천", f"{len(today_recommendation_rows())}개", ""),
+        ("총 평균 수익률", f"{avg_return:.2f}%" if avg_return is not None else "-", signed_class(avg_return)),
         ("1일 평균 수익률", value_or_dash(summary.get("avg_1d_return_pct"), "%"), signed_class(summary.get("avg_1d_return_pct"))),
         ("1일 승률", value_or_dash(summary.get("win_rate_1d_pct"), "%"), ""),
         ("보유 최저 수익률", f"{worst.get('name', '-')}: {float(worst.get('return_pct') or 0):.2f}%" if worst else "-", signed_class(worst.get("return_pct", ""))),
     ]
-    return "<div class='highlight-grid'>" + "".join(f"<div class='highlight {klass}'><b>{e(label)}</b><span>{e(value)}</span></div>" for label, value, klass in cards) + "</div>"
+    return "<div class='highlight-grid'>" + "".join(f"<div class='highlight'><b>{e(label)}</b><span class='{klass}'>{e(value)}</span></div>" for label, value, klass in cards) + "</div>"
 
 
 def latest_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -596,15 +597,14 @@ body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
-.highlight{{background:#111827;color:white;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd}} .highlight b{{display:block;color:#f8fafc}} .highlight span{{display:block;color:white;font-size:24px;font-weight:800;margin-top:8px}}
-.highlight.pos{{background:#0f766e}} .highlight.neg{{background:#b42318}} .highlight.zero{{background:#475569}}
+.highlight{{background:white;color:#111827;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd;border:1px solid #e5e7eb}} .highlight b{{display:block;color:#475569}} .highlight span{{display:block;color:#111827;font-size:24px;font-weight:800;margin-top:8px}}
 .tabs{{margin-top:18px}} .tab-input{{display:none}} .tab-label{{display:inline-block;background:#e9edf3;border-radius:999px;padding:10px 16px;margin-right:8px;cursor:pointer;font-weight:600}}
 .tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"]{{background:#111;color:white}}
 #tab-stocks:checked~#stocks-panel,#tab-settings:checked~#settings-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
-.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}} .highlight.pos,.highlight.neg,.highlight.zero{{color:white}} .highlight.pos b,.highlight.neg b,.highlight.zero b,.highlight.pos span,.highlight.neg span,.highlight.zero span{{color:white}}
+.ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:10px}} .pager button{{border:1px solid #d0d5dd;background:white;border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:#111;color:white;border-color:#111}}
 li{{margin:4px 0}}
 </style>

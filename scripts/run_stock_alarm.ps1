@@ -42,6 +42,9 @@ function RunFreshStep($name, $module) {
     $env:NO_CACHE = $previousNoCache
 }
 
+if ($mode -eq "open") {
+    RunFreshStep "market_summary" "stock_alarm.market_summary"
+}
 if ($mode -eq "daily" -or $mode -eq "open" -or $mode -eq "intraday") {
     RunFreshStep "recommendation" "stock_alarm"
 }
