@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from stock_alarm.app import Pick, open_recommended_tickers, recommend_for_day, top_picks
@@ -52,6 +52,19 @@ class RecommendSortTest(unittest.TestCase):
         )
 
         self.assertEqual(["B"], [pick.ticker for pick in picks])
+
+    @patch("stock_alarm.app.open_recommended_tickers", return_value=set())
+    def test_top_picks_dedupes_ticker(self, _open_tickers):
+        picks = top_picks(
+            [
+                Pick("A", "A", 100, 2, 5_000_000_000, 90),
+                Pick("A", "A", 101, 2, 5_000_000_000, 80),
+                Pick("B", "B", 100, 2, 5_000_000_000, 70),
+            ],
+            3,
+        )
+
+        self.assertEqual(["A", "B"], [pick.ticker for pick in picks])
 
     def test_sell_alert_allows_recommendation_again(self):
         with self.subTest("positions minus sell alerts"):
@@ -117,6 +130,30 @@ class RecommendSortTest(unittest.TestCase):
                 writer = csv.writer(file)
                 writer.writerow(["created_at", "ticker"])
                 writer.writerow(["2026-07-29T14:05:00", "A"])
+
+            self.assertEqual({"A"}, open_recommended_tickers(positions, alerts, recommendations))
+
+    @patch("stock_alarm.app.datetime")
+    @patch.dict("os.environ", {"SELL_RECOMMEND_COOLDOWN_DAYS": "3"})
+    def test_recent_sell_alert_blocks_recommendation_cooldown(self, datetime_mock):
+        import csv
+        import os
+        import tempfile
+
+        datetime_mock.now.return_value = datetime(2026, 7, 31, 9, 0, 0)
+        datetime_mock.fromisoformat.side_effect = datetime.fromisoformat
+        with tempfile.TemporaryDirectory() as directory:
+            positions = os.path.join(directory, "positions.csv")
+            alerts = os.path.join(directory, "sell_alerts.csv")
+            recommendations = os.path.join(directory, "recommendations.csv")
+            with open(positions, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["ticker", "name", "entry_price", "entry_date"])
+                writer.writerow(["A", "A", "100", "2026-07-28"])
+            with open(alerts, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["created_at", "ticker"])
+                writer.writerow(["2026-07-30T15:00:00", "A"])
 
             self.assertEqual({"A"}, open_recommended_tickers(positions, alerts, recommendations))
 

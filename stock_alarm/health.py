@@ -53,7 +53,10 @@ def lines() -> list[str]:
         f"errors_log={yes(os.path.exists('logs/errors.log'))}",
     ]
     if data_source.lower() == "naver":
-        result.append(f"latest_naver_trading_day={latest_naver_trading_day().isoformat()}")
+        try:
+            result.append(f"latest_naver_trading_day={latest_naver_trading_day().isoformat()}")
+        except Exception as error:
+            result.append(f"latest_naver_trading_day=unavailable ({type(error).__name__})")
     return result
 
 

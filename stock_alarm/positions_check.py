@@ -34,6 +34,16 @@ def position_count(path: str = POSITIONS_PATH) -> int:
     return len(read_positions(path))
 
 
+def active_position_tickers(path: str = POSITIONS_PATH, sell_alerts_path: str = "logs/sell_alerts.csv") -> set[str]:
+    from .app import active_position_tickers as app_active_position_tickers
+
+    return app_active_position_tickers(path, sell_alerts_path)
+
+
+def active_position_count(path: str = POSITIONS_PATH, sell_alerts_path: str = "logs/sell_alerts.csv") -> int:
+    return len(active_position_tickers(path, sell_alerts_path))
+
+
 def main() -> int:
     errors = validate_positions()
     if errors:

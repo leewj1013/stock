@@ -26,6 +26,11 @@ class NaverDateTest(unittest.TestCase):
         self.assertTrue(is_market_alert_time(datetime(2026, 7, 27, 15, 30)))
         self.assertFalse(is_market_alert_time(datetime(2026, 7, 27, 19, 15)))
 
+    @patch("stock_alarm.app.is_trading_day")
+    def test_is_market_alert_time_skips_trading_day_lookup_after_hours(self, trading_day):
+        self.assertFalse(is_market_alert_time(datetime(2026, 7, 27, 19, 15)))
+        trading_day.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

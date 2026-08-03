@@ -33,6 +33,19 @@ class TrackPositionsTest(unittest.TestCase):
         self.assertEqual(0, added)
         self.assertEqual("70000", rows[0]["entry_price"])
 
+    def test_adds_again_after_sell_alert(self):
+        with tempfile.TemporaryDirectory() as directory:
+            positions = os.path.join(directory, "positions.csv")
+            alerts = os.path.join(directory, "sell_alerts.csv")
+            with open(positions, "w", newline="", encoding="utf-8") as file:
+                file.write("ticker,name,entry_price,entry_date\n005930,Samsung,70000,2026-07-01\n")
+            with open(alerts, "w", newline="", encoding="utf-8") as file:
+                file.write("created_at,ticker\n2026-07-02T09:00:00,005930\n")
+
+            added = track_positions([Pick("005930", "Samsung", 80000, 2, 100, 90)], positions, alerts)
+
+            self.assertEqual(1, added)
+
     def test_can_disable_auto_tracking(self):
         old = os.environ.get("AUTO_TRACK_PICKS")
         os.environ["AUTO_TRACK_PICKS"] = "0"

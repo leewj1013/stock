@@ -1,16 +1,15 @@
-import unittest
-from unittest.mock import patch
-
 import json
 import os
 import tempfile
+import unittest
+from unittest.mock import patch
 
 from stock_alarm.news_reference import cache_path, extract_titles, keyword_score, news_titles
 
 
 class NewsReferenceTest(unittest.TestCase):
     def test_keyword_score(self):
-        score, notes = keyword_score(["호실적 수주 증가", "악재 하락"])
+        score, notes = keyword_score(["수주", "증가", "개선", "악재", "하락"])
 
         self.assertEqual(1, score)
         self.assertIn("good=3", notes)
@@ -26,6 +25,11 @@ class NewsReferenceTest(unittest.TestCase):
         html = '<a href="https://n.news.naver.com/article/1"><span>SK텔레콤 수주 증가</span></a>'
 
         self.assertEqual(["SK텔레콤 수주 증가"], extract_titles(html))
+
+    def test_extract_titles_skips_noise(self):
+        html = '<a class="news_tit" title="언론사 구독 뉴스홈"></a><a class="news_tit" title="삼성전자 실적 개선 기대"></a>'
+
+        self.assertEqual(["삼성전자 실적 개선 기대"], extract_titles(html))
 
     @patch("stock_alarm.news_reference.cache_path")
     def test_news_titles_reads_cache(self, path):

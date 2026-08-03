@@ -9,8 +9,8 @@ import urllib.request
 from datetime import date
 
 
-GOOD_WORDS = ["호실적", "수주", "증가", "상승", "개선", "흑자", "성장", "최대"]
-BAD_WORDS = ["악재", "하락", "감소", "적자", "소송", "리콜", "부진", "급락"]
+GOOD_WORDS = ["호실적", "수주", "증가", "상승", "개선", "흑자", "성장", "최대", "실적", "계약"]
+BAD_WORDS = ["악재", "하락", "감소", "적자", "소송", "리콜", "부진", "급락", "손실", "하향"]
 
 
 def cache_path(query: str) -> str:
@@ -53,14 +53,13 @@ def extract_titles(text: str, limit: int = 10) -> list[str]:
 
 def clean_title(value: str) -> str:
     title = re.sub(r"\s+", " ", html.unescape(value)).strip()
-    noise = ("언론사", "새 창", "구독", "프로필")
+    noise = ("언론사", "구독", "포토", "뉴스홈")
     return "" if len(title) < 8 or any(word in title for word in noise) else title
 
 
 def keyword_score(titles: list[str]) -> tuple[int, str]:
-    text = " ".join(titles)
-    good = sum(text.count(word) for word in GOOD_WORDS)
-    bad = sum(text.count(word) for word in BAD_WORDS)
+    good = sum(any(word in title for word in GOOD_WORDS) for title in titles)
+    bad = sum(any(word in title for word in BAD_WORDS) for title in titles)
     return good - bad, f"news={len(titles)} good={good} bad={bad}"
 
 

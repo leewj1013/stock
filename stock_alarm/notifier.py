@@ -7,7 +7,7 @@ import hashlib
 import urllib.parse
 import urllib.request
 from datetime import date, datetime
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from .app import refresh_kakao_token
 
@@ -80,12 +80,15 @@ def send_notification(message: str) -> str:
         return "skipped_duplicate"
 
     sent = False
-    if notifier == "telegram":
-        sent = send_telegram(message)
-    elif notifier == "kakao":
-        sent = send_kakao(message)
-    elif notifier == "console":
-        sent = True
+    try:
+        if notifier == "telegram":
+            sent = send_telegram(message)
+        elif notifier == "kakao":
+            sent = send_kakao(message)
+        elif notifier == "console":
+            sent = True
+    except (HTTPError, URLError, OSError):
+        sent = False
 
     if not sent:
         send_console(message)

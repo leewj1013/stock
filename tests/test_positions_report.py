@@ -2,10 +2,10 @@ import unittest
 import csv
 import os
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
-from stock_alarm.positions_report import PositionRow, change_summary, lines, position_rows, summary, write_log
+from stock_alarm.positions_report import PositionRow, active_positions, change_summary, lines, position_rows, run, summary, write_log
 
 
 class PositionsReportTest(unittest.TestCase):
@@ -52,6 +52,30 @@ class PositionsReportTest(unittest.TestCase):
         self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
 
         self.assertIn("change=+7.50p", change_summary(path))
+
+    @patch("stock_alarm.positions_report.latest_sell_alert_times", return_value={"A": datetime(2026, 7, 30)})
+    def test_active_positions_keeps_latest_entry_after_sell(self, _alerts):
+        rows = active_positions(
+            [
+                {"ticker": "A", "entry_date": "2026-07-29"},
+                {"ticker": "A", "entry_date": "2026-07-31"},
+                {"ticker": "B", "entry_date": "2026-07-29"},
+            ]
+        )
+
+        self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
+        self.assertEqual("2026-07-31", rows[0]["entry_date"])
+
+    @patch("stock_alarm.positions_report.latest_naver_trading_day", return_value=date(2026, 7, 25))
+    @patch("stock_alarm.positions_report.write_log")
+    @patch("stock_alarm.positions_report.position_rows", return_value=[])
+    @patch("stock_alarm.positions_report.read_positions", return_value=[{"ticker": "A"}, {"ticker": "B"}])
+    @patch("stock_alarm.positions_report.active_positions", return_value=[{"ticker": "B"}])
+    @patch("stock_alarm.positions_report.load_env")
+    def test_run_reports_active_positions_only(self, _env, _active, positions, position_rows_mock, _write, _day):
+        run()
+
+        position_rows_mock.assert_called_once_with([{"ticker": "B"}], date(2026, 7, 25))
 
 
 if __name__ == "__main__":

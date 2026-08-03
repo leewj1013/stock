@@ -8,8 +8,8 @@ from statistics import mean
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
 from .health import lines as health_lines
-from .positions_check import position_count
-from .report import latest_error_summary, tail_csv, tail_text
+from .positions_check import active_position_count, active_position_tickers
+from .report import dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
@@ -143,9 +143,9 @@ def metric_cards() -> list[tuple[str, str]]:
     summary = {row.get("metric", ""): row.get("value", "") for row in tail_csv("logs/recommendation_performance_summary.csv", 50)}
     deliveries = tail_csv("logs/deliveries.csv", 50)
     return [
-        ("positions", str(position_count())),
-        ("today recommendations", str(today_csv_count("logs/recommendations.csv"))),
-        ("today sell alerts", str(today_csv_count("logs/sell_alerts.csv"))),
+        ("positions", str(active_position_count())),
+        ("today recommendations", str(len(today_recommendation_rows()))),
+        ("today sell alerts", str(len(today_sell_alert_rows()))),
         ("today issues", str(today_issue_count())),
         ("performance rows", summary.get("rows", "0")),
         ("completed 1d", summary.get("completed_1d", "0")),
@@ -172,19 +172,20 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
     today = datetime.now().date().isoformat()
     limit = limit or int(os.environ.get("TOP_N", "5"))
     performance = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
-    latest_created_at = ""
     rows = []
-    for row in reversed(tail_csv("logs/recommendations.csv", 1000)):
+    for row in dedupe_ticker(latest_log_batch(tail_csv("logs/recommendations.csv", 1000))):
         created_at = row.get("created_at", "")
         if not created_at.startswith(today):
             continue
-        if not latest_created_at:
-            latest_created_at = created_at
-        if created_at != latest_created_at:
-            break
         ticker = row.get("ticker", "")
         rows.append({**row, "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker))})
     return rows[:limit]
+
+
+def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
+    today = datetime.now().date().isoformat()
+    rows = [row for row in dedupe_ticker(latest_log_batch(tail_csv("logs/sell_alerts.csv", 1000))) if row.get("created_at", "").startswith(today)]
+    return rows[:limit] if limit else rows
 
 
 def today_issue_count() -> int:
@@ -465,14 +466,24 @@ def stock_highlights() -> str:
     position_rows = latest_batch(tail_csv("logs/positions_report.csv", 100))
     returns = [float(row.get("return_pct") or 0) for row in position_rows]
     avg_return = sum(returns) / len(returns) if returns else None
-    worst = min(position_rows, key=lambda row: float(row.get("return_pct") or 0), default={})
     cards = [
-        ("총 평균 수익률", f"{avg_return:.2f}%" if avg_return is not None else "-", signed_class(avg_return)),
+        ("총평균수익률", value_or_dash(total_average_return(), "%"), signed_class(total_average_return())),
+        ("보유종목수익률", f"{avg_return:.2f}%" if avg_return is not None else "-", signed_class(avg_return)),
         ("1일 평균 수익률", value_or_dash(summary.get("avg_1d_return_pct"), "%"), signed_class(summary.get("avg_1d_return_pct"))),
-        ("1일 승률", value_or_dash(summary.get("win_rate_1d_pct"), "%"), ""),
-        ("보유 최저 수익률", f"{worst.get('name', '-')}: {float(worst.get('return_pct') or 0):.2f}%" if worst else "-", signed_class(worst.get("return_pct", ""))),
+        ("1일 수익 종목 비율", value_or_dash(summary.get("win_rate_1d_pct"), "%"), ""),
     ]
     return "<div class='highlight-grid'>" + "".join(f"<div class='highlight'><b>{e(label)}</b><span class='{klass}'>{e(value)}</span></div>" for label, value, klass in cards) + "</div>"
+
+
+def total_average_return() -> str:
+    values = []
+    for row in dedupe_ticker(tail_csv("logs/sell_alerts.csv", 1000)):
+        if row.get("return_pct"):
+            values.append(float(row["return_pct"]))
+    for row in latest_batch(tail_csv("logs/positions_report.csv", 1000)):
+        if row.get("return_pct"):
+            values.append(float(row["return_pct"]))
+    return f"{mean(values):.2f}" if values else ""
 
 
 def latest_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -483,10 +494,10 @@ def latest_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
 def latest_position_rows(limit: int = 10) -> list[dict[str, str]]:
     rows = []
     seen = set()
-    sold = {row.get("ticker", "").strip() for row in tail_csv("logs/sell_alerts.csv", 1000) if row.get("ticker")}
+    active = active_position_tickers()
     for row in reversed(tail_csv("logs/positions_report.csv", 1000)):
         ticker = row.get("ticker", "")
-        if not ticker or ticker in seen or ticker in sold:
+        if not ticker or ticker in seen or ticker not in active:
             continue
         seen.add(ticker)
         rows.append(row)
@@ -501,15 +512,26 @@ def header_cell(column: str) -> str:
 
 
 def cell(value: object, column: str = "") -> str:
-    klass = status_class(str(value or ""))
+    display = value if str(value or "") else empty_value_label(column)
+    klass = status_class(str(display or ""))
     classes = [klass] if klass else []
     if column in NUMERIC_COLUMNS:
         classes.append("num")
-    signed = signed_class(value) if column in RETURN_COLUMNS else ""
+    signed = signed_class(display) if column in RETURN_COLUMNS else ""
     if signed:
         classes.append(signed)
     attr = f" class='{' '.join(classes)}'" if classes else ""
-    return f"<td{attr}>{e(format_number(value) if column in NUMERIC_COLUMNS else value)}</td>"
+    return f"<td{attr}>{e(format_number(display) if column in NUMERIC_COLUMNS else display)}</td>"
+
+
+def empty_value_label(column: str) -> str:
+    if column in {"return_3d_pct", "return_5d_pct"}:
+        return "수집대기"
+    if column == "news_score":
+        return "수집대기" if os.environ.get("NEWS_LOOKUP", "0") == "1" and os.environ.get("NEWS_SCORE_WEIGHT", "0") != "0" else "미사용"
+    if column == "disclosure_score":
+        return "수집대기" if os.environ.get("DART_LOOKUP", "0") == "1" else "미사용"
+    return ""
 
 
 def signed_class(value: object) -> str:

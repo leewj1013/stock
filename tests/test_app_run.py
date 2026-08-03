@@ -24,10 +24,26 @@ class AppRunTest(unittest.TestCase):
     @patch("stock_alarm.app.write_log")
     @patch("stock_alarm.app.recommend", return_value=[Pick("005930", "Samsung", 100, 2, 5_000_000_000, 60)])
     @patch("stock_alarm.notifier.send_notification")
-    def test_run_sends_when_pick_exists(self, send, _recommend, _write, _track, _env, _trading):
+    def test_run_sends_when_pick_exists(self, send, _recommend, _write_log, _track_positions, _env, _trading):
         run()
 
         send.assert_called_once()
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("stock_alarm.app.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.app.load_env")
+    @patch("stock_alarm.app.track_positions")
+    @patch("stock_alarm.app.write_log")
+    @patch("stock_alarm.app.recommend", return_value=[Pick("005930", "Samsung", 100, 2, 5_000_000_000, 60)])
+    @patch("stock_alarm.notifier.send_notification")
+    def test_run_tracks_positions_before_writing_recommendation_log(self, _send, _recommend, write_log, track_positions, _env, _trading):
+        calls = []
+        track_positions.side_effect = lambda *_args, **_kwargs: calls.append("track")
+        write_log.side_effect = lambda *_args, **_kwargs: calls.append("log")
+
+        run()
+
+        self.assertEqual(["track", "log"], calls)
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("stock_alarm.app.is_market_alert_time", return_value=False)

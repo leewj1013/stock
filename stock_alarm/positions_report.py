@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from statistics import mean
 
-from .app import latest_naver_trading_day, load_env, naver_rows, stock_name, write_error_log
+from .app import latest_naver_trading_day, latest_sell_alert_times, load_env, naver_rows, parse_time, stock_name, write_error_log
 from .sell_check import read_positions
 
 
@@ -34,6 +34,22 @@ def position_rows(positions: list[dict[str, str]], end_day: date) -> list[Positi
         name = stock_name(ticker, position.get("name", ticker).strip() or ticker)
         rows.append(PositionRow(ticker, name, entry_price, close, (close - entry_price) / entry_price * 100))
     return rows
+
+
+def active_positions(positions: list[dict[str, str]], sell_alerts_path: str = "logs/sell_alerts.csv") -> list[dict[str, str]]:
+    sell_alerts = latest_sell_alert_times(sell_alerts_path)
+    latest: dict[str, tuple[datetime, dict[str, str]]] = {}
+    for position in positions:
+        ticker = position.get("ticker", "").strip()
+        entry_time = parse_time(position.get("entry_date", ""))
+        if not ticker or not entry_time:
+            continue
+        sell_time = sell_alerts.get(ticker)
+        if sell_time and entry_time <= sell_time:
+            continue
+        if ticker not in latest or entry_time > latest[ticker][0]:
+            latest[ticker] = (entry_time, position)
+    return [row for _entry_time, row in latest.values()]
 
 
 def summary(rows: list[PositionRow]) -> str:
@@ -95,7 +111,7 @@ def change_summary(path: str = POSITIONS_REPORT_LOG) -> str:
 
 def run() -> list[str]:
     load_env()
-    rows = position_rows(read_positions(), latest_naver_trading_day())
+    rows = position_rows(active_positions(read_positions()), latest_naver_trading_day())
     write_log(rows)
     return lines(rows, change_summary())
 

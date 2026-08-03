@@ -193,7 +193,7 @@ def is_trading_day(today: date | None = None) -> bool:
 
 def is_market_alert_time(now: datetime | None = None) -> bool:
     now = now or datetime.now()
-    return is_trading_day(now.date()) and time(9, 0) <= now.time() <= time(15, 30)
+    return time(9, 0) <= now.time() <= time(15, 30) and is_trading_day(now.date())
 
 
 def make_naver_pick(
@@ -382,7 +382,16 @@ def recommend_for_day(
 def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
     minimum = env_float("MIN_RECOMMEND_SCORE", 50)
     blocked = open_recommended_tickers()
-    return sorted([pick for pick in picks if pick.score >= minimum and pick.ticker not in blocked], key=lambda item: item.score, reverse=True)[:top_n]
+    result = []
+    seen = set()
+    for pick in sorted(picks, key=lambda item: item.score, reverse=True):
+        if pick.score < minimum or pick.ticker in blocked or pick.ticker in seen:
+            continue
+        seen.add(pick.ticker)
+        result.append(pick)
+        if len(result) >= top_n:
+            break
+    return result
 
 
 def open_recommended_tickers(
@@ -392,6 +401,10 @@ def open_recommended_tickers(
 ) -> set[str]:
     sell_alerts = latest_sell_alert_times(sell_alerts_path)
     result = set()
+    cooldown_until = datetime.now() - timedelta(days=int(env_float("SELL_RECOMMEND_COOLDOWN_DAYS", 3)))
+    for ticker, sell_time in sell_alerts.items():
+        if sell_time >= cooldown_until:
+            result.add(ticker)
     for ticker, entry_time in latest_position_times(positions_path).items():
         sell_time = sell_alerts.get(ticker)
         if not sell_time or entry_time > sell_time:
@@ -520,11 +533,11 @@ def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None
             )
 
 
-def track_positions(picks: list[Pick], path: str = POSITIONS_PATH) -> int:
+def track_positions(picks: list[Pick], path: str = POSITIONS_PATH, sell_alerts_path: str = SELL_ALERTS_PATH) -> int:
     if os.environ.get("AUTO_TRACK_PICKS", "1") != "1":
         return 0
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    existing = open_recommended_tickers(path)
+    existing = active_position_tickers(path, sell_alerts_path)
     exists = os.path.exists(path)
     added = 0
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
@@ -537,6 +550,16 @@ def track_positions(picks: list[Pick], path: str = POSITIONS_PATH) -> int:
             writer.writerow([pick.ticker, pick.name, pick.close, date.today().isoformat()])
             added += 1
     return added
+
+
+def active_position_tickers(path: str = POSITIONS_PATH, sell_alerts_path: str = SELL_ALERTS_PATH) -> set[str]:
+    sell_alerts = latest_sell_alert_times(sell_alerts_path)
+    result = set()
+    for ticker, entry_time in latest_position_times(path).items():
+        sell_time = sell_alerts.get(ticker)
+        if not sell_time or entry_time > sell_time:
+            result.add(ticker)
+    return result
 
 
 def write_error_log(error: BaseException, path: str = "logs/errors.log") -> None:
@@ -582,8 +605,8 @@ def run() -> None:
     min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
     volume_multiplier = float(os.environ.get("VOLUME_MULTIPLIER", "1.5"))
     picks = recommend(markets, top_n, min_trading_value, volume_multiplier)
-    write_log(picks)
     track_positions(picks)
+    write_log(picks)
     if not picks and os.environ.get("SEND_EMPTY_RECOMMENDATION", "0") != "1":
         return
     from .notifier import send_notification

@@ -1,5 +1,6 @@
 import os
 import unittest
+from urllib.error import URLError
 from unittest.mock import patch
 
 from stock_alarm.notifier import send_notification
@@ -29,6 +30,17 @@ class NotifierTest(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+    @patch.dict(os.environ, {"NOTIFIER": "telegram", "TELEGRAM_BOT_TOKEN": "x", "TELEGRAM_CHAT_ID": "1"}, clear=True)
+    @patch("stock_alarm.notifier.write_delivery_log")
+    @patch("stock_alarm.notifier.send_console")
+    @patch("stock_alarm.notifier.was_sent", return_value=False)
+    @patch("stock_alarm.notifier.send_telegram", side_effect=URLError("network"))
+    def test_telegram_error_falls_back_without_crashing(self, _telegram, _sent, console, delivery):
+        self.assertEqual("console", send_notification("hello"))
+
+        console.assert_called_once_with("hello")
+        delivery.assert_called_once_with("console")
 
 
 if __name__ == "__main__":

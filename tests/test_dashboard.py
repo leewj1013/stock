@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, e, empty_value_label, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, total_average_return, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -29,6 +29,16 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
         self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
         self.assertEqual("<td class='num neg'>-10.30</td>", cell("-10.30", "return_1d_pct"))
+
+    @patch.dict("os.environ", {"NEWS_LOOKUP": "1", "NEWS_SCORE_WEIGHT": "1"})
+    def test_empty_value_labels_explain_pending_data(self):
+        self.assertEqual("수집대기", empty_value_label("return_3d_pct"))
+        self.assertEqual("수집대기", empty_value_label("news_score"))
+        self.assertEqual("<td class='num'>수집대기</td>", cell("", "return_3d_pct"))
+
+    @patch.dict("os.environ", {"NEWS_LOOKUP": "0", "NEWS_SCORE_WEIGHT": "0"})
+    def test_news_score_label_shows_unused_when_disabled(self):
+        self.assertEqual("미사용", empty_value_label("news_score"))
 
     def test_signed_class(self):
         self.assertEqual("pos", signed_class("1.2%"))
@@ -73,15 +83,19 @@ class DashboardTest(unittest.TestCase):
 
         html = stock_highlights()
 
-        self.assertIn("총 평균 수익률", html)
+        self.assertIn("총평균수익률", html)
+        self.assertIn("보유종목수익률", html)
+        self.assertIn("1일 수익 종목 비율", html)
         self.assertIn("-1.00%", html)
-        self.assertNotIn("최근 추천", html)
+        self.assertNotIn("보유 최저 수익률", html)
 
     @patch("stock_alarm.dashboard.latest_error_summary", return_value="none")
-    @patch("stock_alarm.dashboard.position_count", return_value=1)
+    @patch("stock_alarm.dashboard.active_position_count", return_value=1)
     @patch("stock_alarm.dashboard.today_issue_count", return_value=2)
+    @patch("stock_alarm.dashboard.today_sell_alert_rows", return_value=[])
+    @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[{"ticker": "A"}])
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_metric_cards_include_latest_error(self, tail_csv, _issues, _positions, _error):
+    def test_metric_cards_include_latest_error(self, tail_csv, _recommendations, _sells, _issues, _positions, _error):
         tail_csv.side_effect = [
             [{"metric": "rows", "value": "3"}],
             [{"created_at": "2026-07-25T09:00:00", "channel": "telegram"}],
@@ -135,7 +149,7 @@ class DashboardTest(unittest.TestCase):
 
         tail_csv.side_effect = fake_tail
 
-        self.assertEqual(["NEW2", "NEW1"], [row["ticker"] for row in today_recommendation_rows()])
+        self.assertEqual(["NEW1", "NEW2"], [row["ticker"] for row in today_recommendation_rows()])
 
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
@@ -232,8 +246,9 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
         self.assertEqual("70", rows[0]["score"])
 
+    @patch("stock_alarm.dashboard.active_position_tickers", return_value={"A", "B"})
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_latest_position_rows_dedupes_ticker(self, tail_csv):
+    def test_latest_position_rows_dedupes_ticker(self, tail_csv, _active):
         def fake_tail(path, _count):
             if path.endswith("sell_alerts.csv"):
                 return []
@@ -250,8 +265,9 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(["A", "B"], [row["ticker"] for row in rows])
         self.assertEqual("-2", rows[0]["return_pct"])
 
+    @patch("stock_alarm.dashboard.active_position_tickers", return_value={"B"})
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_latest_position_rows_skips_sell_alerted_ticker(self, tail_csv):
+    def test_latest_position_rows_skips_sell_alerted_ticker(self, tail_csv, _active):
         def fake_tail(path, _count):
             if path.endswith("sell_alerts.csv"):
                 return [{"ticker": "A"}]

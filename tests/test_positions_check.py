@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from stock_alarm.positions_check import position_count, validate_positions
+from stock_alarm.positions_check import active_position_count, position_count, validate_positions
 
 
 class PositionsCheckTest(unittest.TestCase):
@@ -26,6 +26,12 @@ class PositionsCheckTest(unittest.TestCase):
         self.assertIn("line 2: entry_price must be positive", errors)
         self.assertIn("line 3: invalid entry_price 'x'", errors)
         self.assertIn("line 4: duplicate ticker 005930", errors)
+
+    def test_active_position_count_excludes_sold_tickers(self):
+        positions = self.write_temp("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n000660,SK hynix,100000,2026-07-25\n")
+        alerts = self.write_temp("created_at,ticker\n2026-07-26T09:00:00,005930\n")
+
+        self.assertEqual(1, active_position_count(positions, alerts))
 
 
 if __name__ == "__main__":

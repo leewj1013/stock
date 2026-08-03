@@ -42,6 +42,15 @@ class HealthTest(unittest.TestCase):
         self.assertIn("task_error=old", text)
         self.assertIn("dashboard_ready=ok", text)
 
+    @patch("stock_alarm.health.latest_naver_trading_day", side_effect=RuntimeError("network"))
+    @patch("stock_alarm.health.task_error_status", return_value="task_error=none")
+    @patch("stock_alarm.health.configured_stocks", return_value={"005930": "Samsung"})
+    @patch.dict(os.environ, {"DATA_SOURCE": "naver"}, clear=True)
+    def test_lines_keeps_working_when_latest_trading_day_fails(self, _stocks, _task_error, _day):
+        text = "\n".join(lines())
+
+        self.assertIn("latest_naver_trading_day=unavailable (RuntimeError)", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@
 - Data source: Naver Finance daily prices
 - Watchlist: `data/watchlist.csv` with 102 tickers
 - Notifier: Telegram
-- Schedule: Windows tasks at 08:55, 10:30, 13:30, 15:00, 16:10
+- Schedule: Windows tasks at 08:30, 10:30, 13:30, 15:00, 16:10
 - Duplicate guard: same message is skipped once per day unless `FORCE_SEND=1`
 - Recommendation alert: top 5 candidates from the watchlist
 - Sell-review alerts: `python -m stock_alarm.sell_check` checks `data/positions.csv`
@@ -58,7 +58,7 @@ task_error: none
 dashboard_ready: ok
 dashboard: reports/dashboard.html generated
 next_run: shown by scripts/status_daily_task.ps1 as next_run=<task> at <time>
-daily 16:10 run: ok, LastTaskResult=0, next_run=stockAlarmOpen at 2026-07-26 08:55:00
+daily 16:10 run: ok, LastTaskResult=0, next_run=stockAlarmOpen at 2026-07-26 08:30:00
 ```
 
 ## Defaults
@@ -98,4 +98,4 @@ Keep one combined dashboard at `reports/dashboard.html`.
 
 ## Next best step
 
-After the 08:55 open run, double-click `open_check.bat` and confirm `recommendations=ok`.
+After the 08:30 open run, double-click `open_check.bat` and confirm `recommendations=ok`.

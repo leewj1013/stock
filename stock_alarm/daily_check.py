@@ -8,7 +8,6 @@ from .report import latest_error_summary, tail_csv, tail_text
 
 OK_CHANNELS = {"telegram", "skipped_duplicate"}
 RUN_LOGS = {
-    "recommendations": "logs/recommendations.csv",
     "positions_report": "logs/positions_report.csv",
     "recommendation_performance": "logs/recommendation_performance.csv",
 }
