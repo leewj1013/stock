@@ -95,13 +95,13 @@ class RecommendationPerformanceTest(unittest.TestCase):
         rows = [["2026-07-25", str(index), "X", "95", "100", "1.00", "", ""] for index in range(10)]
         rows.extend([["2026-07-25", str(index), "X", "80", "100", "-1.00", "", ""] for index in range(10, 20)])
 
-        self.assertEqual("watch score_90_plus higher, score_70_89 lower", score_adjustment_suggestion(rows))
+        self.assertEqual("watch score_90_plus higher, score_70_89 lower", score_adjustment_suggestion(rows, min_completed=20))
 
     def test_suggested_min_score_uses_positive_buckets(self):
         rows = [["2026-07-25", str(index), "X", "95", "100", "1.00", "", ""] for index in range(10)]
         rows.extend([["2026-07-25", str(index), "X", "80", "100", "-1.00", "", ""] for index in range(10, 20)])
 
-        self.assertEqual("90", suggested_min_score(rows))
+        self.assertEqual("90", suggested_min_score(rows, min_completed=20))
 
     @patch("stock_alarm.recommendation_performance.price_excursions", return_value=("", ""))
     @patch("stock_alarm.recommendation_performance.naver_close_after", return_value=None)

@@ -151,7 +151,7 @@ def score_bucket_summary(rows: list[list[str]]) -> list[tuple[str, str]]:
     return result
 
 
-def score_adjustment_suggestion(rows: list[list[str]], min_completed: int = 10) -> str:
+def score_adjustment_suggestion(rows: list[list[str]], min_completed: int = 100) -> str:
     buckets = []
     for label, minimum, maximum in SCORE_BUCKETS:
         values = []
@@ -169,7 +169,7 @@ def score_adjustment_suggestion(rows: list[list[str]], min_completed: int = 10) 
     return f"watch {best[0]} higher, {worst[0]} lower"
 
 
-def suggested_min_score(rows: list[list[str]], min_completed: int = 10) -> str:
+def suggested_min_score(rows: list[list[str]], min_completed: int = 100) -> str:
     buckets = []
     for label, minimum, maximum in SCORE_BUCKETS:
         values = [float(row[5]) for row in rows if row[5] and (minimum is None or float(row[3] or 0) >= minimum) and (maximum is None or float(row[3] or 0) < maximum)]
