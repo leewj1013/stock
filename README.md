@@ -25,7 +25,7 @@ PC를 재부팅했거나 자동 실행 상태를 다시 맞추고 싶으면 `sta
 | 작업 이름 | 실행 시간 | 실행 모드 | 주요 내용 |
 |---|---:|---|---|
 | `stockAlarmOpen` | 매일 08:30 | `open` | 아침 시황 요약, 추천 후보 알림 |
-| `stockAlarmIntradayEveryMinute` | 매일 09:00~15:30, 1분마다 | `intraday` | 추천 후보 확인, 매도 검토, 보유 수익률 갱신 |
+| `stockAlarmIntradayEvery5Minutes` | 평일 09:00~15:30, 5분마다 | `intraday` | 추천 후보 확인, 매도 검토, 보유 수익률 갱신 |
 | `stockAlarmDaily` | 매일 16:10 | `daily` | 보유 수익률, 추천 성과, 일일요약, 상태점검, 대시보드, 이슈 알림 |
 
 현재 `scripts/run_stock_alarm.ps1` 기준 실행 흐름은 아래와 같습니다.

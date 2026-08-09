@@ -566,42 +566,6 @@ def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_mul
     return recommend_for_day(latest_trading_day(), markets, top_n, min_trading_value, volume_multiplier)
 
 
-def _legacy_format_message_1(picks: list[Pick]) -> str:
-    if not picks:
-        return "오늘 조건에 맞는 관심 종목이 없습니다."
-    lines = ["[오늘의 국내주식 관심 종목]"]
-    for index, pick in enumerate(picks, 1):
-        news = news_bonus(pick.name)
-        penalty = performance_penalty(pick.ticker)
-        disclosure = dart_bonus(pick.ticker)
-        lines.append(f"{index}. {pick.name}({pick.ticker})")
-        lines.append(f"- 종가: {pick.close:,}원")
-        lines.append(f"- 점수: {pick.score:.1f}")
-        if news:
-            lines.append(f"- 뉴스 보너스: +{news:.1f}점")
-        if disclosure:
-            lines.append(f"- 공시 보너스: +{disclosure:.1f}점")
-        if penalty:
-            lines.append(f"- 성과 감점: -{penalty:.1f}점")
-        lines.append(f"- 사유 요약: {reason_summary(pick.volume_ratio, news, disclosure, penalty)}")
-        lines.append(f"- 사유: {pick.reason}")
-    lines.append("※ 조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
-    return "\n".join(lines)
-
-
-def _legacy_reason_summary_1(volume_ratio: float, news: float, disclosure: float, penalty: float) -> str:
-    parts = []
-    if volume_ratio >= 2:
-        parts.append("거래량 급증")
-    if news > 0:
-        parts.append("뉴스 보너스")
-    if disclosure > 0:
-        parts.append("공시 보너스")
-    if penalty:
-        parts.append("성과 감점")
-    return " + ".join(parts) or "기본 조건 충족"
-
-
 def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None:
     from .csv_schema import ensure_header, migrate_recommendation_row
     header = ["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score", "news_score", "disclosure_score", "performance_penalty"]
@@ -693,44 +657,6 @@ def refresh_kakao_token() -> bool:
         os.environ["KAKAO_REFRESH_TOKEN"] = body["refresh_token"]
         save_env_value("KAKAO_REFRESH_TOKEN", body["refresh_token"])
     return True
-
-
-def _legacy_pick_reason(pick: Pick) -> str:
-    return f"거래량 {pick.volume_ratio:.1f}배, 20일선 상회, 거래대금 {pick.trading_value / 100_000_000:.0f}억원"
-
-
-def _legacy_reason_summary_2(volume_ratio: float, news: float, disclosure: float, penalty: float) -> str:
-    parts = []
-    if volume_ratio >= 2:
-        parts.append("거래량 급증")
-    if news > 0:
-        parts.append("뉴스 보너스")
-    if disclosure > 0:
-        parts.append("공시 보너스")
-    if penalty:
-        parts.append("성과 감점")
-    return " + ".join(parts) or "기본 조건 충족"
-
-
-def _legacy_format_message_2(picks: list[Pick]) -> str:
-    if not picks:
-        return "오늘 조건에 맞는 관심 종목이 없습니다."
-    lines = ["[오늘의 국내주식 관심 종목]"]
-    for index, pick in enumerate(picks, 1):
-        news = news_bonus(pick.name)
-        penalty = performance_penalty(pick.ticker)
-        disclosure = dart_bonus(pick.ticker)
-        lines.extend([f"{index}. {pick.name}({pick.ticker})", f"- 종가: {pick.close:,}원", f"- 점수: {pick.score:.1f}"])
-        if news:
-            lines.append(f"- 뉴스 보너스: +{news:.1f}점")
-        if disclosure:
-            lines.append(f"- 공시 보너스: +{disclosure:.1f}점")
-        if penalty:
-            lines.append(f"- 성과 감점: -{penalty:.1f}점")
-        lines.append(f"- 사유 요약: {reason_summary(pick.volume_ratio, news, disclosure, penalty)}")
-        lines.append(f"- 사유: {pick_reason(pick)}")
-    lines.append("조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
-    return "\n".join(lines)
 
 
 def pick_reason(pick: Pick) -> str:

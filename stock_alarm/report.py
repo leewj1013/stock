@@ -80,8 +80,8 @@ def task_status() -> str:
         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
         "-NoProfile",
         "-Command",
-        "; ".join(
-            f"$i=Get-ScheduledTaskInfo -TaskName {name}; Write-Output ('{name}: LastTaskResult={{0}}; NextRunTime={{1}}' -f $i.LastTaskResult,$i.NextRunTime)"
+        "$OutputEncoding=[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); " + "; ".join(
+            f"$i=Get-ScheduledTaskInfo -TaskName {name}; Write-Output ('{name}: LastTaskResult={{0}}; NextRunTime={{1}}' -f $i.LastTaskResult,$i.NextRunTime.ToString('yyyy-MM-dd HH:mm:ss'))"
             for name in names
         ),
     ]
