@@ -252,6 +252,16 @@ logs/sell_alerts.csv                        매도 검토 알림 기록
 logs/positions_report.csv                   보유 종목 수익률 기록
 logs/recommendation_performance.csv         추천 성과 상세
 logs/recommendation_performance_summary.csv 추천 성과 요약
+
+### 분석용 원천 데이터
+
+추천 및 매도 로직을 다시 실험할 수 있도록 `data/stock_alarm.db`에도 원천 판단 데이터를 저장합니다.
+
+- `strategy_runs`: 실행 ID, 시장일, 전략/스키마 버전, 당시 설정값
+- `candidate_snapshots`: 관심종목 전체의 가격·거래량·이동평균·점수·탈락 사유·선정 여부
+- `position_checks`: 보유종목 전체의 수익률·고점 대비 하락·조건별 발동 여부·`HOLD/SELL` 판단
+
+CSV는 기존 화면과 보고서 호환을 위해 계속 생성됩니다. 추천 성과에는 1·3·5·10·20 거래일 수익률과 20거래일 최대 유리 변동폭(MFE), 최대 불리 변동폭(MAE)이 포함됩니다.
 logs/deliveries.csv                         알림 발송 기록
 logs/sent_keys.csv                          중복 발송 방지 키
 logs/task.out.log                           자동 실행 출력 로그

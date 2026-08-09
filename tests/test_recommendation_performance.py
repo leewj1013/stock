@@ -43,15 +43,20 @@ class RecommendationPerformanceTest(unittest.TestCase):
     def test_external_reference_uses_dart_when_enabled(self, _dart):
         self.assertEqual(("", "1", "dart=2 good=1 bad=0"), external_reference("Samsung", "005930"))
 
-    @patch("stock_alarm.recommendation_performance.naver_close_after", side_effect=[110, 120, None])
+    @patch("stock_alarm.recommendation_performance.price_excursions", return_value=("25.00", "-5.00"))
+    @patch("stock_alarm.recommendation_performance.naver_close_after", side_effect=[110, 120, None, 130, 140])
     @patch("stock_alarm.recommendation_performance.pick_trading_day", return_value=date(2026, 7, 24))
-    def test_performance_rows(self, _day, _close):
+    def test_performance_rows(self, _day, _close, _excursions):
         rows = performance_rows([{"created_at": "2026-07-25T16:10:00", "ticker": "005930", "name": "Samsung", "close": "100", "score": "80"}])
 
         self.assertEqual("10.00", rows[0][5])
         self.assertEqual("20.00", rows[0][6])
         self.assertEqual("", rows[0][7])
-        self.assertEqual(["", "", "", ""], rows[0][8:])
+        self.assertEqual("30.00", rows[0][8])
+        self.assertEqual("40.00", rows[0][9])
+        self.assertEqual("25.00", rows[0][10])
+        self.assertEqual("-5.00", rows[0][11])
+        self.assertEqual(["", "", "", "legacy row: external signals unavailable at recommendation time"], rows[0][12:])
         self.assertEqual(["news_score", "disclosure_score", "financial_score", "external_notes"], EXTERNAL_COLUMNS)
 
     @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[[20260724, 0, 0, 0, 100, 1]])
@@ -91,9 +96,10 @@ class RecommendationPerformanceTest(unittest.TestCase):
 
         self.assertEqual("90", suggested_min_score(rows))
 
+    @patch("stock_alarm.recommendation_performance.price_excursions", return_value=("", ""))
     @patch("stock_alarm.recommendation_performance.naver_close_after", return_value=None)
     @patch("stock_alarm.recommendation_performance.pick_trading_day", return_value=date(2026, 7, 24))
-    def test_performance_rows_dedupes_by_pick_day_and_ticker(self, _day, _close):
+    def test_performance_rows_dedupes_by_pick_day_and_ticker(self, _day, _close, _excursions):
         rows = performance_rows(
             [
                 {"created_at": "2026-07-25T01:00:00", "ticker": "005930", "name": "Samsung", "close": "100", "score": "80"},

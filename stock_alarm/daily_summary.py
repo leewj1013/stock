@@ -16,9 +16,7 @@ def latest_position_summary() -> str:
     latest_time = rows[-1].get("created_at")
     latest = [row for row in rows if row.get("created_at") == latest_time]
     returns = [float(row.get("return_pct") or 0) for row in latest]
-    if not returns:
-        return "보유 수익률 기록 없음"
-    return f"보유 평균 수익률: {sum(returns) / len(returns):+.2f}%"
+    return f"보유 평균 수익률: {sum(returns) / len(returns):+.2f}%" if returns else "보유 수익률 기록 없음"
 
 
 def latest_recommendations() -> list[dict[str, str]]:
@@ -45,13 +43,14 @@ def top_recommendations(rows: list[dict[str, str]]) -> list[str]:
 def message() -> str:
     recommendations = latest_recommendations()
     sell_alerts = latest_sell_alerts()
+    change = change_summary().replace("change=", "직전 대비 ").replace(" since previous", "")
     lines = [
-        "[오늘 주식 알림 요약]",
+        "[오늘 주식 알림 마감 요약]",
         f"추천 후보: {len(recommendations)}개",
         f"매도 검토: {len(sell_alerts)}개" if sell_alerts else "매도 검토: 없음",
         f"보유 종목: {active_position_count()}개",
         latest_position_summary(),
-        change_summary().replace("change=", "직전 대비 ").replace(" since previous", ""),
+        change,
     ]
     lines.extend(top_recommendations(recommendations))
     return "\n".join(lines)

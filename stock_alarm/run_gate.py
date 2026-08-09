@@ -12,7 +12,9 @@ def should_run(mode: str, now: datetime | None = None) -> bool:
         if now.weekday() >= 5:
             return False
         return is_market_alert_time(now)
-    if mode in {"open", "daily", "issue_alert"}:
+    if mode == "open":
+        return now.weekday() < 5
+    if mode in {"daily", "issue_alert"}:
         if now.weekday() >= 5:
             return False
         return is_trading_day(now.date())

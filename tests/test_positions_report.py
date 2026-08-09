@@ -15,6 +15,7 @@ class PositionsReportTest(unittest.TestCase):
         rows = position_rows([{"ticker": "005930", "name": "Samsung", "entry_price": "100"}], date(2026, 7, 25))
 
         self.assertEqual(10, rows[0].return_pct)
+        self.assertTrue(rows[0].position_id)
 
     def test_summary(self):
         text = summary([PositionRow("A", "A", 100, 90, -10), PositionRow("B", "B", 100, 110, 10)])
@@ -39,6 +40,7 @@ class PositionsReportTest(unittest.TestCase):
         with open(path, newline="", encoding="utf-8-sig") as file:
             rows = list(csv.DictReader(file))
         self.assertEqual("-10.00", rows[0]["return_pct"])
+        self.assertIn("position_id", rows[0])
 
     def test_change_summary(self):
         with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:

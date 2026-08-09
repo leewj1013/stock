@@ -1,3 +1,4 @@
+import os
 import unittest
 from datetime import date, datetime
 from unittest.mock import patch
@@ -11,6 +12,13 @@ class NaverDateTest(unittest.TestCase):
         rows.return_value = [["20240722", 1, 1, 1, 1, 1, 0], ["20240724", 1, 1, 1, 1, 1, 0]]
 
         self.assertEqual(date(2024, 7, 24), latest_naver_trading_day())
+        self.assertEqual(300, rows.call_args.kwargs["max_cache_age_seconds"])
+
+    @patch.dict(os.environ, {"AS_OF_DATE": "2024-07-24"}, clear=True)
+    @patch("stock_alarm.app.naver_rows", return_value=[["20240724", 1, 1, 1, 1, 1, 0]])
+    def test_historical_trading_day_cache_does_not_expire(self, rows):
+        self.assertEqual(date(2024, 7, 24), latest_naver_trading_day())
+        self.assertIsNone(rows.call_args.kwargs["max_cache_age_seconds"])
 
     @patch("stock_alarm.app.latest_naver_trading_day", return_value=date(2026, 7, 27))
     def test_is_trading_day_true_when_latest_matches_today(self, _latest):

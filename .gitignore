@@ -1,5 +1,10 @@
 .env
 data/positions.csv
+data/stock_alarm.db
+data/backups/
+data/registry-backup/
+data/stock_alarm.db-shm
+data/stock_alarm.db-wal
 .venv/
 .cache/
 logs/

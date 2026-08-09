@@ -1,0 +1,10 @@
+[Unit]
+Description=Stock alarm opening summary
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:30:00 Asia/Seoul
+Persistent=true
+Unit=stock-alarm@open.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Stock alarm %i batch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/stockAlarm
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/stockAlarm/.venv/bin/python -m stock_alarm.server_runner %i

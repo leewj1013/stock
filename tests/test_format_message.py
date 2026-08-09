@@ -1,84 +1,28 @@
 import unittest
-from unittest.mock import patch
 
 from stock_alarm.app import Pick, format_message, reason_summary
 
 
 class FormatMessageTest(unittest.TestCase):
-    def test_includes_ticker_score_and_disclaimer(self):
-        message = format_message(
-            [
-                Pick(
-                    ticker="005930",
-                    name="Samsung",
-                    close=80000,
-                    volume_ratio=2.3,
-                    trading_value=123_000_000_000,
-                    score=76.5,
-                )
-            ]
-        )
+    def pick(self, news=0, disclosure=0, penalty=0):
+        return Pick("005930", "Samsung", 80000, 2.3, 123_000_000_000, 76.5, news_score=news, disclosure_score=disclosure, performance_penalty=penalty)
 
+    def test_includes_ticker_score_and_disclaimer(self):
+        message = format_message([self.pick()])
         self.assertIn("Samsung(005930)", message)
-        self.assertIn("005930", message)
-        self.assertIn("76.5", message)
-        self.assertIn("2.3", message)
+        self.assertIn("거래량 2.3배", message)
         self.assertIn("사유 요약: 거래량 급증", message)
+        self.assertIn("투자 자문이 아닙니다", message)
 
     def test_reason_summary(self):
         self.assertEqual("기본 조건 충족", reason_summary(1.5, 0, 0, 0))
         self.assertEqual("거래량 급증 + 뉴스 보너스 + 공시 보너스 + 성과 감점", reason_summary(2.1, 1, 1, 1))
 
-    @patch("stock_alarm.app.performance_penalty", return_value=4)
-    def test_includes_performance_penalty_when_present(self, _penalty):
-        message = format_message(
-            [
-                Pick(
-                    ticker="005930",
-                    name="Samsung",
-                    close=80000,
-                    volume_ratio=2.3,
-                    trading_value=123_000_000_000,
-                    score=76.5,
-                )
-            ]
-        )
-
-        self.assertIn("성과 감점: -4.0점", message)
-
-    @patch("stock_alarm.app.dart_bonus", return_value=3)
-    def test_includes_dart_bonus_when_present(self, _bonus):
-        message = format_message(
-            [
-                Pick(
-                    ticker="005930",
-                    name="Samsung",
-                    close=80000,
-                    volume_ratio=2.3,
-                    trading_value=123_000_000_000,
-                    score=76.5,
-                )
-            ]
-        )
-
-        self.assertIn("공시 보너스: +3.0점", message)
-
-    @patch("stock_alarm.app.news_bonus", return_value=2)
-    def test_includes_news_bonus_when_present(self, _bonus):
-        message = format_message(
-            [
-                Pick(
-                    ticker="005930",
-                    name="Samsung",
-                    close=80000,
-                    volume_ratio=2.3,
-                    trading_value=123_000_000_000,
-                    score=76.5,
-                )
-            ]
-        )
-
+    def test_includes_captured_external_scores(self):
+        message = format_message([self.pick(news=2, disclosure=3, penalty=4)])
         self.assertIn("뉴스 보너스: +2.0점", message)
+        self.assertIn("공시 보너스: +3.0점", message)
+        self.assertIn("성과 감점: -4.0점", message)
 
 
 if __name__ == "__main__":

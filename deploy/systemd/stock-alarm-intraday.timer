@@ -1,0 +1,12 @@
+[Unit]
+Description=Stock alarm intraday checks
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09..14:00/5:00 Asia/Seoul
+OnCalendar=Mon..Fri *-*-* 15:00/5:00 Asia/Seoul
+AccuracySec=15s
+Persistent=false
+Unit=stock-alarm@intraday.service
+
+[Install]
+WantedBy=timers.target

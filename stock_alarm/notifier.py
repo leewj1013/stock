@@ -16,7 +16,7 @@ def send_console(message: str) -> None:
     print(message)
 
 
-def send_telegram(message: str) -> bool:
+def send_telegram(message: str) -> dict[str, str] | bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -25,8 +25,17 @@ def send_telegram(message: str) -> bool:
     data = urllib.parse.urlencode({"chat_id": chat_id, "text": message[:4096]}).encode()
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
     with urllib.request.urlopen(request, timeout=10) as response:
-        response.read()
-    return True
+        payload = json.loads(response.read().decode())
+    result = payload.get("result") or {}
+    delivered_chat_id = str((result.get("chat") or {}).get("id", ""))
+    if not payload.get("ok") or not result.get("message_id"):
+        raise RuntimeError(f"Telegram rejected sendMessage: {payload.get('description', 'missing message_id')}")
+    if delivered_chat_id != str(chat_id):
+        raise RuntimeError("Telegram response chat_id did not match configured chat_id")
+    return {
+        "message_id": str(result["message_id"]),
+        "chat_id_suffix": delivered_chat_id[-4:],
+    }
 
 
 def telegram_get_me() -> dict:
@@ -80,35 +89,55 @@ def send_notification(message: str) -> str:
         return "skipped_duplicate"
 
     sent = False
+    receipt = {}
+    error_message = ""
     try:
         if notifier == "telegram":
             sent = send_telegram(message)
+            receipt = sent if isinstance(sent, dict) else {}
         elif notifier == "kakao":
             sent = send_kakao(message)
         elif notifier == "console":
             sent = True
-    except (HTTPError, URLError, OSError):
+    except (HTTPError, URLError, OSError, RuntimeError, json.JSONDecodeError) as error:
         sent = False
+        error_message = f"{type(error).__name__}: {error}"
 
     if not sent:
         send_console(message)
-        write_delivery_log("console")
+        write_delivery_log("console", status="fallback", error=error_message or "notifier returned false")
         return "console"
     if notifier == "console":
         send_console(message)
     mark_sent(notifier, message)
-    write_delivery_log(notifier)
+    write_delivery_log(
+        notifier,
+        status="delivered",
+        message_id=receipt.get("message_id", ""),
+        chat_id_suffix=receipt.get("chat_id_suffix", ""),
+    )
     return notifier
 
 
-def write_delivery_log(channel: str, path: str = "logs/deliveries.csv") -> None:
+def write_delivery_log(
+    channel: str,
+    path: str = "logs/deliveries.csv",
+    status: str = "",
+    message_id: str = "",
+    chat_id_suffix: str = "",
+    error: str = "",
+) -> None:
+    from .csv_schema import ensure_header
+
+    header = ["created_at", "channel", "status", "message_id", "chat_id_suffix", "error"]
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    ensure_header(path, header)
     exists = os.path.exists(path)
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
         if not exists:
-            writer.writerow(["created_at", "channel"])
-        writer.writerow([datetime.now().isoformat(timespec="seconds"), channel])
+            writer.writerow(header)
+        writer.writerow([datetime.now().isoformat(timespec="seconds"), channel, status, message_id, chat_id_suffix, error])
 
 
 def message_key(channel: str, message: str) -> str:

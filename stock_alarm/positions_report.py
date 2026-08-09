@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from statistics import mean
 
 from .app import latest_naver_trading_day, latest_sell_alert_times, load_env, naver_rows, parse_time, stock_name, write_error_log
+from .data_store import position_id
 from .sell_check import read_positions
 
 
@@ -20,10 +21,12 @@ class PositionRow:
     entry_price: int
     close: int
     return_pct: float
+    position_id: str = ""
+    entry_date: str = ""
 
 
 def position_rows(positions: list[dict[str, str]], end_day: date) -> list[PositionRow]:
-    rows = []
+    rows: list[PositionRow] = []
     for position in positions:
         ticker = position["ticker"].strip()
         entry_price = int(float(position["entry_price"]))
@@ -32,7 +35,7 @@ def position_rows(positions: list[dict[str, str]], end_day: date) -> list[Positi
             continue
         close = int(prices[-1][4])
         name = stock_name(ticker, position.get("name", ticker).strip() or ticker)
-        rows.append(PositionRow(ticker, name, entry_price, close, (close - entry_price) / entry_price * 100))
+        rows.append(PositionRow(ticker, name, entry_price, close, (close - entry_price) / entry_price * 100, position_id(position), position.get("entry_date", "")))
     return rows
 
 
@@ -63,31 +66,24 @@ def lines(rows: list[PositionRow], change: str = "") -> list[str]:
     output = ["# positions report", summary(rows)]
     if change:
         output.append(change)
-    output.extend(
-        f"- {row.name}({row.ticker}) entry={row.entry_price:,} close={row.close:,} return={row.return_pct:.2f}%"
-        for row in rows
-    )
+    output.extend(f"- {row.name}({row.ticker}) entry={row.entry_price:,} close={row.close:,} return={row.return_pct:.2f}%" for row in rows)
     return output
 
 
 def write_log(rows: list[PositionRow], path: str = POSITIONS_REPORT_LOG) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    from .csv_schema import ensure_header
+
+    header = ["created_at", "position_id", "entry_date", "ticker", "name", "entry_price", "close", "return_pct"]
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    ensure_header(path, header)
     exists = os.path.exists(path)
     with open(path, "a", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
         if not exists:
-            writer.writerow(["created_at", "ticker", "name", "entry_price", "close", "return_pct"])
+            writer.writerow(header)
+        created_at = datetime.now().isoformat(timespec="seconds")
         for row in rows:
-            writer.writerow(
-                [
-                    datetime.now().isoformat(timespec="seconds"),
-                    row.ticker,
-                    row.name,
-                    row.entry_price,
-                    row.close,
-                    f"{row.return_pct:.2f}",
-                ]
-            )
+            writer.writerow([created_at, row.position_id, row.entry_date, row.ticker, row.name, row.entry_price, row.close, f"{row.return_pct:.2f}"])
 
 
 def read_log(path: str = POSITIONS_REPORT_LOG) -> list[dict[str, str]]:

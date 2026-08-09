@@ -21,6 +21,11 @@ class RunGateTest(unittest.TestCase):
         self.assertFalse(should_run("open", datetime(2026, 8, 1, 8, 30)))
         trading_day.assert_not_called()
 
+    @patch("stock_alarm.run_gate.is_trading_day")
+    def test_open_runs_on_weekday_without_waiting_for_same_day_close(self, trading_day):
+        self.assertTrue(should_run("open", datetime(2026, 8, 3, 8, 30)))
+        trading_day.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

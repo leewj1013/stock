@@ -40,7 +40,25 @@ class NotifierTest(unittest.TestCase):
         self.assertEqual("console", send_notification("hello"))
 
         console.assert_called_once_with("hello")
-        delivery.assert_called_once_with("console")
+        delivery.assert_called_once()
+        self.assertEqual("console", delivery.call_args.args[0])
+        self.assertEqual("fallback", delivery.call_args.kwargs["status"])
+        self.assertIn("URLError", delivery.call_args.kwargs["error"])
+
+    @patch.dict(os.environ, {"NOTIFIER": "telegram", "TELEGRAM_BOT_TOKEN": "x", "TELEGRAM_CHAT_ID": "1234"}, clear=True)
+    @patch("stock_alarm.notifier.write_delivery_log")
+    @patch("stock_alarm.notifier.was_sent", return_value=False)
+    @patch("stock_alarm.notifier.mark_sent")
+    @patch("stock_alarm.notifier.send_telegram", return_value={"message_id": "77", "chat_id_suffix": "1234"})
+    def test_telegram_success_records_receipt(self, _telegram, _mark, _sent, delivery):
+        self.assertEqual("telegram", send_notification("hello"))
+
+        delivery.assert_called_once_with(
+            "telegram",
+            status="delivered",
+            message_id="77",
+            chat_id_suffix="1234",
+        )
 
 
 if __name__ == "__main__":

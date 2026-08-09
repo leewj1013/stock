@@ -3,10 +3,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, e, empty_value_label, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, total_average_return, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, collection_highlights, e, empty_value_label, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, total_average_return, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
+    @patch("stock_alarm.dashboard.collection_summary", return_value={"runs": 3, "candidates": 102, "selected": 5, "position_checks": 12, "hold_decisions": 10, "sell_decisions": 2})
+    def test_collection_highlights(self, _summary):
+        result = collection_highlights()
+        self.assertIn("후보 평가", result)
+        self.assertIn("102", result)
+        self.assertIn("SELL 판단", result)
+
     def test_escape(self):
         self.assertEqual("&lt;x&gt;", e("<x>"))
 

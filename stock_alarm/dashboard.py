@@ -7,6 +7,7 @@ from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
+from .data_store import collection_summary, latest_candidates, recent_position_checks, recent_runs, rejection_summary
 from .health import lines as health_lines
 from .positions_check import active_position_count, active_position_tickers
 from .report import dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, tail_csv, tail_text
@@ -44,8 +45,21 @@ NUMERIC_COLUMNS = {
     "return_3d_pct",
     "return_5d_pct",
     "entry_price",
+    "runs",
+    "candidates",
+    "selected",
+    "position_checks",
+    "sell_decisions",
+    "hold_decisions",
+    "holding_days",
+    "distance_ma20_pct",
+    "drawdown_from_peak_pct",
+    "rank",
+    "final_score",
+    "ma20",
+    "max_return_pct",
 }
-RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct"}
+RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
@@ -117,6 +131,9 @@ LABELS = {
     "value": "값",
     "setting": "설정",
     "channel": "채널",
+    "message_id": "메시지 ID",
+    "chat_id_suffix": "채팅 ID 끝자리",
+    "error": "전송 오류",
     "picks": "추천수",
     "avg_1d_return_pct": "1일 평균 수익률",
     "win_rate_1d_pct": "1일 승률",
@@ -128,6 +145,34 @@ LABELS = {
     "return_3d_pct": "3일 수익률",
     "return_5d_pct": "5일 수익률",
     "entry_price": "진입가",
+    "Data collection": "수집 데이터",
+    "Collection summary": "수집 현황",
+    "Recent strategy runs": "최근 전략 실행",
+    "Latest candidate snapshots": "최근 전체 후보 평가",
+    "Candidate rejection summary": "후보 탈락 사유 요약",
+    "Recent position checks": "최근 전체 보유종목 판단",
+    "started_at": "시작시각",
+    "finished_at": "완료시각",
+    "run_type": "실행유형",
+    "market_date": "시장일",
+    "strategy_version": "전략버전",
+    "schema_version": "스키마버전",
+    "git_commit": "Git 기준점",
+    "config_hash": "설정 해시",
+    "watchlist_hash": "관심종목 해시",
+    "evaluated_at": "평가시각",
+    "checked_at": "점검시각",
+    "passed": "기술조건 통과",
+    "selected": "최종선정",
+    "rank": "순위",
+    "rejection_reasons": "탈락사유",
+    "decision": "판단",
+    "reasons": "판단사유",
+    "holding_days": "보유일수",
+    "max_return_pct": "최대수익률",
+    "drawdown_from_peak_pct": "고점대비 하락폭",
+    "distance_ma20_pct": "20일선 이격률",
+    "ma20": "20일선",
 }
 
 
@@ -475,6 +520,19 @@ def stock_highlights() -> str:
     return "<div class='highlight-grid'>" + "".join(f"<div class='highlight'><b>{e(label)}</b><span class='{klass}'>{e(value)}</span></div>" for label, value, klass in cards) + "</div>"
 
 
+def collection_highlights() -> str:
+    summary = collection_summary()
+    cards = [
+        ("전략 실행", summary.get("runs", 0)),
+        ("후보 평가", summary.get("candidates", 0)),
+        ("최종 선정", summary.get("selected", 0)),
+        ("보유종목 점검", summary.get("position_checks", 0)),
+        ("HOLD 판단", summary.get("hold_decisions", 0)),
+        ("SELL 판단", summary.get("sell_decisions", 0)),
+    ]
+    return "<div class='highlight-grid'>" + "".join(f"<div class='highlight'><b>{e(label)}</b><span>{e(value)}</span></div>" for label, value in cards) + "</div>"
+
+
 def total_average_return() -> str:
     values = []
     for row in dedupe_ticker(tail_csv("logs/sell_alerts.csv", 1000)):
@@ -601,13 +659,20 @@ def render() -> str:
 {table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
 <section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section>
 {table("Current settings", settings_rows(), ["setting", "value"])}
-{table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel"])}
+{table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "message_id", "chat_id_suffix", "error"])}
 {table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
 {table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
 {table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
 <section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
 <section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
+"""
+    collection_tab = f"""
+{collection_highlights()}
+{table("Recent strategy runs", recent_runs(), ["started_at", "run_type", "market_date", "strategy_version", "schema_version", "git_commit", "config_hash", "watchlist_hash", "status", "finished_at"])}
+{table("Candidate rejection summary", rejection_summary(), ["reason", "count"])}
+{table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "volume_ratio", "trading_value", "ma20", "distance_ma20_pct", "final_score", "passed", "selected", "rank", "rejection_reasons"])}
+{table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "entry_price", "close", "holding_days", "return_pct", "max_return_pct", "drawdown_from_peak_pct", "distance_ma20_pct", "decision", "reasons"])}
 """
     return f"""<!doctype html>
 <html lang="ko">
@@ -621,8 +686,8 @@ h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:white;color:#111827;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd;border:1px solid #e5e7eb}} .highlight b{{display:block;color:#475569}} .highlight span{{display:block;color:#111827;font-size:24px;font-weight:800;margin-top:8px}}
 .tabs{{margin-top:18px}} .tab-input{{display:none}} .tab-label{{display:inline-block;background:#e9edf3;border-radius:999px;padding:10px 16px;margin-right:8px;cursor:pointer;font-weight:600}}
-.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"]{{background:#111;color:white}}
-#tab-stocks:checked~#stocks-panel,#tab-settings:checked~#settings-panel{{display:block}}
+.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"],#tab-collection:checked~.tab-labels label[for="tab-collection"]{{background:#111;color:white}}
+#tab-stocks:checked~#stocks-panel,#tab-settings:checked~#settings-panel,#tab-collection:checked~#collection-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
@@ -638,12 +703,15 @@ li{{margin:4px 0}}
 <div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-settings" name="tabs" type="radio">
+<input class="tab-input" id="tab-collection" name="tabs" type="radio">
 <div class="tab-labels">
 <label class="tab-label" for="tab-stocks">주식 정보</label>
 <label class="tab-label" for="tab-settings">설정/진단</label>
+<label class="tab-label" for="tab-collection">수집 데이터</label>
 </div>
 <div class="tab-panel" id="stocks-panel">{stock_tab}</div>
 <div class="tab-panel" id="settings-panel">{settings_tab}</div>
+<div class="tab-panel" id="collection-panel">{collection_tab}</div>
 </div>
 <script>
 document.querySelectorAll("section").forEach((section) => {{

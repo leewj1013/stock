@@ -33,13 +33,17 @@ class ScriptTest(unittest.TestCase):
             script = file.read()
 
         self.assertIn("stockAlarmOpen", script)
-        self.assertIn("stockAlarmIntradayEveryMinute", script)
+        self.assertIn("stockAlarmIntradayEvery5Minutes", script)
         self.assertIn("ScheduleByWeek", script)
         self.assertIn("<Monday />", script)
         self.assertIn("<Friday />", script)
-        self.assertIn("Register-ScheduledTask -TaskName \"stockAlarmIntradayEveryMinute\" -Xml", script)
+        self.assertIn("Register-ScheduledTask -TaskName \"stockAlarmIntradayEvery5Minutes\" -Xml", script)
         self.assertIn("-WindowStyle Hidden", script)
-        self.assertIn("<Interval>PT1M</Interval>", script)
+        self.assertIn("-WakeToRun", script)
+        self.assertIn("-StartWhenAvailable", script)
+        self.assertIn("<WakeToRun>true</WakeToRun>", script)
+        self.assertIn("-Daily -At 15:35", script)
+        self.assertIn("<Interval>PT5M</Interval>", script)
         self.assertIn("<Duration>PT6H30M</Duration>", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1030\"", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1330\"", script)
@@ -52,7 +56,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("NextRunTime", script)
         self.assertIn("next_run=", script)
         self.assertIn("yyyy-MM-dd HH:mm:ss", script)
-        self.assertIn("stockAlarmIntradayEveryMinute", script)
+        self.assertIn("stockAlarmIntradayEvery5Minutes", script)
 
     def test_start_macro_registers_and_checks(self):
         with open("start_stock_alarm.bat", encoding="utf-8-sig") as file:

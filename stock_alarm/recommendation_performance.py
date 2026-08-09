@@ -11,7 +11,7 @@ from .dart_reference import reference as dart_reference
 from .news_reference import reference as news_reference
 
 
-HOLD_DAYS = [1, 3, 5]
+HOLD_DAYS = [1, 3, 5, 10, 20]
 LOG_PATH = "logs/recommendations.csv"
 OUT_PATH = "logs/recommendation_performance.csv"
 SUMMARY_PATH = "logs/recommendation_performance_summary.csv"
@@ -42,8 +42,11 @@ def performance_rows(recommendations: list[dict[str, str]]) -> list[list[str]]:
         for days in HOLD_DAYS:
             close = naver_close_after(row["ticker"], pick_day, days)
             returns.append("" if close is None else f"{(close - entry) / entry * 100:.2f}")
-        news_score, disclosure_score, notes = external_reference(row.get("name", "") or row["ticker"], row["ticker"])
-        rows.append([pick_day.isoformat(), row["ticker"], row.get("name", ""), row.get("score", ""), str(entry), *returns, news_score, disclosure_score, "", notes])
+        news_score = row.get("news_score", "")
+        disclosure_score = row.get("disclosure_score", "")
+        notes = "captured at recommendation time" if news_score or disclosure_score else "legacy row: external signals unavailable at recommendation time"
+        mfe, mae = price_excursions(row["ticker"], pick_day, entry, 20)
+        rows.append([pick_day.isoformat(), row["ticker"], row.get("name", ""), row.get("score", ""), str(entry), *returns, mfe, mae, news_score, disclosure_score, "", notes])
     return list(reversed(rows))
 
 
@@ -73,11 +76,21 @@ def pick_trading_day(ticker: str, created_day: date, entry_close: int) -> date:
     return datetime.strptime(str(rows[-1][0]), "%Y%m%d").date() if rows else created_day
 
 
+def price_excursions(ticker: str, pick_day: date, entry: int, trading_days: int) -> tuple[str, str]:
+    rows = naver_rows(ticker, pick_day, pick_day + timedelta(days=trading_days * 3))
+    future = rows[1 : trading_days + 1]
+    if not future or entry <= 0:
+        return "", ""
+    highs = [int(row[2]) for row in future]
+    lows = [int(row[3]) for row in future]
+    return f"{(max(highs) - entry) / entry * 100:.2f}", f"{(min(lows) - entry) / entry * 100:.2f}"
+
+
 def write_csv(rows: list[list[str]], path: str = OUT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
-        writer.writerow(["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", *EXTERNAL_COLUMNS])
+        writer.writerow(["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct", *EXTERNAL_COLUMNS])
         writer.writerows(rows)
 
 
