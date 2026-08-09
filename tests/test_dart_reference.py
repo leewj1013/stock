@@ -24,7 +24,7 @@ class DartReferenceTest(unittest.TestCase):
 
     @patch("stock_alarm.dart_reference.disclosure_titles", return_value=["매출 증가"])
     def test_reference(self, _titles):
-        self.assertEqual(("2", "dart=1 good=2 bad=0"), reference("005930"))
+        self.assertEqual(("2", "dart=1 good=2 bad=0 risk=0"), reference("005930"))
 
 
     @patch.dict(os.environ, {}, clear=True)

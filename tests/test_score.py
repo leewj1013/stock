@@ -3,7 +3,9 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from stock_alarm.app import Pick, calculate_score, calculate_score_parts, dart_bonus, news_bonus, performance_penalty, write_log
+from datetime import date
+
+from stock_alarm.app import CandidateEvaluation, Pick, apply_relative_strength, calculate_score, calculate_score_parts, dart_bonus, market_benchmark_return, news_bonus, performance_penalty, write_log
 
 
 class ScoreTest(unittest.TestCase):
@@ -20,6 +22,17 @@ class ScoreTest(unittest.TestCase):
         parts = calculate_score_parts(108, 100, 2.5, 200_000_000_000)
 
         self.assertEqual(calculate_score(108, 100, 2.5, 200_000_000_000), round(sum(parts), 2))
+
+    def test_relative_strength_compares_with_watchlist_proxy(self):
+        strong = CandidateEvaluation("A", "A", {"day_return_pct": 4, "final_score": 70}, Pick("A", "A", 100, 2, 1, 70))
+        weak = CandidateEvaluation("B", "B", {"day_return_pct": -2, "final_score": 70}, Pick("B", "B", 100, 2, 1, 70))
+        adjusted = apply_relative_strength([strong, weak])
+        self.assertGreater(adjusted[0].pick.score, adjusted[1].pick.score)
+        self.assertEqual(1.0, adjusted[0].values["market_proxy_return_pct"])
+
+    @patch("stock_alarm.app.naver_rows", return_value=[[20260806, 0, 0, 0, 100, 1], [20260807, 0, 0, 0, 102, 1]])
+    def test_market_benchmark_uses_kospi(self, _rows):
+        self.assertEqual(("KOSPI", 2.0), market_benchmark_return(date(2026, 8, 7)))
 
     def test_write_log_includes_score_parts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -63,9 +76,11 @@ class ScoreTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "performance.csv")
             with open(path, "w", encoding="utf-8-sig") as file:
-                file.write("ticker,return_1d_pct\n000001,-2\n000001,-4\n000001,-6\n000002,3\n000002,-1\n000002,1\n")
+                file.write("ticker,return_1d_pct,return_3d_pct,return_5d_pct\n")
+                file.writelines("000001,-4,-4,-4\n" for _ in range(20))
+                file.writelines("000002,1,1,1\n" for _ in range(20))
 
-            self.assertEqual(4, performance_penalty("000001", path))
+            self.assertEqual(2, performance_penalty("000001", path))
             self.assertEqual(0, performance_penalty("000002", path))
 
 

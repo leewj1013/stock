@@ -12,8 +12,8 @@ from typing import Any, Iterable
 
 
 DB_PATH = "data/stock_alarm.db"
-SCHEMA_VERSION = 2
-STRATEGY_VERSION = "candidate-snapshots-v2"
+SCHEMA_VERSION = 3
+STRATEGY_VERSION = "time-volume-atr-v3"
 
 
 def _file_hash(path: str) -> str:
@@ -69,17 +69,30 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             day_return_pct REAL,
             volume INTEGER,
             avg_volume REAL,
+            raw_volume_ratio REAL,
+            expected_volume_fraction REAL,
             volume_ratio REAL,
+            raw_trading_value INTEGER,
             trading_value INTEGER,
             ma20 REAL,
             distance_ma20_pct REAL,
             avg_range_pct REAL,
+            atr20_pct REAL,
+            benchmark_symbol TEXT,
+            market_proxy_return_pct REAL,
+            relative_strength_pct REAL,
+            relative_strength_score REAL,
             volume_score REAL,
             trading_value_score REAL,
             trend_score REAL,
             news_score REAL,
             disclosure_score REAL,
             performance_penalty REAL,
+            financial_score REAL,
+            financial_notes TEXT,
+            per REAL,
+            pbr REAL,
+            dividend_yield REAL,
             final_score REAL,
             passed INTEGER NOT NULL,
             selected INTEGER NOT NULL DEFAULT 0,
@@ -103,13 +116,31 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             drawdown_from_peak_pct REAL,
             ma20 REAL,
             distance_ma20_pct REAL,
+            atr20_pct REAL,
+            dynamic_stop_loss_pct REAL,
             stop_loss_triggered INTEGER NOT NULL,
             ma20_break_triggered INTEGER NOT NULL,
             return_drop_triggered INTEGER NOT NULL,
             giveback_triggered INTEGER NOT NULL,
+            time_stop_triggered INTEGER NOT NULL DEFAULT 0,
             decision TEXT NOT NULL,
             reasons TEXT,
             PRIMARY KEY (run_id, position_id)
+        );
+        CREATE TABLE IF NOT EXISTS sell_outcomes (
+            alert_key TEXT PRIMARY KEY,
+            alert_created_at TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            name TEXT,
+            alert_close INTEGER,
+            execution_date TEXT,
+            execution_price INTEGER,
+            return_1d_pct REAL,
+            return_3d_pct REAL,
+            return_5d_pct REAL,
+            return_10d_pct REAL,
+            execution_cost_bps INTEGER,
+            updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_candidates_ticker_time
             ON candidate_snapshots(ticker, evaluated_at);
@@ -121,6 +152,20 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
     for name in ("git_commit", "config_hash", "watchlist_hash"):
         if name not in columns:
             connection.execute(f"ALTER TABLE strategy_runs ADD COLUMN {name} TEXT")
+    candidate_columns = {row[1] for row in connection.execute("PRAGMA table_info(candidate_snapshots)")}
+    for name in ("raw_volume_ratio", "expected_volume_fraction", "atr20_pct", "market_proxy_return_pct", "relative_strength_pct", "relative_strength_score", "financial_score", "per", "pbr", "dividend_yield"):
+        if name not in candidate_columns:
+            connection.execute(f"ALTER TABLE candidate_snapshots ADD COLUMN {name} REAL")
+    if "financial_notes" not in candidate_columns:
+        connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN financial_notes TEXT")
+    if "benchmark_symbol" not in candidate_columns:
+        connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN benchmark_symbol TEXT")
+    if "raw_trading_value" not in candidate_columns:
+        connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN raw_trading_value INTEGER")
+    position_columns = {row[1] for row in connection.execute("PRAGMA table_info(position_checks)")}
+    for name, definition in (("atr20_pct", "REAL"), ("dynamic_stop_loss_pct", "REAL"), ("time_stop_triggered", "INTEGER NOT NULL DEFAULT 0")):
+        if name not in position_columns:
+            connection.execute(f"ALTER TABLE position_checks ADD COLUMN {name} {definition}")
     connection.commit()
     return connection
 
@@ -132,6 +177,8 @@ def collection_settings() -> dict[str, str]:
         "MIN_MARKET_UP_RATIO", "NEWS_LOOKUP", "NEWS_SCORE_WEIGHT",
         "DART_LOOKUP", "DART_SCORE_WEIGHT", "SELL_LOSS_PCT", "SELL_DROP_PCT",
         "SELL_PROTECT_PROFIT_PCT", "SELL_GIVEBACK_PCT",
+        "SELL_ATR_MULTIPLIER", "SELL_TIME_STOP_DAYS", "SELL_TIME_STOP_MIN_RETURN_PCT",
+        "EXECUTION_COST_BPS", "PERFORMANCE_MIN_SAMPLES", "FUNDAMENTAL_LOOKUP", "MARKET_BENCHMARK_TICKER",
     ]
     return {name: os.environ.get(name, "") for name in names}
 
@@ -174,9 +221,9 @@ def finish_run(run_id: str, status: str = "completed", path: str = DB_PATH) -> N
 def write_candidates(run_id: str, rows: Iterable[dict[str, Any]], path: str = DB_PATH) -> None:
     columns = [
         "ticker", "name", "evaluated_at", "close", "previous_close", "day_return_pct",
-        "volume", "avg_volume", "volume_ratio", "trading_value", "ma20",
-        "distance_ma20_pct", "avg_range_pct", "volume_score", "trading_value_score",
-        "trend_score", "news_score", "disclosure_score", "performance_penalty",
+        "volume", "avg_volume", "raw_volume_ratio", "expected_volume_fraction", "volume_ratio", "raw_trading_value", "trading_value", "ma20",
+        "distance_ma20_pct", "avg_range_pct", "atr20_pct", "benchmark_symbol", "market_proxy_return_pct", "relative_strength_pct", "relative_strength_score", "volume_score", "trading_value_score",
+        "trend_score", "news_score", "disclosure_score", "performance_penalty", "financial_score", "financial_notes", "per", "pbr", "dividend_yield",
         "final_score", "passed", "selected", "rank", "rejection_reasons",
     ]
     values = [(run_id, *(row.get(column) for column in columns)) for row in rows]
@@ -200,10 +247,11 @@ def write_position_checks(run_id: str, rows: Iterable[dict[str, Any]], path: str
     columns = [
         "position_id", "checked_at", "ticker", "name", "entry_date", "entry_price",
         "close", "holding_days", "return_pct", "previous_return_pct", "max_return_pct",
-        "drawdown_from_peak_pct", "ma20", "distance_ma20_pct", "stop_loss_triggered",
-        "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "decision", "reasons",
+        "drawdown_from_peak_pct", "ma20", "distance_ma20_pct", "atr20_pct", "dynamic_stop_loss_pct", "stop_loss_triggered",
+        "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered", "decision", "reasons",
     ]
-    values = [(run_id, *(row.get(column) for column in columns)) for row in rows]
+    trigger_columns = {"stop_loss_triggered", "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered"}
+    values = [(run_id, *(row.get(column, 0) if column in trigger_columns else row.get(column) for column in columns)) for row in rows]
     if not values:
         return
     placeholders = ",".join("?" for _ in range(len(columns) + 1))
@@ -253,8 +301,10 @@ def recent_runs(limit: int = 20, path: str = DB_PATH) -> list[dict[str, Any]]:
 def latest_candidates(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
     return query_rows(
         """
-        SELECT evaluated_at, ticker, name, close, volume_ratio, trading_value,
-               ma20, distance_ma20_pct, final_score, passed, selected, rank, rejection_reasons
+        SELECT evaluated_at, ticker, name, close, raw_volume_ratio, expected_volume_fraction,
+               volume_ratio, raw_trading_value, trading_value, ma20, distance_ma20_pct, atr20_pct,
+               benchmark_symbol, market_proxy_return_pct, relative_strength_pct, relative_strength_score,
+               final_score, passed, selected, rank, rejection_reasons
         FROM candidate_snapshots
         WHERE run_id = (SELECT run_id FROM strategy_runs WHERE run_type = 'recommendation' ORDER BY started_at DESC LIMIT 1)
         ORDER BY selected DESC, passed DESC, rank ASC, ticker ASC LIMIT ?
@@ -279,9 +329,24 @@ def recent_position_checks(limit: int = 100, path: str = DB_PATH) -> list[dict[s
     return query_rows(
         """
         SELECT checked_at, ticker, name, entry_price, close, holding_days, return_pct,
-               max_return_pct, drawdown_from_peak_pct, distance_ma20_pct, decision, reasons
+               max_return_pct, drawdown_from_peak_pct, distance_ma20_pct, atr20_pct,
+               dynamic_stop_loss_pct, time_stop_triggered, decision, reasons
         FROM position_checks ORDER BY checked_at DESC LIMIT ?
         """,
         (limit,),
         path,
     )
+
+
+def write_sell_outcomes(rows: Iterable[dict[str, Any]], path: str = DB_PATH) -> None:
+    columns = ["alert_key", "alert_created_at", "ticker", "name", "alert_close", "execution_date", "execution_price", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "execution_cost_bps", "updated_at"]
+    values = [tuple(row.get(column) for column in columns) for row in rows]
+    if not values:
+        return
+    with closing(connect(path)) as connection:
+        connection.executemany(f"INSERT OR REPLACE INTO sell_outcomes ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", values)
+        connection.commit()
+
+
+def recent_sell_outcomes(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM sell_outcomes ORDER BY alert_created_at DESC LIMIT ?", (limit,), path)

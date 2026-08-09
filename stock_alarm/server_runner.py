@@ -20,6 +20,7 @@ STEPS: dict[str, list[tuple[str, bool, bool]]] = {
     "daily": [
         ("stock_alarm.positions_report", True, False),
         ("stock_alarm.recommendation_performance", True, False),
+        ("stock_alarm.sell_performance", True, False),
         ("stock_alarm.daily_summary", False, False),
         ("stock_alarm.daily_check", False, False),
         ("stock_alarm.dashboard", False, False),

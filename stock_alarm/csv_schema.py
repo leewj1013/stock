@@ -36,7 +36,7 @@ def ensure_header(path: str, expected: list[str], migrate: Callable[[list[str], 
 
 
 def migrate_recommendation_row(old_header: list[str], row: list[str]) -> list[str]:
-    expected = ["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score", "news_score", "disclosure_score", "performance_penalty"]
+    expected = ["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score", "news_score", "disclosure_score", "performance_penalty", "raw_volume_ratio", "expected_volume_fraction", "atr20_pct", "relative_strength_pct", "relative_strength_score", "financial_score", "raw_trading_value"]
     if old_header == expected[:7]:
         return (row + [""] * len(expected))[: len(expected)]
     values = {name: row[index] for index, name in enumerate(old_header) if index < len(row)}

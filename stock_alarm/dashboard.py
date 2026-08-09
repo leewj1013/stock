@@ -7,7 +7,7 @@ from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
-from .data_store import collection_summary, latest_candidates, recent_position_checks, recent_runs, rejection_summary
+from .data_store import collection_summary, latest_candidates, recent_position_checks, recent_runs, recent_sell_outcomes, rejection_summary
 from .health import lines as health_lines
 from .positions_check import active_position_count, active_position_tickers
 from .report import dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, tail_csv, tail_text
@@ -648,6 +648,7 @@ def render() -> str:
 {table("Today recommendations", today_recommendation_rows(), ["created_at", "ticker", "name", "close", "score", "reason", "volume_score", "trading_value_score", "trend_score"])}
 {table("Positions", latest_position_rows(), ["created_at", "ticker", "name", "entry_price", "close", "return_pct"])}
 {table("Recent sell alerts", tail_csv("logs/sell_alerts.csv", 10), ["created_at", "ticker", "name", "return_pct", "summary", "reason"])}
+{table("Sell counterfactual performance", recent_sell_outcomes(), ["alert_created_at", "ticker", "name", "execution_date", "execution_price", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
 {table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
 {table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"])}
@@ -671,8 +672,8 @@ def render() -> str:
 {collection_highlights()}
 {table("Recent strategy runs", recent_runs(), ["started_at", "run_type", "market_date", "strategy_version", "schema_version", "git_commit", "config_hash", "watchlist_hash", "status", "finished_at"])}
 {table("Candidate rejection summary", rejection_summary(), ["reason", "count"])}
-{table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "volume_ratio", "trading_value", "ma20", "distance_ma20_pct", "final_score", "passed", "selected", "rank", "rejection_reasons"])}
-{table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "entry_price", "close", "holding_days", "return_pct", "max_return_pct", "drawdown_from_peak_pct", "distance_ma20_pct", "decision", "reasons"])}
+{table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "raw_volume_ratio", "expected_volume_fraction", "volume_ratio", "raw_trading_value", "trading_value", "ma20", "atr20_pct", "benchmark_symbol", "market_proxy_return_pct", "relative_strength_pct", "relative_strength_score", "final_score", "passed", "selected", "rank", "rejection_reasons"])}
+{table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "entry_price", "close", "holding_days", "return_pct", "max_return_pct", "drawdown_from_peak_pct", "distance_ma20_pct", "atr20_pct", "dynamic_stop_loss_pct", "time_stop_triggered", "decision", "reasons"])}
 """
     return f"""<!doctype html>
 <html lang="ko">

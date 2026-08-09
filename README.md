@@ -216,6 +216,23 @@ Copy-Item data\positions.example.csv data\positions.csv
 
 ## 주요 설정값
 
+추천·매도 성과 계산에는 다음 보정값도 사용합니다.
+
+```text
+EXECUTION_COST_BPS=30
+PERFORMANCE_MIN_SAMPLES=20
+FUNDAMENTAL_LOOKUP=1
+MARKET_BENCHMARK_TICKER=KOSPI
+SELL_ATR_MULTIPLIER=2
+SELL_TIME_STOP_DAYS=10
+SELL_TIME_STOP_MIN_RETURN_PCT=0
+```
+
+- 장중 거래량은 시간대별 예상 누적 거래량으로 보정합니다.
+- 추천 성과는 다음 거래일 시가 진입과 왕복 거래비용을 기준으로 계산합니다.
+- 매도는 ATR 동적 손절, 20일선 2회 확인, 시간 손절을 함께 사용합니다.
+- 매도 이후 1·3·5·10일 반대성과는 `logs/sell_performance.csv`와 SQLite에 저장합니다.
+
 `.env.example` 기준 주요 설정입니다.
 
 ```text

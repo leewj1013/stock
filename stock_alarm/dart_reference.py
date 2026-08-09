@@ -14,6 +14,7 @@ from io import BytesIO
 
 GOOD_WORDS = ["실적", "매출", "영업이익", "흑자", "수주", "증가"]
 BAD_WORDS = ["적자", "감소", "손상", "소송", "부진"]
+RISK_WORDS = ["유상증자", "전환사채", "신주인수권", "관리종목", "거래정지", "횡령", "배임", "감사의견"]
 
 
 def corp_code_by_stock(ticker: str) -> str:
@@ -73,7 +74,8 @@ def keyword_score(titles: list[str]) -> tuple[int, str]:
     text = " ".join(re.sub(r"\s+", " ", title) for title in titles)
     good = sum(text.count(word) for word in GOOD_WORDS)
     bad = sum(text.count(word) for word in BAD_WORDS)
-    return good - bad, f"dart={len(titles)} good={good} bad={bad}"
+    risk = sum(text.count(word) for word in RISK_WORDS)
+    return good - bad - risk * 2, f"dart={len(titles)} good={good} bad={bad} risk={risk}"
 
 
 def reference(ticker: str) -> tuple[str, str]:

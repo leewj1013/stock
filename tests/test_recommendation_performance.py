@@ -11,6 +11,7 @@ from stock_alarm.recommendation_performance import (
     external_reference,
     lines,
     performance_rows,
+    next_execution,
     pick_trading_day,
     read_recommendations,
     score_adjustment_suggestion,
@@ -45,23 +46,29 @@ class RecommendationPerformanceTest(unittest.TestCase):
 
     @patch("stock_alarm.recommendation_performance.price_excursions", return_value=("25.00", "-5.00"))
     @patch("stock_alarm.recommendation_performance.naver_close_after", side_effect=[110, 120, None, 130, 140])
+    @patch("stock_alarm.recommendation_performance.next_execution", return_value=(date(2026, 7, 25), 100))
     @patch("stock_alarm.recommendation_performance.pick_trading_day", return_value=date(2026, 7, 24))
-    def test_performance_rows(self, _day, _close, _excursions):
+    def test_performance_rows(self, _day, _execution, _close, _excursions):
         rows = performance_rows([{"created_at": "2026-07-25T16:10:00", "ticker": "005930", "name": "Samsung", "close": "100", "score": "80"}])
 
-        self.assertEqual("10.00", rows[0][5])
-        self.assertEqual("20.00", rows[0][6])
+        self.assertEqual("9.70", rows[0][5])
+        self.assertEqual("19.70", rows[0][6])
         self.assertEqual("", rows[0][7])
-        self.assertEqual("30.00", rows[0][8])
-        self.assertEqual("40.00", rows[0][9])
+        self.assertEqual("29.70", rows[0][8])
+        self.assertEqual("39.70", rows[0][9])
         self.assertEqual("25.00", rows[0][10])
         self.assertEqual("-5.00", rows[0][11])
-        self.assertEqual(["", "", "", "legacy row: external signals unavailable at recommendation time"], rows[0][12:])
+        self.assertEqual(["", "", "", "legacy row: external signals unavailable at recommendation time"], rows[0][12:16])
+        self.assertEqual(["100", "2026-07-25", "30"], rows[0][16:])
         self.assertEqual(["news_score", "disclosure_score", "financial_score", "external_notes"], EXTERNAL_COLUMNS)
 
     @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[[20260724, 0, 0, 0, 100, 1]])
     def test_pick_trading_day_uses_matching_close(self, _rows):
         self.assertEqual(date(2026, 7, 24), pick_trading_day("005930", date(2026, 7, 25), 100))
+
+    @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[[20260724, 90, 0, 0, 100, 1], [20260727, 105, 0, 0, 110, 1]])
+    def test_next_execution_uses_next_session_open(self, _rows):
+        self.assertEqual((date(2026, 7, 27), 105), next_execution("005930", date(2026, 7, 24)))
 
     def test_lines(self):
         text = "\n".join(lines([["2026-07-25", "005930", "Samsung", "80", "100", "10.00", "", ""]]))
@@ -98,8 +105,9 @@ class RecommendationPerformanceTest(unittest.TestCase):
 
     @patch("stock_alarm.recommendation_performance.price_excursions", return_value=("", ""))
     @patch("stock_alarm.recommendation_performance.naver_close_after", return_value=None)
+    @patch("stock_alarm.recommendation_performance.next_execution", return_value=(date(2026, 7, 25), 100))
     @patch("stock_alarm.recommendation_performance.pick_trading_day", return_value=date(2026, 7, 24))
-    def test_performance_rows_dedupes_by_pick_day_and_ticker(self, _day, _close, _excursions):
+    def test_performance_rows_dedupes_by_pick_day_and_ticker(self, _day, _execution, _close, _excursions):
         rows = performance_rows(
             [
                 {"created_at": "2026-07-25T01:00:00", "ticker": "005930", "name": "Samsung", "close": "100", "score": "80"},

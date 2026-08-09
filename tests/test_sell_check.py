@@ -35,6 +35,19 @@ class SellCheckTest(unittest.TestCase):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), max_return=8)
         self.assertIn("고점 수익률 8.0% 대비 6.0%p 반납", alert.reason)
 
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 102, 98, 100, 1]] * 20)
+    def test_check_position_applies_time_stop(self, _rows, _name):
+        alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100", "entry_date": "2026-07-01"}, date(2026, 7, 24))
+        self.assertIn("보유 후 기대수익 미달", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows")
+    def test_atr_can_widen_fixed_stop(self, naver_rows, _name):
+        naver_rows.return_value = [[20260701, 0, 110, 90, 100, 1]] * 19 + [[20260724, 0, 110, 90, 94, 1]]
+        alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24))
+        self.assertIsNone(alert)
+
     def test_returns_are_scoped_by_position_id(self):
         with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
             writer = csv.writer(file)

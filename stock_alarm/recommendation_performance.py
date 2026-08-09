@@ -32,21 +32,26 @@ def performance_rows(recommendations: list[dict[str, str]]) -> list[list[str]]:
     for row in reversed(recommendations):
         if not row.get("created_at") or not row.get("ticker"):
             continue
-        entry = int(float(row["close"]))
-        pick_day = pick_trading_day(row["ticker"], datetime.fromisoformat(row["created_at"]).date(), entry)
+        signal_close = int(float(row["close"]))
+        pick_day = pick_trading_day(row["ticker"], datetime.fromisoformat(row["created_at"]).date(), signal_close)
         key = (pick_day.isoformat(), row["ticker"])
         if key in seen:
             continue
         seen.add(key)
+        execution = next_execution(row["ticker"], pick_day)
+        execution_day, entry = execution if execution else (None, None)
+        cost_bps = int(os.environ.get("EXECUTION_COST_BPS", "30"))
+        cost_pct = cost_bps / 100
         returns = []
         for days in HOLD_DAYS:
-            close = naver_close_after(row["ticker"], pick_day, days)
-            returns.append("" if close is None else f"{(close - entry) / entry * 100:.2f}")
+            close = naver_close_after(row["ticker"], execution_day, days) if execution_day and entry else None
+            returns.append("" if close is None else f"{(close - entry) / entry * 100 - cost_pct:.2f}")
         news_score = row.get("news_score", "")
         disclosure_score = row.get("disclosure_score", "")
-        notes = "captured at recommendation time" if news_score or disclosure_score else "legacy row: external signals unavailable at recommendation time"
-        mfe, mae = price_excursions(row["ticker"], pick_day, entry, 20)
-        rows.append([pick_day.isoformat(), row["ticker"], row.get("name", ""), row.get("score", ""), str(entry), *returns, mfe, mae, news_score, disclosure_score, "", notes])
+        financial_score = row.get("financial_score", "")
+        notes = "captured at recommendation time" if news_score or disclosure_score or financial_score else "legacy row: external signals unavailable at recommendation time"
+        mfe, mae = price_excursions(row["ticker"], execution_day, entry, 20, cost_pct) if execution_day and entry else ("", "")
+        rows.append([pick_day.isoformat(), row["ticker"], row.get("name", ""), row.get("score", ""), "" if entry is None else str(entry), *returns, mfe, mae, news_score, disclosure_score, financial_score, notes, str(signal_close), "" if execution_day is None else execution_day.isoformat(), str(cost_bps)])
     return list(reversed(rows))
 
 
@@ -76,21 +81,31 @@ def pick_trading_day(ticker: str, created_day: date, entry_close: int) -> date:
     return datetime.strptime(str(rows[-1][0]), "%Y%m%d").date() if rows else created_day
 
 
-def price_excursions(ticker: str, pick_day: date, entry: int, trading_days: int) -> tuple[str, str]:
+def next_execution(ticker: str, pick_day: date) -> tuple[date, int] | None:
+    rows = naver_rows(ticker, pick_day, pick_day + timedelta(days=10))
+    for row in rows:
+        trading_day = datetime.strptime(str(row[0]), "%Y%m%d").date()
+        opening_price = int(row[1])
+        if trading_day > pick_day and opening_price > 0:
+            return trading_day, opening_price
+    return None
+
+
+def price_excursions(ticker: str, pick_day: date, entry: int, trading_days: int, cost_pct: float = 0) -> tuple[str, str]:
     rows = naver_rows(ticker, pick_day, pick_day + timedelta(days=trading_days * 3))
     future = rows[1 : trading_days + 1]
     if not future or entry <= 0:
         return "", ""
     highs = [int(row[2]) for row in future]
     lows = [int(row[3]) for row in future]
-    return f"{(max(highs) - entry) / entry * 100:.2f}", f"{(min(lows) - entry) / entry * 100:.2f}"
+    return f"{(max(highs) - entry) / entry * 100 - cost_pct:.2f}", f"{(min(lows) - entry) / entry * 100 - cost_pct:.2f}"
 
 
 def write_csv(rows: list[list[str]], path: str = OUT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
-        writer.writerow(["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct", *EXTERNAL_COLUMNS])
+        writer.writerow(["pick_date", "ticker", "name", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct", *EXTERNAL_COLUMNS, "signal_close", "execution_date", "execution_cost_bps"])
         writer.writerows(rows)
 
 

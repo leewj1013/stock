@@ -8,6 +8,7 @@ from statistics import mean
 
 from .app import (
     env_float,
+    average_true_range_pct,
     is_market_alert_time,
     latest_naver_trading_day,
     latest_sell_alert_times,
@@ -59,12 +60,14 @@ def check_position(
     close = closes[-1]
     ma20 = mean(closes)
     return_pct = (close - entry_price) / entry_price * 100
-    stop_loss_pct = -abs(env_float("SELL_LOSS_PCT", 5))
+    atr20_pct = average_true_range_pct(rows)
+    stop_loss_pct = -max(abs(env_float("SELL_LOSS_PCT", 5)), atr20_pct * env_float("SELL_ATR_MULTIPLIER", 2))
     reasons: list[str] = []
     if return_pct <= stop_loss_pct:
         reasons.append(f"손절 기준 {stop_loss_pct:.1f}% 이탈")
-    if close < ma20:
-        reasons.append("20일선 이탈")
+    previous_ma20 = mean([int(row[4]) for row in rows[-21:-1]]) if len(rows) >= 21 else mean(closes[:-1])
+    if close < ma20 and closes[-2] < previous_ma20:
+        reasons.append("20일선 2회 연속 이탈")
     if previous_return is not None:
         drop = previous_return - return_pct
         if drop >= env_float("SELL_DROP_PCT", 3):
@@ -73,6 +76,10 @@ def check_position(
         giveback = max_return - return_pct
         if giveback >= env_float("SELL_GIVEBACK_PCT", 4):
             reasons.append(f"고점 수익률 {max_return:.1f}% 대비 {giveback:.1f}%p 반납")
+    entry_time = parse_time(position.get("entry_date", ""))
+    holding_days = (end_day - entry_time.date()).days if entry_time else None
+    if holding_days is not None and holding_days >= int(env_float("SELL_TIME_STOP_DAYS", 10)) and return_pct <= env_float("SELL_TIME_STOP_MIN_RETURN_PCT", 0):
+        reasons.append(f"{holding_days}일 보유 후 기대수익 미달")
     if not reasons:
         return None
 
@@ -134,10 +141,13 @@ def position_snapshot(
         "entry_price": entry_price,
         "previous_return_pct": previous_return,
         "max_return_pct": max_return,
+        "atr20_pct": None,
+        "dynamic_stop_loss_pct": None,
         "stop_loss_triggered": 0,
         "ma20_break_triggered": 0,
         "return_drop_triggered": 0,
         "giveback_triggered": 0,
+        "time_stop_triggered": 0,
         "decision": "NO_DATA",
         "reasons": "insufficient_history",
     }
@@ -148,8 +158,11 @@ def position_snapshot(
     close = closes[-1]
     ma20 = mean(closes)
     return_pct = (close - entry_price) / entry_price * 100
-    stop_triggered = return_pct <= -abs(env_float("SELL_LOSS_PCT", 5))
-    ma20_triggered = close < ma20
+    atr20_pct = average_true_range_pct(rows)
+    dynamic_stop_loss_pct = -max(abs(env_float("SELL_LOSS_PCT", 5)), atr20_pct * env_float("SELL_ATR_MULTIPLIER", 2))
+    stop_triggered = return_pct <= dynamic_stop_loss_pct
+    previous_ma20 = mean([int(row[4]) for row in rows[-21:-1]]) if len(rows) >= 21 else mean(closes[:-1])
+    ma20_triggered = close < ma20 and closes[-2] < previous_ma20
     drop_triggered = previous_return is not None and previous_return - return_pct >= env_float("SELL_DROP_PCT", 3)
     giveback_triggered = max_return is not None and max_return >= env_float("SELL_PROTECT_PROFIT_PCT", 5) and max_return - return_pct >= env_float("SELL_GIVEBACK_PCT", 4)
     alert = check_position(position, end_day, previous_return, max_return, rows)
@@ -158,6 +171,7 @@ def position_snapshot(
         holding_days = (end_day - datetime.fromisoformat(entry_date).date()).days
     except ValueError:
         holding_days = None
+    time_stop_triggered = holding_days is not None and holding_days >= int(env_float("SELL_TIME_STOP_DAYS", 10)) and return_pct <= env_float("SELL_TIME_STOP_MIN_RETURN_PCT", 0)
     return alert, {
         **base,
         "name": alert.name if alert else position.get("name", ticker),
@@ -166,11 +180,14 @@ def position_snapshot(
         "return_pct": return_pct,
         "drawdown_from_peak_pct": None if max_return is None else max_return - return_pct,
         "ma20": ma20,
+        "atr20_pct": atr20_pct,
+        "dynamic_stop_loss_pct": dynamic_stop_loss_pct,
         "distance_ma20_pct": (close / ma20 - 1) * 100 if ma20 else None,
         "stop_loss_triggered": int(stop_triggered),
         "ma20_break_triggered": int(ma20_triggered),
         "return_drop_triggered": int(drop_triggered),
         "giveback_triggered": int(giveback_triggered),
+        "time_stop_triggered": int(time_stop_triggered),
         "decision": "SELL" if alert else "HOLD",
         "reasons": alert.reason if alert else "",
     }

@@ -11,6 +11,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('RunFreshStep "sell_check" "stock_alarm.sell_check"', script)
         self.assertIn('RunOptionalStep "positions_report" "stock_alarm.positions_report"', script)
         self.assertIn('RunOptionalStep "recommendation_performance" "stock_alarm.recommendation_performance"', script)
+        self.assertIn('RunOptionalStep "sell_performance" "stock_alarm.sell_performance"', script)
         self.assertIn('RunStep "daily_check" "stock_alarm.daily_check"', script)
         self.assertIn('RunStep "dashboard" "stock_alarm.dashboard"', script)
         self.assertIn('RunStep "issue_alert" "stock_alarm.issue_alert"', script)
