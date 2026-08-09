@@ -75,7 +75,7 @@ def delivery_status(deliveries: list[dict[str, str]]) -> str:
 
 
 def task_status() -> str:
-    names = "stockAlarmOpen", "stockAlarmIntraday1030", "stockAlarmIntraday1330", "stockAlarmIntraday1500", "stockAlarmDaily"
+    names = "stockAlarmOpen", "stockAlarmIntradayEvery5Minutes", "stockAlarmDaily", "stockAlarmMaintenance"
     command = [
         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
         "-NoProfile",

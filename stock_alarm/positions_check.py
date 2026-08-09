@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import os
 import re
+from datetime import date
+from math import isfinite
 
 from .app import POSITIONS_PATH
 from .sell_check import read_positions
@@ -10,23 +12,32 @@ from .sell_check import read_positions
 
 def validate_positions(path: str = POSITIONS_PATH) -> list[str]:
     errors: list[str] = []
-    seen: set[str] = set()
+    seen_positions: set[tuple[str, str, float]] = set()
     for line_no, row in enumerate(read_positions(path), start=2):
         ticker = (row.get("ticker") or "").strip()
         name = (row.get("name") or "").strip()
         entry_price = (row.get("entry_price") or "").strip()
+        entry_date = (row.get("entry_date") or "").strip()
         if not re.fullmatch(r"\d{6}", ticker):
             errors.append(f"line {line_no}: invalid ticker {ticker!r}")
         if not name:
             errors.append(f"line {line_no}: empty name")
+        parsed_price: float | None = None
         try:
-            if float(entry_price) <= 0:
+            parsed_price = float(entry_price)
+            if not isfinite(parsed_price) or parsed_price <= 0:
                 errors.append(f"line {line_no}: entry_price must be positive")
         except ValueError:
             errors.append(f"line {line_no}: invalid entry_price {entry_price!r}")
-        if ticker in seen:
-            errors.append(f"line {line_no}: duplicate ticker {ticker}")
-        seen.add(ticker)
+        try:
+            date.fromisoformat(entry_date)
+        except ValueError:
+            errors.append(f"line {line_no}: invalid entry_date {entry_date!r}")
+        if re.fullmatch(r"\d{6}", ticker) and parsed_price is not None and isfinite(parsed_price) and parsed_price > 0 and entry_date:
+            key = (ticker, entry_date, parsed_price)
+            if key in seen_positions:
+                errors.append(f"line {line_no}: duplicate position {ticker} {entry_date} {parsed_price:g}")
+            seen_positions.add(key)
     return errors
 
 

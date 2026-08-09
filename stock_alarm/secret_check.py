@@ -5,6 +5,7 @@ import re
 
 
 SKIP_DIRS = {".cache", ".git", ".venv", "__pycache__", "logs"}
+SKIP_SUFFIXES = {".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3"}
 PATTERNS = [
     re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
@@ -21,11 +22,16 @@ def scan(root: str = ".") -> list[str]:
             path = os.path.join(directory, name)
             if os.path.basename(path) == ".env":
                 continue
+            if any(name.lower().endswith(suffix) for suffix in SKIP_SUFFIXES):
+                continue
             try:
-                with open(path, encoding="utf-8", errors="ignore") as file:
-                    text = file.read()
+                with open(path, "rb") as file:
+                    content = file.read()
             except OSError:
                 continue
+            if b"\x00" in content[:4096]:
+                continue
+            text = content.decode("utf-8", errors="ignore")
             if any(pattern.search(text) for pattern in PATTERNS):
                 hits.append(path)
     return hits

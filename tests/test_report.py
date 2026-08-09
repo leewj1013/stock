@@ -89,6 +89,9 @@ class ReportTest(unittest.TestCase):
 
         self.assertIn("stockAlarmDaily", task_status())
         self.assertIn("stockAlarmOpen", run.call_args.args[0][-1])
+        self.assertIn("stockAlarmIntradayEvery5Minutes", run.call_args.args[0][-1])
+        self.assertIn("stockAlarmMaintenance", run.call_args.args[0][-1])
+        self.assertNotIn("stockAlarmIntraday1030", run.call_args.args[0][-1])
 
     @patch("stock_alarm.report.subprocess.run")
     def test_task_status_explains_generic_failure(self, run):

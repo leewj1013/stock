@@ -18,14 +18,23 @@ class PositionsCheckTest(unittest.TestCase):
         self.assertEqual([], validate_positions(path))
         self.assertEqual(1, position_count(path))
 
+    def test_accepts_reentry_for_same_ticker(self):
+        path = self.write_temp(
+            "ticker,name,entry_price,entry_date\n"
+            "051900,LG생활건강,265000,2026-07-29\n"
+            "051900,LG생활건강,284000,2026-07-31\n"
+        )
+        self.assertEqual([], validate_positions(path))
+
     def test_rejects_bad_rows(self):
-        path = self.write_temp("ticker,name,entry_price,entry_date\n5930,,0,2026-07-25\n005930,Samsung,x,2026-07-25\n005930,Dup,1,2026-07-25\n")
+        path = self.write_temp("ticker,name,entry_price,entry_date\n5930,,0,invalid\n005930,Samsung,x,2026-07-25\n005930,Dup,1,2026-07-25\n005930,Dup,1.0,2026-07-25\n")
         errors = validate_positions(path)
         self.assertIn("line 2: invalid ticker '5930'", errors)
         self.assertIn("line 2: empty name", errors)
         self.assertIn("line 2: entry_price must be positive", errors)
         self.assertIn("line 3: invalid entry_price 'x'", errors)
-        self.assertIn("line 4: duplicate ticker 005930", errors)
+        self.assertIn("line 2: invalid entry_date 'invalid'", errors)
+        self.assertIn("line 5: duplicate position 005930 2026-07-25 1", errors)
 
     def test_active_position_count_excludes_sold_tickers(self):
         positions = self.write_temp("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n000660,SK hynix,100000,2026-07-25\n")
