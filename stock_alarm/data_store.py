@@ -247,6 +247,18 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
                WHERE buys.bought_quantity > COALESCE(sales.sold_quantity, 0)
                ORDER BY buys.ticker"""
         ).fetchall()
+        deposited = int(connection.execute("SELECT COALESCE(SUM(amount), 0) FROM virtual_deposits").fetchone()[0])
+        realized_profit_loss = int(connection.execute("SELECT COALESCE(SUM(realized_profit_loss), 0) FROM virtual_sales").fetchone()[0])
+        last_activity = connection.execute(
+            """SELECT MAX(created_at) FROM (
+                 SELECT created_at FROM virtual_deposits
+                 UNION ALL SELECT created_at FROM virtual_trades
+                 UNION ALL SELECT created_at FROM virtual_sales
+               )"""
+        ).fetchone()[0]
+        today_prefix = datetime.now().date().isoformat() + "%"
+        today_buys = int(connection.execute("SELECT COUNT(*) FROM virtual_trades WHERE created_at LIKE ?", (today_prefix,)).fetchone()[0])
+        today_sells = int(connection.execute("SELECT COUNT(*) FROM virtual_sales WHERE created_at LIKE ?", (today_prefix,)).fetchone()[0])
     holdings = []
     for row in rows:
         cost, quantity = int(row["cost"]), int(row["quantity"])
@@ -259,7 +271,31 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
             "valuation": valuation, "profit_loss": profit_loss,
             "return_pct": round(profit_loss / cost * 100, 2) if cost else 0,
         })
-    return {"cash": int(account["cash"]) if account else 0, "holdings": holdings}
+    cash = int(account["cash"]) if account else 0
+    holdings_value = sum(row["valuation"] for row in holdings)
+    invested_cost = sum(row["cost"] for row in holdings)
+    unrealized_profit_loss = sum(row["profit_loss"] for row in holdings)
+    total_equity = cash + holdings_value
+    holdings_return_pct = round(unrealized_profit_loss / invested_cost * 100, 2) if invested_cost else 0
+    total_return_pct = round((total_equity - deposited) / deposited * 100, 2) if deposited else 0
+    return {
+        "cash": cash,
+        "holdings": holdings,
+        "holdings_value": holdings_value,
+        "invested_cost": invested_cost,
+        "total_equity": total_equity,
+        "unrealized_profit_loss": unrealized_profit_loss,
+        "realized_profit_loss": realized_profit_loss,
+        "total_profit_loss": total_equity - deposited,
+        "holdings_return_pct": holdings_return_pct,
+        "total_return_pct": total_return_pct,
+        "deposited": deposited,
+        "last_activity_at": last_activity or "",
+        "auto_trading": os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") == "1",
+        "schedule": "평일 08:50~15:40",
+        "today_buys": today_buys,
+        "today_sells": today_sells,
+    }
 
 
 def virtual_deposit(amount: int, path: str = DB_PATH) -> dict[str, Any]:

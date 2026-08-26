@@ -64,13 +64,22 @@ NUMERIC_COLUMNS = {
     "quantity",
     "valuation",
     "profit_loss",
+    "virtual_target_pct",
+    "dynamic_stop_loss_pct",
+    "atr20_pct",
+    "raw_volume_ratio",
+    "expected_volume_fraction",
+    "relative_strength_pct",
+    "relative_strength_score",
 }
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct"}
+TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
     "positions": "보유 종목",
+    "tracked positions": "추천 성과 추적 종목",
     "today recommendations": "오늘 추천",
     "today sell alerts": "오늘 매도 검토",
     "today issues": "오늘 문제",
@@ -101,7 +110,7 @@ LABELS = {
     "Recommendations with sell alerts": "매도 검토 연결 추천",
     "Recent recommendations": "최근 추천",
     "Recommendation performance": "추천 성과",
-    "Positions": "보유 종목",
+    "Positions": "추천 성과 추적 종목",
     "Recent task log": "최근 작업 로그",
     "Recent task errors": "최근 작업 오류",
     "Daily check": "일일 점검",
@@ -210,11 +219,14 @@ LABELS = {
     "message_id": "메시지 번호",
     "chat_id_suffix": "채팅 식별자 끝자리",
     "allocation_pct": "추천 비중(%)",
+    "virtual_target_pct": "가상주문 목표 비중(%)",
+    "allocation_rule": "비중 규칙",
     "quantity": "보유수량",
     "valuation": "평가금액",
     "profit_loss": "평가손익",
     "notification_status": "알림 상태",
     "virtual_order_status": "가상매수",
+    "delivery failures": "오늘 알림 실패",
 }
 
 DISPLAY_VALUES = {
@@ -230,6 +242,16 @@ DISPLAY_VALUES = {
     "HOLD": "보유",
     "SELL": "매도 검토",
     "ALREADY_ALERTED": "이미 알림",
+    "sell_alert_after_entry": "이 종목은 이미 매도 검토 알림을 보냄",
+    "recommendation": "추천 점검",
+    "completed": "완료",
+    "volume_ratio": "거래량 기준 미달",
+    "below_ma20": "20일선 아래",
+    "entry_day_change": "당일 변동폭 과다",
+    "extended_above_ma20": "20일선 과대 이격",
+    "trading_value": "거래대금 기준 미달",
+    "day_change": "등락률 기준 미달",
+    "insufficient_history": "과거 데이터 부족",
     "previous_sell_alert": "이전 매도 알림 있음",
     "intraday": "장중",
     "daily": "마감",
@@ -246,6 +268,8 @@ def display_value(value: object) -> str:
     text = str(value or "")
     if text in DISPLAY_VALUES:
         return DISPLAY_VALUES[text]
+    if "," in text and all(part.strip() in DISPLAY_VALUES for part in text.split(",")):
+        return ", ".join(DISPLAY_VALUES[part.strip()] for part in text.split(","))
     if text.endswith("=ok"):
         return f"{display_label(text[:-3])}=정상"
     if text.endswith("=missing"):
@@ -278,7 +302,19 @@ def metric_cards() -> list[tuple[str, str]]:
         ("suggested min score", summary.get("suggested_min_score", "?")),
         ("latest error", latest_error_summary(deliveries)),
         ("today runs", today_run_summary()),
+        ("delivery failures", f"{today_delivery_failure_count()} error" if today_delivery_failure_count() else "none"),
     ]
+
+
+def today_delivery_failure_count() -> int:
+    today = datetime.now().date().isoformat()
+    return sum(
+        1
+        for row in tail_csv("logs/deliveries.csv", 10000)
+        if row.get("created_at", "").startswith(today)
+        and not (row.get("channel") == "telegram" and row.get("status") == "delivered")
+        and row.get("status") != "skipped_duplicate"
+    )
 
 
 def today_run_summary() -> str:
@@ -314,6 +350,8 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
         ticker = row.get("ticker", "")
         rows.append({
             **row,
+            "virtual_target_pct": f"{min(30.0, max(10.0, float(row.get('allocation_pct') or 10))):.2f}",
+            "allocation_rule": "현재 10~30%" if 10 <= float(row.get("allocation_pct") or 0) <= 30 else "이전 규칙 산출값",
             "notification_status": delivery_statuses.get(ticker, "미전송"),
             "virtual_order_status": "체결" if ticker in bought else "미체결",
             "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker)),
@@ -331,7 +369,7 @@ def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
 
 def today_issue_count() -> int:
     rows = [*settings_rows(), *today_run_rows()]
-    return sum(status_class(row.get("value", row.get("status", ""))) in {"bad", "warn"} for row in rows)
+    return sum(status_class(row.get("value", row.get("status", ""))) in {"bad", "warn"} for row in rows) + today_delivery_failure_count()
 
 
 def today_run_rows() -> list[dict[str, str]]:
@@ -496,7 +534,7 @@ def primary_metric_cards(
         ("last telegram", delivery_status(deliveries)),
         ("today recommendations", str(len(recommendation_rows))),
         ("today sell alerts", str(len(sell_rows))),
-        ("positions", str(len(position_rows))),
+        ("tracked positions", str(len(position_rows))),
         ("average position return", average_return),
         ("가상 트레이더 수익률", f"{float(virtual.get('return_pct', 0)):.2f}%" if virtual else "-"),
         ("직전 배치 대비", f"{float(virtual.get('return_change_pct', 0)):+.2f}%p" if virtual else "-"),
@@ -609,7 +647,7 @@ def issue_rows() -> list[dict[str, str]]:
     rows = []
     for label, value in metric_cards():
         if status_class(value) in {"bad", "warn"}:
-            rows.append({"source": "card", "item": label, "status": value})
+            rows.append({"source": "요약 지표", "item": display_label(label), "status": value})
     for row in [*settings_rows(), *today_run_rows()]:
         value = row.get("value", row.get("status", ""))
         if status_class(value) in {"bad", "warn"}:
@@ -656,12 +694,12 @@ def stock_highlights() -> str:
 def collection_highlights() -> str:
     summary = collection_summary()
     cards = [
-        ("전략 실행", summary.get("runs", 0)),
-        ("후보 평가", summary.get("candidates", 0)),
-        ("최종 선정", summary.get("selected", 0)),
-        ("보유종목 점검", summary.get("position_checks", 0)),
-        ("HOLD 판단", summary.get("hold_decisions", 0)),
-        ("SELL 판단", summary.get("sell_decisions", 0)),
+        ("누적 전략 실행", summary.get("runs", 0)),
+        ("누적 후보 평가", summary.get("candidates", 0)),
+        ("누적 최종 선정", summary.get("selected", 0)),
+        ("누적 보유종목 점검", summary.get("position_checks", 0)),
+        ("누적 HOLD 판단", summary.get("hold_decisions", 0)),
+        ("누적 SELL 판단", summary.get("sell_decisions", 0)),
     ]
     return "<div class='highlight-grid'>" + "".join(f"<div class='highlight'><b>{e(label)}</b><span>{e(value)}</span></div>" for label, value in cards) + "</div>"
 
@@ -734,6 +772,8 @@ def cell(value: object, column: str = "") -> str:
         shown = "예" if str(display) == "1" else "아니요"
     else:
         shown = format_number(display) if column in NUMERIC_COLUMNS else display_value(display)
+        if column in TIMESTAMP_COLUMNS and isinstance(shown, str) and "T" in shown:
+            shown = shown.replace("T", " ")
     return f"<td{attr}>{e(shown)}</td>"
 
 
@@ -805,50 +845,49 @@ def render() -> str:
     recommendation_rows = today_recommendation_rows()
     sell_rows = today_sell_alert_rows()
     position_rows = position_summary_rows()
-    primary_cards = "".join(card(name, value) for name, value in primary_metric_cards(recommendation_rows, sell_rows, position_rows))
+    issue_count = today_issue_count()
     trader_candidates = json.dumps(
         [{key: row.get(key, "") for key in ("ticker", "name", "close", "score", "allocation_pct")} for row in recommendation_rows],
         ensure_ascii=False,
     ).replace("</", "<\\/")
     stock_tab = f"""
-<div class="cards">{primary_cards}</div>
-{table("Today recommendations", recommendation_rows, ["created_at", "name", "close", "score", "allocation_pct", "notification_status", "virtual_order_status", "volume_ratio", "relative_strength_pct", "reason"])}
-{table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "holding_days", "decision", "reason", "dynamic_stop_loss_pct"])}
-{table("Today sell alerts", sell_rows, ["created_at", "name", "return_pct", "summary", "reason"])}
-{table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}
-{details("성과 상세 보기", table("Recommendation performance", recommendation_performance_rows(), ["pick_date", "ticker", "name", "entry_count", "score", "entry_close", "return_1d_pct", "return_3d_pct", "return_5d_pct", "news_score", "disclosure_score"]) + table("Sell counterfactual performance", recent_sell_outcomes(), ["alert_created_at", "ticker", "name", "execution_date", "execution_price", "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct"]))}
+<div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'확인할 문제 ' + str(issue_count) + '건' if issue_count else '시스템 정상'}</span></div>
+<div class="home-cards">
+  <div class="summary-card primary"><b>가상계좌 총자산</b><strong id="home-total-equity">불러오는 중</strong><small>현금 + 보유주식 평가액</small></div>
+  <div class="summary-card"><b>계좌 총수익률</b><strong id="home-total-return">-</strong><small id="home-total-profit">입금원금 대비</small></div>
+  <div class="summary-card"><b>오늘 추천</b><strong>{len(recommendation_rows)}종목</strong><small>추천 알고리즘 선정</small></div>
+  <div class="summary-card"><b>오늘 가상주문</b><strong id="home-orders">-</strong><small>매수·매도 체결</small></div>
+</div>
+{table("Today recommendations", recommendation_rows, ["name", "close", "score", "virtual_target_pct", "notification_status", "virtual_order_status"])}
+{table("Today sell alerts", sell_rows, ["name", "return_pct", "summary"])}
+{details("추천 성과 추적 보기", table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "decision"]) + table("Recommendation stats", performance_summary_rows(), ["metric", "value"]))}
 """
     trader_tab = """
-<div class="trader-balance"><span>보유금액</span><strong id="trader-balance">0원</strong></div>
+<div class="trader-account-grid">
+  <div class="trader-balance primary"><span>총자산</span><strong id="trader-total-equity">0원</strong></div>
+  <div class="trader-balance"><span>주문 가능 현금</span><strong id="trader-cash">0원</strong></div>
+  <div class="trader-balance"><span>주식 평가액</span><strong id="trader-holdings-value">0원</strong></div>
+  <div class="trader-balance"><span>보유종목 총수익률</span><strong id="trader-holdings-return">0.00%</strong></div>
+</div>
+<div class="trader-breakdown"><span>계좌 총수익률 <b id="trader-total-return">0.00%</b></span><span>총손익 <b id="trader-total-profit">0원</b></span></div>
+<div class="trader-status" aria-live="polite"><b id="trader-auto-status">자동매매 상태 확인 중</b><span id="trader-price-status">가격 기준시각 확인 중</span></div>
 <section class="trader-controls">
   <h2>가상 계좌 입금</h2>
-  <div class="trader-form"><input id="deposit-amount" type="number" min="1" step="1" placeholder="입금금액(원)"><button id="deposit-button" type="button">보유금액에 적용</button><button id="buy-button" type="button">추천 비중으로 매수</button></div>
-  <p class="muted" id="trader-message">입금 후 오늘의 추천 종목을 알고리즘 비중에 따라 정수 수량으로 매수할 수 있습니다.</p>
+  <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
+  <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10~30%이며 정수 수량만 주문합니다.</p>
+  <p class="muted" id="trader-message" aria-live="polite">계좌 정보를 불러오는 중입니다.</p>
 </section>
-<section><h2>가상 트레이더 보유 종목</h2><table><thead><tr><th>종목명</th><th class="num">평가손익</th><th class="num">보유수량</th><th class="num">수익률</th><th class="num">평가금액</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
+<section><h2>가상계좌 보유종목</h2><table><thead><tr><th>종목명</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">보유수량</th><th class="num">수익률</th><th class="num">평가금액</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 """
-    settings_tab = f"""
+    system_tab = f"""
+<div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'경고 ' + str(issue_count) + '건' if issue_count else '모든 작업 정상'}</span></div>
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
-{table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"])}
-{table("Score breakdown", score_breakdown_rows(), ["created_at", "ticker", "name", "total_score", "volume", "trading_value", "trend", "news", "disclosure", "penalty"])}
-{table("Sell alert summary", sell_alert_summary_rows(), ["summary", "count"])}
-<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section>
-{table("Current settings", settings_rows(), ["setting", "value"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "message_id", "chat_id_suffix", "error"])}
-{table("Performance penalties", performance_penalty_rows(), ["ticker", "name", "penalty"])}
-{table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"])}
-{table("Recommendations with sell alerts", sell_alerted_recommendation_rows(), ["ticker", "name", "score", "entry_close", "return_1d_pct", "sell_return_pct", "sell_reason"])}
-<section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section>
-<section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>
-"""
-    collection_tab = f"""
-{collection_highlights()}
-{table("Recent strategy runs", recent_runs(), ["started_at", "run_type", "market_date", "strategy_version", "schema_version", "git_commit", "config_hash", "watchlist_hash", "status", "finished_at"])}
-{table("Candidate rejection summary", rejection_summary(), ["reason", "count"])}
-{table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "raw_volume_ratio", "expected_volume_fraction", "volume_ratio", "raw_trading_value", "trading_value", "ma20", "atr20_pct", "benchmark_symbol", "market_proxy_return_pct", "relative_strength_pct", "relative_strength_score", "legacy_score", "legacy_passed", "final_score", "passed", "selected", "rank", "rejection_reasons"])}
-{table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "entry_price", "close", "holding_days", "return_pct", "max_return_pct", "drawdown_from_peak_pct", "distance_ma20_pct", "atr20_pct", "dynamic_stop_loss_pct", "time_stop_triggered", "decision", "reasons"])}
+{details("전략 데이터 보기", collection_highlights() + table("Recent strategy runs", recent_runs(), ["started_at", "run_type", "market_date", "status", "finished_at"]) + table("Candidate rejection summary", rejection_summary(), ["reason", "count"]) + table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "final_score", "selected", "rejection_reasons"]) + table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "return_pct", "decision", "reasons"]))}
+{details("전략 설정 보기", table("Current settings", settings_rows(), ["setting", "value"]) + table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"]))}
+{details("성과 분석 보기", table("Top recommendation performance", recommendation_rank_rows(), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"]) + table("Worst recommendation performance", recommendation_rank_rows(worst=True), ["ticker", "name", "picks", "avg_1d_return_pct", "win_rate_1d_pct"]))}
+{details("작업 로그 보기", f'<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section><section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section><section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>')}
 """
     return f"""<!doctype html>
 <html lang="ko">
@@ -859,20 +898,25 @@ def render() -> str:
 body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7f9;color:#111}}
 h1{{margin-bottom:4px}} .muted{{color:#666}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}}
 .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px}}
+.home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:white;border:1px solid #d0d5dd;white-space:nowrap}} .system-pill.ok{{background:#ecfdf3;border-color:#abefc6}} .system-pill.bad{{background:#fef3f2;border-color:#fecdca}}
+.home-cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .summary-card{{background:white;border:1px solid #e5e7eb;border-radius:14px;padding:18px;box-shadow:0 1px 4px #ddd}} .summary-card.primary{{background:#111827;color:white}} .summary-card b,.summary-card strong,.summary-card small{{display:block}} .summary-card b{{color:#64748b}} .summary-card.primary b,.summary-card.primary small{{color:#cbd5e1}} .summary-card strong{{font-size:26px;margin:8px 0}} .summary-card small{{color:#64748b}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:white;color:#111827;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd;border:1px solid #e5e7eb}} .highlight b{{display:block;color:#475569}} .highlight span{{display:block;color:#111827;font-size:24px;font-weight:800;margin-top:8px}}
 .tabs{{margin-top:18px}} .tab-input{{display:none}} .tab-label{{display:inline-block;background:#e9edf3;border-radius:999px;padding:10px 16px;margin-right:8px;cursor:pointer;font-weight:600}}
-.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-settings:checked~.tab-labels label[for="tab-settings"],#tab-collection:checked~.tab-labels label[for="tab-collection"]{{background:#111;color:white}}
-.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-settings:checked~.tab-labels label[for="tab-settings"],#tab-collection:checked~.tab-labels label[for="tab-collection"]{{background:#111;color:white}}
-#tab-stocks:checked~#stocks-panel,#tab-trader:checked~#trader-panel,#tab-settings:checked~#settings-panel,#tab-collection:checked~#collection-panel{{display:block}}
+.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:#111;color:white}}
+#tab-stocks:checked~#stocks-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{background:white;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 4px #ddd;overflow:auto}}
 details{{background:#eef2f6;border-radius:12px;margin:16px 0}} details summary{{cursor:pointer;padding:14px 16px;font-weight:700}} .details-body{{padding:0 16px 1px}} .details-body section{{box-shadow:none;border:1px solid #e5e7eb}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:8px;white-space:nowrap}} th{{background:#fafafa}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid #d0d5dd;background:white;border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:#111;color:white;border-color:#111}}
-.trader-balance{{background:#111827;color:white;border-radius:14px;padding:20px;margin:18px 0}} .trader-balance span{{display:block;color:#cbd5e1}} .trader-balance strong{{display:block;font-size:32px;margin-top:6px}} .trader-form{{display:flex;gap:8px;flex-wrap:wrap}} .trader-form input{{min-width:220px;padding:10px;border:1px solid #d0d5dd;border-radius:8px}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:#111;color:white;cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
+.trader-account-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}} .trader-balance{{background:white;color:#111827;border:1px solid #e5e7eb;border-radius:14px;padding:18px;box-shadow:0 1px 4px #ddd}} .trader-balance.primary{{background:#111827;color:white}} .trader-balance span{{display:block;color:#64748b}} .trader-balance.primary span{{color:#cbd5e1}} .trader-balance strong{{display:block;font-size:26px;margin-top:6px}} .trader-status{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px}} .trader-form{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:220px;padding:10px;border:1px solid #d0d5dd;border-radius:8px}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:#111;color:white;cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
+.trader-breakdown{{display:flex;gap:24px;justify-content:flex-end;margin:-6px 2px 14px;color:#475569}}
+button:focus-visible,input:focus-visible,.tab-label:focus-visible{{outline:3px solid #2563eb;outline-offset:2px}}
 li{{margin:4px 0}}
+@media(max-width:800px){{body{{margin:14px}} .home-cards{{grid-template-columns:repeat(2,minmax(0,1fr))}} .tab-label{{margin:0 4px 6px 0;padding:9px 12px}} .home-heading{{align-items:flex-start}}}}
+@media(max-width:480px){{.home-cards{{grid-template-columns:1fr}} .home-heading{{display:block}} .system-pill{{display:inline-block;margin-top:10px}} .summary-card strong{{font-size:24px}} .trader-breakdown{{justify-content:flex-start;flex-direction:column;gap:4px}}}}
 </style>
 </head>
 <body>
@@ -882,18 +926,15 @@ li{{margin:4px 0}}
 <div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
-<input class="tab-input" id="tab-settings" name="tabs" type="radio">
-<input class="tab-input" id="tab-collection" name="tabs" type="radio">
-<div class="tab-labels">
-<label class="tab-label" for="tab-stocks">핵심 요약</label>
-<label class="tab-label" for="tab-trader">가상 트레이더</label>
-<label class="tab-label" for="tab-collection">수집 데이터</label>
-<label class="tab-label" for="tab-settings">상세 진단</label>
+<input class="tab-input" id="tab-system" name="tabs" type="radio">
+<div class="tab-labels" role="tablist" aria-label="대시보드 화면">
+<label class="tab-label" for="tab-stocks" role="tab" tabindex="0">홈</label>
+<label class="tab-label" for="tab-trader" role="tab" tabindex="0">가상 트레이더</label>
+<label class="tab-label" for="tab-system" role="tab" tabindex="0">시스템 관리</label>
 </div>
-<div class="tab-panel" id="stocks-panel">{stock_tab}</div>
-<div class="tab-panel" id="trader-panel">{trader_tab}</div>
-<div class="tab-panel" id="settings-panel">{settings_tab}</div>
-<div class="tab-panel" id="collection-panel">{collection_tab}</div>
+<div class="tab-panel" id="stocks-panel" role="tabpanel">{stock_tab}</div>
+<div class="tab-panel" id="trader-panel" role="tabpanel">{trader_tab}</div>
+<div class="tab-panel" id="system-panel" role="tabpanel">{system_tab}</div>
 </div>
 <script>
 const traderCandidates = {trader_candidates};
@@ -901,6 +942,9 @@ const traderKey = "stockAlarm.virtualTrader.v1";
 const traderApiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
 let trader = {{cash:0, holdings:[]}};
 const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
+const tabLabels=[...document.querySelectorAll(".tab-label")];
+function syncTabs() {{ tabLabels.forEach(label=>label.setAttribute("aria-selected",document.getElementById(label.htmlFor).checked?"true":"false")); }}
+tabLabels.forEach((label,index)=>{{label.addEventListener("keydown",event=>{{if(event.key==="Enter"||event.key===" "){{event.preventDefault();label.click();}}if(event.key==="ArrowRight"||event.key==="ArrowLeft"){{event.preventDefault();const next=(index+(event.key==="ArrowRight"?1:-1)+tabLabels.length)%tabLabels.length;tabLabels[next].focus();tabLabels[next].click();}}}});label.addEventListener("click",()=>setTimeout(syncTabs));}}); syncTabs();
 async function traderRequest(path, options={{}}) {{
   const response = await fetch(`${{traderApiBase}}${{path}}`, {{headers:{{"Content-Type":"application/json"}}, ...options}});
   const body = await response.json();
@@ -908,14 +952,25 @@ async function traderRequest(path, options={{}}) {{
   return body;
 }}
 function renderTrader(message="") {{
-  document.getElementById("trader-balance").textContent = won(trader.cash || 0);
+  document.getElementById("trader-total-equity").textContent = won(trader.total_equity || trader.cash || 0);
+  document.getElementById("trader-cash").textContent = won(trader.cash || 0);
+  document.getElementById("trader-holdings-value").textContent = won(trader.holdings_value || 0);
+  const holdingsReturn=document.getElementById("trader-holdings-return"); holdingsReturn.textContent=`${{Number(trader.holdings_return_pct||0).toFixed(2)}}%`; holdingsReturn.className=trader.holdings_return_pct>0?"pos":trader.holdings_return_pct<0?"neg":"zero";
+  const totalReturn=document.getElementById("trader-total-return"); totalReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; totalReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
+  const totalProfit=document.getElementById("trader-total-profit"); totalProfit.textContent=won(trader.total_profit_loss || 0); totalProfit.className=(trader.total_profit_loss>0?"pos":trader.total_profit_loss<0?"neg":"zero");
+  document.getElementById("home-total-equity").textContent=won(trader.total_equity||trader.cash||0);
+  const homeReturn=document.getElementById("home-total-return"); homeReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; homeReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
+  document.getElementById("home-total-profit").textContent=`총손익 ${{won(trader.total_profit_loss||0)}}`;
+  document.getElementById("home-orders").textContent=`매수 ${{trader.today_buys||0}} · 매도 ${{trader.today_sells||0}}`;
+  document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
+  document.getElementById("trader-price-status").textContent = trader.price_updated_at ? `가격 ${{trader.price_updated_at.replace("T"," ")}} 기준 · ${{trader.price_source || ""}}` : "저장 가격 기준";
   const body = document.getElementById("trader-holdings"); body.textContent = "";
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
-    const nameWithEntry = `${{item.name}} (진입가 ${{won(item.average_price)}})`;
-    [nameWithEntry, won(item.profit_loss), Number(item.quantity).toLocaleString("ko-KR"), `${{Number(item.return_pct).toFixed(2)}}%`, won(item.valuation)].forEach((value, index) => {{ const cell=document.createElement("td"); cell.textContent=value; if(index>0) cell.className="num" + (index===1||index===3 ? (Number(String(value).replace(/[^0-9.-]/g,""))>0?" pos":Number(String(value).replace(/[^0-9.-]/g,""))<0?" neg":" zero") : ""); row.appendChild(cell); }}); body.appendChild(row);
+    const values=[item.name, won(item.average_price), won(item.current_price), won(item.profit_loss), Number(item.quantity).toLocaleString("ko-KR"), `${{Number(item.return_pct).toFixed(2)}}%`, won(item.valuation)];
+    values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>0)cell.className="num";if(index===3||index===5)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
   }});
-  if (!body.children.length) body.innerHTML='<tr><td colspan="5" class="muted">매수한 종목이 없습니다.</td></tr>';
+  if (!body.children.length) body.innerHTML='<tr><td colspan="7" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
   document.getElementById("buy-button").disabled = !(trader.cash > 0 && traderCandidates.length);
   if(message) document.getElementById("trader-message").textContent=message;
 }}
@@ -925,7 +980,7 @@ document.getElementById("buy-button").addEventListener("click", async () => {{
 }});
 const legacyTrader = localStorage.getItem(traderKey);
 (legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader"))
-  .then(state => {{trader=state; if(state.imported) localStorage.removeItem(traderKey); renderTrader(state.imported?"기존 브라우저 가상 계좌를 DB로 이전했습니다.":"");}})
+  .then(state => {{trader=state; if(state.imported) localStorage.removeItem(traderKey); renderTrader(state.imported?"기존 브라우저 가상 계좌를 DB로 이전했습니다.":"계좌와 최신 평가 정보를 불러왔습니다.");}})
   .catch(() => renderTrader("open_dashboard.bat으로 열어야 DB 가상 계좌를 사용할 수 있습니다."));
 document.querySelectorAll("section").forEach((section) => {{
   const rows = [...section.querySelectorAll("tbody tr")];

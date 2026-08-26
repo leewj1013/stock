@@ -58,6 +58,10 @@ class DataStoreTest(unittest.TestCase):
         state = virtual_trader_state({"A": 11_000, "B": 7_000}, self.path)
         self.assertEqual(2, len(state["holdings"]))
         self.assertTrue(all(isinstance(row["quantity"], int) for row in state["holdings"]))
+        self.assertEqual(state["cash"] + state["holdings_value"], state["total_equity"])
+        self.assertEqual(100_000, state["deposited"])
+        self.assertEqual(5.17, state["holdings_return_pct"])
+        self.assertEqual(3.0, state["total_return_pct"])
 
     def test_virtual_buy_uses_total_account_target_and_preserves_cash(self):
         virtual_deposit(100_000, self.path)

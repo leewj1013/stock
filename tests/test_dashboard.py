@@ -46,12 +46,12 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
     def test_render_has_virtual_trader_and_five_page_pager(self, _recommendations):
         html = render()
-        self.assertLess(html.index("핵심 요약"), html.index("가상 트레이더"))
-        self.assertLess(html.index("가상 트레이더"), html.index("수집 데이터"))
-        self.assertLess(html.index("수집 데이터"), html.index("상세 진단"))
+        self.assertLess(html.index(">홈</label>"), html.index(">가상 트레이더</label>"))
+        self.assertLess(html.index(">가상 트레이더</label>"), html.index(">시스템 관리</label>"))
         self.assertIn("stockAlarm.virtualTrader.v1", html)
-        self.assertIn("nameWithEntry", html)
+        self.assertIn("trader-total-equity", html)
         self.assertIn("item.average_price", html)
+        self.assertIn("item.current_price", html)
         self.assertIn("Math.floor(currentPage/5)", html)
 
     def test_status_class(self):
@@ -189,9 +189,10 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual(["OLD1", "OLD2", "NEW1", "NEW2"], [row["ticker"] for row in today_recommendation_rows()])
 
+    @patch("stock_alarm.dashboard.today_delivery_failure_count", return_value=0)
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])
-    def test_today_issue_count(self, _settings, _runs):
+    def test_today_issue_count(self, _settings, _runs, _delivery_failures):
         self.assertEqual(1, today_issue_count())
 
     @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "sell_check=missing", "dashboard=ok"])
@@ -455,6 +456,10 @@ class DashboardTest(unittest.TestCase):
         html = render()
 
         self.assertIn("국내주식 알림 대시보드", html)
+        self.assertIn("오늘의 투자 현황", html)
+        self.assertIn("가상계좌 총자산", html)
+        self.assertIn("보유종목 총수익률", html)
+        self.assertIn("시스템 관리", html)
         self.assertIn("문제", html)
         self.assertIn("일일 점검", html)
         self.assertIn("현재 설정", html)
@@ -462,23 +467,10 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("오늘 실행 상세", html)
         self.assertIn("오늘 추천 종목", html)
         self.assertIn("추천 형태", html)
-        self.assertIn("점수 구성", html)
-        self.assertIn("공시", html)
         self.assertIn("추천 통계", html)
         self.assertIn("추천 성과 상위", html)
         self.assertIn("추천 성과 하위", html)
-        self.assertIn("성과 감점", html)
-        self.assertIn("매도 검토 연결 추천", html)
-        self.assertIn("매도 검토 요약", html)
-        self.assertIn("추천 사유", html)
         self.assertLess(html.index("문제"), html.index("오늘 실행 상세"))
-        self.assertLess(html.index("오늘 실행 상세"), html.index("오늘 추천 종목"))
-        self.assertLess(html.index("오늘 추천 종목"), html.index("추천 형태"))
-        self.assertLess(html.index("추천 형태"), html.index("점수 구성"))
-        self.assertLess(html.index("점수 구성"), html.index("추천 사유"))
-        self.assertLess(html.index("추천 사유"), html.index("매도 검토 요약"))
-        self.assertLess(html.index("매도 검토 요약"), html.index("최근 매도 검토"))
-        self.assertLess(html.index("최근 매도 검토"), html.index("추천 통계"))
 
     @patch("stock_alarm.dashboard.render", return_value="<html></html>")
     def test_write(self, _render):

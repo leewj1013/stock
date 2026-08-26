@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -44,6 +44,15 @@ def prices() -> dict[str, int]:
     return price_map
 
 
+def trader_payload() -> dict:
+    state = virtual_trader_state(prices())
+    return {
+        **state,
+        "price_updated_at": datetime.now().isoformat(timespec="seconds"),
+        "price_source": "네이버 금융 (실패 시 최근 저장 가격)",
+    }
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _json(self, status: int, body: dict) -> None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -64,7 +73,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/trader":
-            self._json(200, virtual_trader_state(prices()))
+            self._json(200, trader_payload())
             return
         if path in {"/", "/dashboard"}:
             payload = render().encode("utf-8")
@@ -82,15 +91,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
             if path == "/api/trader/deposit":
-                self._json(200, virtual_deposit(int(body.get("amount", 0))))
+                virtual_deposit(int(body.get("amount", 0)))
+                self._json(200, trader_payload())
                 return
             if path == "/api/trader/buy":
                 result = virtual_buy(recommendations())
-                self._json(200, {**result, "holdings": virtual_trader_state(prices())["holdings"]})
+                self._json(200, {**trader_payload(), **{key: result[key] for key in ("spent", "bought", "executions")}})
                 return
             if path == "/api/trader/import":
                 imported = import_legacy_virtual_trader(body)
-                self._json(200, {**virtual_trader_state(prices()), "imported": imported})
+                self._json(200, {**trader_payload(), "imported": imported})
                 return
             self.send_error(404)
         except (ValueError, TypeError, json.JSONDecodeError) as error:

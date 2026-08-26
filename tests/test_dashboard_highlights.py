@@ -15,7 +15,7 @@ class DashboardHighlightsTest(unittest.TestCase):
 
         self.assertEqual("2", cards["today recommendations"])
         self.assertEqual("1", cards["today sell alerts"])
-        self.assertEqual("2", cards["positions"])
+        self.assertEqual("2", cards["tracked positions"])
         self.assertEqual("0.50%", cards["average position return"])
 
     def test_display_value_translates_operational_status(self):
