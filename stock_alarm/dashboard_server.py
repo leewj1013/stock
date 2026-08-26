@@ -22,12 +22,13 @@ def recommendations() -> list[dict[str, str]]:
 def prices() -> dict[str, int]:
     price_map = {
         row.get("ticker", ""): int(float(row.get("close") or 0))
-        for row in latest_position_rows()
+        for row in recommendations()
         if row.get("ticker") and row.get("close")
     }
+    # A position report is newer than the original recommendation price.
     price_map.update({
         row.get("ticker", ""): int(float(row.get("close") or 0))
-        for row in recommendations()
+        for row in latest_position_rows()
         if row.get("ticker") and row.get("close")
     })
     holding_tickers = [row["ticker"] for row in virtual_trader_state()["holdings"]]

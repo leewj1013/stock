@@ -6,7 +6,7 @@ from .app import is_trading_day, load_env, write_error_log
 from .notifier import send_notification
 from .positions_check import active_position_count
 from .positions_report import change_summary
-from .report import reconciled_daily_alert_rows, tail_csv
+from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv
 
 
 def latest_position_summary() -> str:
@@ -21,9 +21,7 @@ def latest_position_summary() -> str:
 
 def latest_recommendations() -> list[dict[str, str]]:
     today = datetime.now().date().isoformat()
-    return reconciled_daily_alert_rows(
-        tail_csv("logs/recommendations.csv", 10000), tail_csv("logs/deliveries.csv", 10000), today, "recommendation"
-    )
+    return daily_ticker_rows(tail_csv("logs/recommendations.csv", 10000), today)
 
 
 def latest_sell_alerts() -> list[dict[str, str]]:

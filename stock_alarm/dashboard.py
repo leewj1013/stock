@@ -8,10 +8,10 @@ from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
-from .data_store import collection_summary, latest_candidates, latest_virtual_valuation, recent_position_checks, recent_runs, recent_sell_outcomes, rejection_summary
+from .data_store import collection_summary, latest_candidates, latest_virtual_valuation, recent_position_checks, recent_runs, recent_sell_outcomes, recent_virtual_trades, rejection_summary
 from .health import lines as health_lines
 from .positions_check import active_position_count, active_position_tickers
-from .report import delivery_status, dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, reconciled_daily_alert_rows, tail_csv, tail_text
+from .report import daily_ticker_rows, delivery_status, dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, reconciled_daily_alert_rows, tail_csv, tail_text
 
 
 OUT_PATH = "reports/dashboard.html"
@@ -213,6 +213,8 @@ LABELS = {
     "quantity": "보유수량",
     "valuation": "평가금액",
     "profit_loss": "평가손익",
+    "notification_status": "알림 상태",
+    "virtual_order_status": "가상매수",
 }
 
 DISPLAY_VALUES = {
@@ -293,13 +295,29 @@ def today_csv_count(path: str) -> int:
 def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
     today = datetime.now().date().isoformat()
     performance = {row.get("ticker", ""): row for row in tail_csv("logs/recommendation_performance.csv", 1000)}
+    deliveries = tail_csv("logs/deliveries.csv", 10000)
+    delivery_statuses = {}
+    for delivery in deliveries:
+        if not delivery.get("created_at", "").startswith(today) or delivery.get("event_type") != "recommendation":
+            continue
+        status = "전송 완료" if delivery.get("channel") == "telegram" and delivery.get("status") == "delivered" else "전송 실패"
+        for ticker in delivery.get("tickers", "").split("|"):
+            if ticker.strip():
+                delivery_statuses[ticker.strip()] = status
+    bought = {
+        row.get("ticker", "") for row in recent_virtual_trades(1000)
+        if str(row.get("created_at", "")).startswith(today)
+    }
     rows = []
-    daily_rows = reconciled_daily_alert_rows(
-        tail_csv("logs/recommendations.csv", 10000), tail_csv("logs/deliveries.csv", 10000), today, "recommendation"
-    )
+    daily_rows = daily_ticker_rows(tail_csv("logs/recommendations.csv", 10000), today)
     for row in daily_rows:
         ticker = row.get("ticker", "")
-        rows.append({**row, "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker))})
+        rows.append({
+            **row,
+            "notification_status": delivery_statuses.get(ticker, "미전송"),
+            "virtual_order_status": "체결" if ticker in bought else "미체결",
+            "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker)),
+        })
     return rows[:limit] if limit is not None else rows
 
 
@@ -794,7 +812,7 @@ def render() -> str:
     ).replace("</", "<\\/")
     stock_tab = f"""
 <div class="cards">{primary_cards}</div>
-{table("Today recommendations", recommendation_rows, ["created_at", "name", "close", "score", "allocation_pct", "volume_ratio", "relative_strength_pct", "reason"])}
+{table("Today recommendations", recommendation_rows, ["created_at", "name", "close", "score", "allocation_pct", "notification_status", "virtual_order_status", "volume_ratio", "relative_strength_pct", "reason"])}
 {table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "holding_days", "decision", "reason", "dynamic_stop_loss_pct"])}
 {table("Today sell alerts", sell_rows, ["created_at", "name", "return_pct", "summary", "reason"])}
 {table("Recommendation stats", performance_summary_rows(), ["metric", "value"])}

@@ -618,3 +618,7 @@ def record_virtual_valuation(prices: dict[str, int], path: str = DB_PATH) -> dic
 def latest_virtual_valuation(path: str = DB_PATH) -> dict[str, Any]:
     rows = query_rows("SELECT * FROM virtual_valuation_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=path)
     return rows[0] if rows else {}
+
+
+def recent_virtual_trades(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM virtual_trades ORDER BY trade_id DESC LIMIT ?", (limit,), path)
