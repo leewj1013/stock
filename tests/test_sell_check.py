@@ -25,15 +25,23 @@ class SellCheckTest(unittest.TestCase):
 
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 0, 0, 100, 1]] * 20)
-    def test_check_position_alerts_on_return_drop(self, _rows, _name):
+    def test_check_position_does_not_alert_on_return_drop_alone(self, _rows, _name):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), 5)
-        self.assertIn("직전 평가 대비 수익률 5.0%p 악화", alert.reason)
+        self.assertIsNone(alert)
 
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 0, 0, 102, 1]] * 20)
-    def test_check_position_alerts_on_profit_giveback(self, _rows, _name):
+    def test_check_position_does_not_alert_on_profit_giveback_alone(self, _rows, _name):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), max_return=8)
-        self.assertIn("고점 수익률 8.0% 대비 6.0%p 반납", alert.reason)
+        self.assertIsNone(alert)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows")
+    def test_check_position_confirms_return_drop_with_two_ma20_breaks(self, naver_rows, _name):
+        naver_rows.return_value = [[20260701, 0, 0, 0, 110, 1]] * 19 + [[20260723, 0, 0, 0, 99, 1], [20260724, 0, 0, 0, 98, 1]]
+        alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), 5)
+        self.assertIn("20일선 2회 연속 이탈", alert.reason)
+        self.assertIn("직전 평가 대비 수익률 7.0%p 악화", alert.reason)
 
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 102, 98, 100, 1]] * 20)
@@ -85,10 +93,21 @@ class SellCheckTest(unittest.TestCase):
     def test_format_message_and_summary(self):
         alert = SellAlert("005930", "Samsung", 100, 94, -6.0, "손절 기준 -5.0% 이탈")
         message = format_message([alert])
-        self.assertIn("매도 검토 알림", message)
-        self.assertIn("매도 검토 요약: 손실 -6.0%", message)
+        self.assertIn("매도 알림", message)
+        self.assertIn("🔴 자동 매도", message)
+        self.assertIn("수익률 -6.00%", message)
         self.assertEqual("고점 대비 수익 반납", alert_summary(SellAlert("A", "A", 100, 102, 2, "고점 대비 반납")))
         self.assertEqual("20일선 이탈", alert_summary(SellAlert("A", "A", 100, 101, 1, "20일선 이탈")))
+
+    def test_format_message_includes_virtual_sale_execution(self):
+        alert = SellAlert("005930", "Samsung", 100, 110, 10.0, "고점 대비 반납", 5)
+        result = {"sold": 1, "cash": 1100, "executions": [{"ticker": "005930", "quantity": 10, "cost_basis": 1000, "realized_profit_loss": 100}]}
+        message = format_message([alert], result)
+
+        self.assertIn("🟠 수익 보호 매도", message)
+        self.assertIn("보유 5일", message)
+        self.assertIn("실현손익 +100원(+10.00%)", message)
+        self.assertIn("매도 후 현금: 1,100원", message)
 
     def test_write_log(self):
         with tempfile.NamedTemporaryFile(delete=False) as file:

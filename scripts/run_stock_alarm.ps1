@@ -64,18 +64,27 @@ function RunFreshStep($name, $module) {
     $env:NO_CACHE = $previousNoCache
 }
 
+function RunFreshOptionalStep($name, $module) {
+    $previousNoCache = $env:NO_CACHE
+    $env:NO_CACHE = "1"
+    RunOptionalStep $name $module
+    $env:NO_CACHE = $previousNoCache
+}
+
 if ($mode -eq "open") {
     RunFreshStep "market_summary" "stock_alarm.market_summary"
 }
 if ($mode -eq "intraday") {
     RunFreshStep "recommendation" "stock_alarm"
+    RunFreshStep "virtual_trader_report" "stock_alarm.virtual_trader_report"
+    RunStep "dashboard" "stock_alarm.dashboard"
 }
-if ($mode -eq "intraday") {
+if ($mode -eq "sell") {
     RunFreshStep "sell_check" "stock_alarm.sell_check"
     RunFreshStep "positions_report" "stock_alarm.positions_report"
 }
 if ($mode -eq "daily") {
-    RunOptionalStep "positions_report" "stock_alarm.positions_report"
+    RunFreshOptionalStep "positions_report" "stock_alarm.positions_report"
 }
 if ($mode -eq "daily" -or $mode -eq "performance") {
     RunOptionalStep "recommendation_performance" "stock_alarm.recommendation_performance"

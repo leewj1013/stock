@@ -38,6 +38,63 @@ def dedupe_ticker(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return list(reversed(result))
 
 
+def daily_ticker_rows(rows: list[dict[str, str]], day: str, time_column: str = "created_at") -> list[dict[str, str]]:
+    """Return the latest row per ticker across the whole day, not only the last batch."""
+    return dedupe_ticker([row for row in rows if row.get(time_column, "").startswith(day)])
+
+
+def delivered_alert_tickers(deliveries: list[dict[str, str]], day: str, event_type: str) -> set[str]:
+    """Return tickers confirmed as delivered to Telegram for an alert type."""
+    tickers: set[str] = set()
+    for row in deliveries:
+        if not row.get("created_at", "").startswith(day):
+            continue
+        if row.get("channel") != "telegram" or row.get("status") != "delivered":
+            continue
+        if row.get("event_type") != event_type:
+            continue
+        tickers.update(ticker.strip() for ticker in row.get("tickers", "").split("|") if ticker.strip())
+    return tickers
+
+
+def reconciled_daily_alert_rows(
+    event_rows: list[dict[str, str]], deliveries: list[dict[str, str]], day: str, event_type: str
+) -> list[dict[str, str]]:
+    """Use Telegram receipts when metadata exists; support legacy logs without metadata."""
+    rows = [row for row in event_rows if row.get("created_at", "").startswith(day)]
+    has_receipts = any(
+        row.get("created_at", "").startswith(day) and row.get("event_type") == event_type
+        for row in deliveries
+    )
+    if has_receipts:
+        delivered = delivered_alert_tickers(deliveries, day, event_type)
+        return daily_ticker_rows([row for row in rows if row.get("ticker", "").strip() in delivered], day)
+
+    # Legacy delivery rows did not record the alert type or tickers. A receipt
+    # is written immediately after its source batch, so match only successful
+    # Telegram receipts within two minutes after each alert row. This excludes
+    # console fallbacks while keeping old logs reconcilable.
+    telegram_times = []
+    for delivery in deliveries:
+        if not delivery.get("created_at", "").startswith(day) or delivery.get("channel") != "telegram":
+            continue
+        try:
+            telegram_times.append(datetime.fromisoformat(delivery["created_at"]))
+        except (KeyError, ValueError):
+            continue
+    if not telegram_times:
+        return daily_ticker_rows(rows, day)
+    confirmed = []
+    for row in rows:
+        try:
+            event_time = datetime.fromisoformat(row.get("created_at", ""))
+        except ValueError:
+            continue
+        if any(0 <= (delivery_time - event_time).total_seconds() <= 120 for delivery_time in telegram_times):
+            confirmed.append(row)
+    return daily_ticker_rows(confirmed, day)
+
+
 def tail_text(path: str, count: int = 10) -> list[str]:
     if not os.path.exists(path):
         return []

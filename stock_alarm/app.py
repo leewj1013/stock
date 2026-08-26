@@ -260,7 +260,9 @@ def evaluate_naver_candidate(
     avg_range = average_intraday_range_pct(highs, lows, closes[-10:])
     atr20_pct = average_true_range_pct(rows)
     rejections = []
-    if abs(day_change_pct(previous_close, close)) > env_float("MAX_DAY_CHANGE_PCT", 8):
+    day_return = day_change_pct(previous_close, close)
+    distance_ma20_pct = (close / ma20 - 1) * 100 if ma20 else 0
+    if abs(day_return) > env_float("MAX_DAY_CHANGE_PCT", 8):
         rejections.append("day_change")
     if avg_range > env_float("MAX_AVG_RANGE_PCT", 12):
         rejections.append("average_range")
@@ -270,11 +272,20 @@ def evaluate_naver_candidate(
         rejections.append("below_ma20")
     if trading_value < min_trading_value:
         rejections.append("trading_value")
+    legacy_passed = int(not rejections)
+    if day_return > env_float("MAX_ENTRY_DAY_CHANGE_PCT", 5):
+        rejections.append("entry_day_change")
+    max_distance = min(
+        env_float("MAX_MA20_DISTANCE_PCT", 10),
+        max(atr20_pct * env_float("MAX_MA20_DISTANCE_ATR", 1.5), 3),
+    )
+    if distance_ma20_pct > max_distance:
+        rejections.append("extended_above_ma20")
     values = {
         **base,
         "close": close,
         "previous_close": previous_close,
-        "day_return_pct": day_change_pct(previous_close, close),
+        "day_return_pct": day_return,
         "volume": today_volume,
         "avg_volume": avg_volume,
         "raw_volume_ratio": raw_volume_ratio,
@@ -283,9 +294,11 @@ def evaluate_naver_candidate(
         "raw_trading_value": raw_trading_value,
         "trading_value": trading_value,
         "ma20": ma20,
-        "distance_ma20_pct": (close / ma20 - 1) * 100 if ma20 else None,
+        "distance_ma20_pct": distance_ma20_pct,
         "avg_range_pct": avg_range,
         "atr20_pct": atr20_pct,
+        "legacy_score": calculate_legacy_score(close, ma20, volume_ratio, trading_value, atr20_pct),
+        "legacy_passed": legacy_passed,
         "rejection_reasons": ",".join(rejections),
     }
     if rejections:
@@ -299,6 +312,7 @@ def evaluate_naver_candidate(
     fundamentals = fundamental_snapshot(ticker, end_day)
     financial_score = float(fundamentals.get("financial_score") or 0)
     score = volume_score + trading_value_score + trend_score + news_score + disclosure_score + financial_score - penalty
+    legacy_score = calculate_legacy_score(close, ma20, volume_ratio, trading_value, atr20_pct) + news_score + disclosure_score + financial_score - penalty
     pick = Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2), volume_score, trading_value_score, trend_score, news_score, disclosure_score, penalty, raw_volume_ratio, volume_fraction, atr20_pct, 0, 0, financial_score, raw_trading_value)
     values.update(
         name=name,
@@ -313,6 +327,7 @@ def evaluate_naver_candidate(
         per=fundamentals.get("per"),
         pbr=fundamentals.get("pbr"),
         dividend_yield=fundamentals.get("dividend_yield"),
+        legacy_score=round(max(0.0, min(100.0, legacy_score)), 2),
         final_score=round(score, 2),
         passed=1,
     )
@@ -324,12 +339,23 @@ def calculate_score(close: int, ma20: float, volume_ratio: float, trading_value:
 
 
 def calculate_score_parts(close: int, ma20: float, volume_ratio: float, trading_value: int, atr20_pct: float = 0) -> tuple[float, float, float]:
+    volume_score = min(volume_ratio / 2, 1) * 40
+    trading_value_score = min(trading_value / 300_000_000_000, 1) * 30
+    distance_pct = max(close / ma20 - 1, 0) * 100
+    trend_scale = max(atr20_pct, 2) if atr20_pct else 2
+    normalized_distance = distance_pct / trend_scale
+    trend_score = max(0, 1 - abs(normalized_distance - 0.75) / 1.25) * 30
+    return round(volume_score, 2), round(trading_value_score, 2), round(trend_score, 2)
+
+
+def calculate_legacy_score(close: int, ma20: float, volume_ratio: float, trading_value: int, atr20_pct: float = 0) -> float:
+    """Return the v3 technical score so v4 can be evaluated in shadow mode."""
     volume_score = min(volume_ratio / 3, 1) * 45
     trading_value_score = min(trading_value / 300_000_000_000, 1) * 35
     distance_pct = max(close / ma20 - 1, 0) * 100
     trend_scale = max(atr20_pct * 3, 10) if atr20_pct else 10
     trend_score = min(distance_pct / trend_scale, 1) * 20
-    return round(volume_score, 2), round(trading_value_score, 2), round(trend_score, 2)
+    return round(volume_score + trading_value_score + trend_score, 2)
 
 
 def news_bonus(name: str) -> float:
@@ -464,7 +490,7 @@ def naver_market_up_ratio(end_day: date) -> float:
 
 
 def passes_market_filter(end_day: date) -> bool:
-    minimum = env_float("MIN_MARKET_UP_RATIO", 0)
+    minimum = env_float("MIN_MARKET_UP_RATIO", 0.45)
     return naver_market_up_ratio(end_day) >= minimum
 
 
@@ -496,6 +522,8 @@ def apply_relative_strength(evaluations: list[CandidateEvaluation], benchmark: t
             score = max(0.0, min(100.0, pick.score + relative_score))
             pick = replace(pick, score=round(score, 2), relative_strength_pct=relative, relative_strength_score=relative_score)
             values["final_score"] = round(score, 2)
+        if values.get("legacy_score") is not None:
+            values["legacy_score"] = round(max(0.0, min(100.0, float(values["legacy_score"]) + relative_score)), 2)
         adjusted.append(CandidateEvaluation(item.ticker, item.name, values, pick))
     return adjusted
 
@@ -675,7 +703,7 @@ def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_mul
 
 def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None:
     from .csv_schema import ensure_header, migrate_recommendation_row
-    header = ["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score", "news_score", "disclosure_score", "performance_penalty", "raw_volume_ratio", "expected_volume_fraction", "atr20_pct", "relative_strength_pct", "relative_strength_score", "financial_score", "raw_trading_value"]
+    header = ["created_at", "ticker", "name", "close", "volume_ratio", "trading_value", "score", "volume_score", "trading_value_score", "trend_score", "news_score", "disclosure_score", "performance_penalty", "raw_volume_ratio", "expected_volume_fraction", "atr20_pct", "relative_strength_pct", "relative_strength_score", "financial_score", "raw_trading_value", "allocation_pct"]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ensure_header(path, header, migrate_recommendation_row)
     exists = os.path.exists(path)
@@ -683,7 +711,8 @@ def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None
         writer = csv.writer(file)
         if not exists:
             writer.writerow(header)
-        for pick in picks:
+        allocations = allocation_percentages(picks)
+        for pick, allocation in zip(picks, allocations):
             writer.writerow(
                 [
                     datetime.now().isoformat(timespec="seconds"),
@@ -706,6 +735,7 @@ def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None
                     f"{pick.relative_strength_score:.2f}",
                     f"{pick.financial_score:.2f}",
                     pick.raw_trading_value,
+                    f"{allocation:.2f}",
                 ]
             )
 
@@ -790,28 +820,99 @@ def reason_summary(volume_ratio: float, news: float, disclosure: float, penalty:
     return " + ".join(parts) or "기본 조건 충족"
 
 
-def format_message(picks: list[Pick]) -> str:
+def historical_allocation_factors(path: str = "logs/recommendation_performance.csv") -> dict[str, float]:
+    """Return conservative per-ticker multipliers learned from completed outcomes."""
+    if not os.path.exists(path):
+        return {}
+    samples: dict[str, list[float]] = {}
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            returns = []
+            for column, weight in (("return_1d_pct", 0.2), ("return_3d_pct", 0.3), ("return_5d_pct", 0.5)):
+                try:
+                    returns.append((float(row.get(column, "")), weight))
+                except ValueError:
+                    continue
+            if returns and row.get("ticker"):
+                samples.setdefault(row["ticker"], []).append(sum(value * weight for value, weight in returns) / sum(weight for _, weight in returns))
+    factors = {}
+    for ticker, values in samples.items():
+        # Bayesian-style shrinkage prevents a handful of wins or losses from dominating.
+        learned_return = sum(values) / (len(values) + 5)
+        factors[ticker] = max(0.5, min(1.5, 1 + learned_return / 20))
+    return factors
+
+
+def allocation_percentages(picks: list[Pick], performance_path: str = "logs/recommendation_performance.csv") -> list[float]:
+    """Return per-position target weights against total virtual-account equity."""
+    if not picks:
+        return []
+    learned = historical_allocation_factors(performance_path)
+    minimum = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10)))
+    maximum = max(minimum, min(100.0, env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30)))
+    allocations = []
+    for pick in picks:
+        quality = max(0.25, min(1.0, pick.score / 100))
+        volatility = max(0.5, min(1.0, 3 / max(pick.atr20_pct, 3)))
+        target = maximum * quality * volatility * learned.get(pick.ticker, 1.0)
+        allocations.append(round(max(minimum, min(maximum, target)), 2))
+    total = sum(allocations)
+    if total > 100:
+        allocations = [round(value / total * 100, 2) for value in allocations]
+    return allocations
+
+
+def auto_buy_virtual_trader(picks: list[Pick]) -> dict | None:
+    if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
+        return None
+    from .data_store import virtual_buy, virtual_trader_state
+    if virtual_trader_state().get("cash", 0) <= 0:
+        return None
+    allocations = allocation_percentages(picks)
+    candidates = [
+        {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation}
+        for pick, allocation in zip(picks, allocations)
+    ]
+    try:
+        return virtual_buy(candidates)
+    except ValueError:
+        return None
+
+
+def format_message(picks: list[Pick], virtual_result: dict | None = None) -> str:
     if not picks:
         return "오늘 조건에 맞는 관심 종목이 없습니다."
-    lines = ["[오늘의 국내주식 관심 종목]"]
-    for index, pick in enumerate(picks, 1):
-        lines.extend([f"{index}. {pick.name}({pick.ticker})", f"- 종가: {pick.close:,}원", f"- 점수: {pick.score:.1f}"])
-        if pick.news_score:
-            lines.append(f"- 뉴스 보너스: +{pick.news_score:.1f}점")
-        if pick.disclosure_score:
-            lines.append(f"- 공시 보너스: +{pick.disclosure_score:.1f}점")
-        if pick.performance_penalty:
-            lines.append(f"- 성과 감점: -{pick.performance_penalty:.1f}점")
-        if pick.financial_score:
-            lines.append(f"- 재무 점수: +{pick.financial_score:.1f}점")
-        if pick.expected_volume_fraction < 1:
-            lines.append(f"- 시간보정 거래량: {pick.volume_ratio:.2f}배 (원시 {pick.raw_volume_ratio:.2f}배)")
+    lines = [
+        f"[매수 추천 · {datetime.now().strftime('%H:%M')}]",
+        f"추천 종목: {len(picks)}개",
+        "가상투자 비중: 전체 가상계좌 자산 기준 종목별 목표 비중",
+    ]
+    allocations = allocation_percentages(picks)
+    for index, (pick, allocation) in enumerate(zip(picks, allocations), 1):
+        signal = reason_summary(pick.volume_ratio, pick.news_score, pick.disclosure_score, pick.performance_penalty)
+        lines.extend([
+            "",
+            f"{index}. {pick.name}({pick.ticker})",
+            f"현재가 {pick.close:,}원 · 가상투자 예정 {allocation:.2f}% · 점수 {pick.score:.1f}",
+            f"신호: {signal} · 거래량 {pick.volume_ratio:.1f}배",
+        ])
+        risk = []
         if pick.atr20_pct:
-            lines.append(f"- ATR20: {pick.atr20_pct:.2f}%")
+            risk.append(f"ATR {pick.atr20_pct:.2f}%")
         if pick.relative_strength_pct:
-            lines.append(f"- 관심종목 대비 상대강도: {pick.relative_strength_pct:+.2f}%p")
-        lines.append(f"- 사유 요약: {reason_summary(pick.volume_ratio, pick.news_score, pick.disclosure_score, pick.performance_penalty)}")
-        lines.append(f"- 사유: {pick_reason(pick)}")
+            risk.append(f"상대강도 {pick.relative_strength_pct:+.2f}%p")
+        if risk:
+            lines.append("위험/강도: " + " · ".join(risk))
+    executions = {row["ticker"]: row for row in (virtual_result or {}).get("executions", [])}
+    if executions:
+        lines.extend(["", "■ 가상 자동매수"])
+        for pick in picks:
+            execution = executions.get(pick.ticker)
+            if execution:
+                lines.append(f"- {pick.name}: {execution['quantity']:,}주 · {execution['cost']:,}원")
+        lines.append(f"총 매수 {virtual_result.get('spent', 0):,}원 · 잔여 현금 {virtual_result.get('cash', 0):,}원")
+    elif virtual_result is None:
+        lines.extend(["", "가상 자동매수: 잔액 없음 또는 비활성"])
     lines.append("조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
 
@@ -831,6 +932,7 @@ def run() -> None:
         picks = recommend(markets, top_n, min_trading_value, volume_multiplier, run_id)
         track_positions(picks)
         write_log(picks)
+        virtual_result = auto_buy_virtual_trader(picks)
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")
@@ -839,7 +941,7 @@ def run() -> None:
         return
     from .notifier import send_notification
 
-    send_notification(format_message(picks))
+    send_notification(format_message(picks, virtual_result), event_type="recommendation", tickers=[pick.ticker for pick in picks])
 
 
 def main() -> None:

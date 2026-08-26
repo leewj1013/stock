@@ -34,12 +34,12 @@ class RecommendationPerformanceTest(unittest.TestCase):
     def test_external_reference_is_off_by_default(self):
         self.assertEqual(("", "", ""), external_reference("Samsung", "005930"))
 
-    @patch.dict(os.environ, {"NEWS_LOOKUP": "1"})
+    @patch.dict(os.environ, {"NEWS_LOOKUP": "1", "DART_LOOKUP": "0"}, clear=True)
     @patch("stock_alarm.recommendation_performance.news_reference", return_value=("2", "news=3 good=2 bad=0"))
     def test_external_reference_uses_news_when_enabled(self, _news):
         self.assertEqual(("2", "", "news=3 good=2 bad=0"), external_reference("Samsung", "005930"))
 
-    @patch.dict(os.environ, {"DART_LOOKUP": "1"})
+    @patch.dict(os.environ, {"DART_LOOKUP": "1", "NEWS_LOOKUP": "0"}, clear=True)
     @patch("stock_alarm.recommendation_performance.dart_reference", return_value=("1", "dart=2 good=1 bad=0"))
     def test_external_reference_uses_dart_when_enabled(self, _dart):
         self.assertEqual(("", "1", "dart=2 good=1 bad=0"), external_reference("Samsung", "005930"))

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.news_reference import cache_path, extract_titles, keyword_score, news_titles
+from stock_alarm.news_reference import cache_path, extract_titles, keyword_score, naver_api_titles, news_titles
 
 
 class NewsReferenceTest(unittest.TestCase):
@@ -39,6 +39,18 @@ class NewsReferenceTest(unittest.TestCase):
         path.return_value = file.name
 
         self.assertEqual(["cached"], news_titles("x"))
+
+    @patch("stock_alarm.news_reference.urllib.request.urlopen")
+    def test_naver_api_titles_uses_official_json_api(self, urlopen):
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps({"items": [{"title": "<b>삼성전자</b> 실적 개선 기대"}]}).encode()
+
+        result = naver_api_titles("삼성전자", "client", "secret")
+
+        self.assertEqual(["삼성전자 실적 개선 기대"], result)
+        request = urlopen.call_args.args[0]
+        self.assertEqual("client", request.headers["X-naver-client-id"])
+        self.assertEqual("secret", request.headers["X-naver-client-secret"])
 
 
 if __name__ == "__main__":

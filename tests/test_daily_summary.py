@@ -12,7 +12,12 @@ class DailySummaryTest(unittest.TestCase):
     @patch("stock_alarm.daily_summary.tail_csv")
     def test_message(self, tail_csv, datetime, _summary, _count, _change):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-31"
-        tail_csv.side_effect = [[{"created_at": "2026-07-31T09:00:00", "ticker": "A", "name": "Alpha"}, {"created_at": "2026-07-31T09:00:00", "ticker": "B", "name": "Beta"}], []]
+        def fake_tail(path, _count):
+            if path.endswith("recommendations.csv"):
+                return [{"created_at": "2026-07-31T09:00:00", "ticker": "A", "name": "Alpha"}, {"created_at": "2026-07-31T09:00:00", "ticker": "B", "name": "Beta"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
         text = message()
         self.assertIn("[오늘 주식 알림 마감 요약]", text)
         self.assertIn("추천 후보: 2개", text)
@@ -23,9 +28,14 @@ class DailySummaryTest(unittest.TestCase):
 
     @patch("stock_alarm.daily_summary.tail_csv")
     @patch("stock_alarm.daily_summary.datetime")
-    def test_latest_recommendations_uses_today_latest_batch_and_dedupes(self, datetime, tail_csv):
+    def test_latest_recommendations_uses_all_today_batches_and_dedupes(self, datetime, tail_csv):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-31"
-        tail_csv.return_value = [{"created_at": "2026-07-30T15:00:00", "ticker": "N"}, {"created_at": "2026-07-31T09:00:00", "ticker": "N"}, {"created_at": "2026-07-31T09:00:00", "ticker": "K"}, {"created_at": "2026-07-31T09:00:00", "ticker": "N"}]
+        def fake_tail(path, _count):
+            if path.endswith("recommendations.csv"):
+                return [{"created_at": "2026-07-30T15:00:00", "ticker": "N"}, {"created_at": "2026-07-31T09:00:00", "ticker": "N"}, {"created_at": "2026-07-31T10:00:00", "ticker": "K"}, {"created_at": "2026-07-31T11:00:00", "ticker": "N"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
         self.assertEqual(["K", "N"], [row["ticker"] for row in latest_recommendations()])
 
     @patch("stock_alarm.daily_summary.load_env")

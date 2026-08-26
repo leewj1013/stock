@@ -22,12 +22,12 @@ class MarketFilterTest(unittest.TestCase):
             else:
                 os.environ["MIN_MARKET_UP_RATIO"] = old
 
-    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0)
-    def test_market_filter_is_off_by_default(self, _ratio):
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.44)
+    def test_market_filter_is_active_by_default(self, _ratio):
         old = os.environ.get("MIN_MARKET_UP_RATIO")
         os.environ.pop("MIN_MARKET_UP_RATIO", None)
         try:
-            self.assertTrue(passes_market_filter(date(2026, 7, 25)))
+            self.assertFalse(passes_market_filter(date(2026, 7, 25)))
         finally:
             if old is not None:
                 os.environ["MIN_MARKET_UP_RATIO"] = old

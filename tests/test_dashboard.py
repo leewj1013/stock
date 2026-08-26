@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import card, card_class, cell, collection_highlights, e, empty_value_label, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, total_average_return, trading_value_eok, write
+from stock_alarm.dashboard import card, card_class, cell, collection_highlights, e, empty_value_label, issue_rows, latest_position_rows, latest_recommendation_rows, performance_penalty_rows, performance_summary_rows, reason_summary, recommendation_performance_rows, recommendation_rank_rows, recommendation_reason_rows, recommendation_shape_rows, render, score_breakdown_rows, sell_alert_summary_rows, sell_alerted_recommendation_rows, settings_rows, signed_class, sort_table_rows, status_class, stock_highlights, table, today_csv_count, today_issue_count, today_recommendation_rows, today_run_rows, today_run_summary, total_average_return, trading_value_eok, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -23,6 +23,37 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("<table>", html)
         self.assertIn("<td>1</td>", html)
 
+    def test_table_sorts_visible_creation_time_newest_first(self):
+        rows = [
+            {"created_at": "2026-08-13T09:05:00", "name": "old"},
+            {"created_at": "2026-08-13T15:35:00", "name": "new"},
+        ]
+
+        ordered = sort_table_rows(rows, ["created_at", "name"])
+        html = table("T", rows, ["created_at", "name"])
+
+        self.assertEqual(["new", "old"], [row["name"] for row in ordered])
+        self.assertLess(html.index(">new</td>"), html.index(">old</td>"))
+
+    def test_table_preserves_order_without_creation_time_column(self):
+        rows = [{"name": "first"}, {"name": "second"}]
+        self.assertEqual(rows, sort_table_rows(rows, ["name"]))
+
+    def test_table_pager_shows_total_row_count(self):
+        html = table("T", [{"name": str(index)} for index in range(19)], ["name"])
+        self.assertIn("총 19건", html)
+
+    @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
+    def test_render_has_virtual_trader_and_five_page_pager(self, _recommendations):
+        html = render()
+        self.assertLess(html.index("핵심 요약"), html.index("가상 트레이더"))
+        self.assertLess(html.index("가상 트레이더"), html.index("수집 데이터"))
+        self.assertLess(html.index("수집 데이터"), html.index("상세 진단"))
+        self.assertIn("stockAlarm.virtualTrader.v1", html)
+        self.assertIn("nameWithEntry", html)
+        self.assertIn("item.average_price", html)
+        self.assertIn("Math.floor(currentPage/5)", html)
+
     def test_status_class(self):
         self.assertEqual("ok", status_class("ok"))
         self.assertEqual("warn", status_class("old"))
@@ -30,7 +61,7 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("", status_class("telegram"))
 
     def test_cell_marks_status(self):
-        self.assertEqual("<td class='bad'>missing</td>", cell("missing"))
+        self.assertEqual("<td class='bad'>미실행</td>", cell("missing"))
 
     def test_numeric_cell_formats_and_aligns(self):
         self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
@@ -65,7 +96,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("data-row='15'", html)
 
     def test_card_marks_status(self):
-        self.assertIn("<span class='bad'>missing</span>", card("latest error", "missing"))
+        self.assertIn("<span class='bad'>미실행</span>", card("latest error", "missing"))
 
     def test_card_class_marks_today_counts(self):
         self.assertEqual("bad", card_class("today issues", "1"))
@@ -141,7 +172,7 @@ class DashboardTest(unittest.TestCase):
 
     @patch("stock_alarm.dashboard.datetime")
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_today_recommendation_rows_shows_latest_batch_only(self, tail_csv, datetime):
+    def test_today_recommendation_rows_accumulates_all_batches_for_the_day(self, tail_csv, datetime):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-27"
 
         def fake_tail(path, _count):
@@ -156,7 +187,7 @@ class DashboardTest(unittest.TestCase):
 
         tail_csv.side_effect = fake_tail
 
-        self.assertEqual(["NEW1", "NEW2"], [row["ticker"] for row in today_recommendation_rows()])
+        self.assertEqual(["OLD1", "OLD2", "NEW1", "NEW2"], [row["ticker"] for row in today_recommendation_rows()])
 
     @patch("stock_alarm.dashboard.today_run_rows", return_value=[{"step": "daily", "status": "missing"}])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[{"setting": "task_error", "value": "none"}])

@@ -9,14 +9,19 @@ from stock_alarm.app import CandidateEvaluation, Pick, apply_relative_strength, 
 
 
 class ScoreTest(unittest.TestCase):
-    def test_score_is_capped_at_100(self):
-        self.assertEqual(100, calculate_score(120, 100, 10, 1_000_000_000_000))
+    def test_extended_price_does_not_get_max_trend_score(self):
+        self.assertLess(calculate_score(120, 100, 10, 1_000_000_000_000), 100)
 
     def test_score_rewards_balanced_signal(self):
         weak = calculate_score(101, 100, 1.5, 10_000_000_000)
         strong = calculate_score(108, 100, 2.5, 200_000_000_000)
 
         self.assertGreater(strong, weak)
+
+    def test_score_prefers_moderate_ma20_distance_over_chasing(self):
+        moderate = calculate_score(102, 100, 2, 300_000_000_000, 2)
+        extended = calculate_score(115, 100, 2, 300_000_000_000, 2)
+        self.assertGreater(moderate, extended)
 
     def test_score_parts_match_total(self):
         parts = calculate_score_parts(108, 100, 2.5, 200_000_000_000)

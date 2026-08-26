@@ -5,9 +5,11 @@ data/backups/
 data/registry-backup/
 data/stock_alarm.db-shm
 data/stock_alarm.db-wal
+data/us_market_summary.json
 .venv/
 .cache/
 logs/
 reports/
 __pycache__/
 *.pyc
+*.code-workspace

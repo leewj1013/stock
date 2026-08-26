@@ -34,6 +34,7 @@ class SellAlert:
     close: int
     return_pct: float
     reason: str
+    holding_days: int | None = None
 
 
 def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
@@ -63,18 +64,20 @@ def check_position(
     atr20_pct = average_true_range_pct(rows)
     stop_loss_pct = -max(abs(env_float("SELL_LOSS_PCT", 5)), atr20_pct * env_float("SELL_ATR_MULTIPLIER", 2))
     reasons: list[str] = []
-    if return_pct <= stop_loss_pct:
+    stop_triggered = return_pct <= stop_loss_pct
+    if stop_triggered:
         reasons.append(f"손절 기준 {stop_loss_pct:.1f}% 이탈")
     previous_ma20 = mean([int(row[4]) for row in rows[-21:-1]]) if len(rows) >= 21 else mean(closes[:-1])
-    if close < ma20 and closes[-2] < previous_ma20:
+    ma20_triggered = close < ma20 and closes[-2] < previous_ma20
+    if ma20_triggered:
         reasons.append("20일선 2회 연속 이탈")
     if previous_return is not None:
         drop = previous_return - return_pct
-        if drop >= env_float("SELL_DROP_PCT", 3):
+        if drop >= env_float("SELL_DROP_PCT", 3) and (ma20_triggered or stop_triggered):
             reasons.append(f"직전 평가 대비 수익률 {drop:.1f}%p 악화")
     if max_return is not None and max_return >= env_float("SELL_PROTECT_PROFIT_PCT", 5):
         giveback = max_return - return_pct
-        if giveback >= env_float("SELL_GIVEBACK_PCT", 4):
+        if giveback >= env_float("SELL_GIVEBACK_PCT", 4) and (ma20_triggered or stop_triggered):
             reasons.append(f"고점 수익률 {max_return:.1f}% 대비 {giveback:.1f}%p 반납")
     entry_time = parse_time(position.get("entry_date", ""))
     holding_days = (end_day - entry_time.date()).days if entry_time else None
@@ -84,7 +87,7 @@ def check_position(
         return None
 
     name = stock_name(ticker, position.get("name", ticker).strip() or ticker)
-    return SellAlert(ticker, name, entry_price, close, return_pct, ", ".join(reasons))
+    return SellAlert(ticker, name, entry_price, close, return_pct, ", ".join(reasons), holding_days)
 
 
 def _position_returns(path: str, maximum: bool) -> dict[str, float]:
@@ -242,19 +245,36 @@ def alert_summary(alert: SellAlert) -> str:
     return "수익률 악화"
 
 
-def format_message(alerts: list[SellAlert]) -> str:
+def alert_urgency(alert: SellAlert) -> str:
+    if "손절 기준" in alert.reason:
+        return "🔴 자동 매도"
+    if "반납" in alert.reason:
+        return "🟠 수익 보호 매도"
+    if "보유 후" in alert.reason:
+        return "⚪ 기간 청산"
+    return "🟡 추세 이탈 매도"
+
+
+def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) -> str:
     if not alerts:
         return "오늘 매도 검토 조건에 걸린 보유 종목이 없습니다."
-    lines = ["[매도 검토 알림]"]
+    lines = [f"[매도 알림 · {datetime.now().strftime('%H:%M')}]", f"조건 충족: {len(alerts)}개"]
+    executions = {row["ticker"]: row for row in (virtual_result or {}).get("executions", [])}
     for alert in alerts:
+        execution = executions.get(alert.ticker)
         lines.extend([
+            "",
+            f"{alert_urgency(alert)}",
             f"{alert.name}({alert.ticker})",
-            f"- 현재가: {alert.close:,}원",
-            f"- 진입가: {alert.entry_price:,}원",
-            f"- 수익률: {alert.return_pct:.1f}%",
-            f"- 매도 검토 요약: {alert_summary(alert)}",
-            f"- 사유: {alert.reason}",
+            f"현재가 {alert.close:,}원 · 진입가 {alert.entry_price:,}원",
+            f"수익률 {alert.return_pct:+.2f}%" + (f" · 보유 {alert.holding_days}일" if alert.holding_days is not None else ""),
+            f"사유: {alert.reason}",
         ])
+        if execution:
+            realized_rate = execution["realized_profit_loss"] / execution["cost_basis"] * 100 if execution["cost_basis"] else 0
+            lines.append(f"가상매도 완료: {execution['quantity']:,}주 · 실현손익 {execution['realized_profit_loss']:+,}원({realized_rate:+.2f}%)")
+    if virtual_result and virtual_result.get("sold"):
+        lines.extend(["", f"매도 후 현금: {virtual_result.get('cash', 0):,}원", "재추천 제한: 3일"])
     lines.append("조건 기반 매도 검토 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
 
@@ -285,6 +305,8 @@ def run() -> str:
     try:
         alerts = find_alerts(read_positions(), end_day, run_id)
         write_log(alerts)
+        from .data_store import virtual_sell
+        virtual_result = virtual_sell([{"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason} for alert in alerts])
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")
@@ -293,7 +315,7 @@ def run() -> str:
         return "no_alerts"
     from .notifier import send_notification
 
-    return send_notification(format_message(alerts))
+    return send_notification(format_message(alerts, virtual_result), event_type="sell", tickers=[alert.ticker for alert in alerts])
 
 
 def main() -> None:

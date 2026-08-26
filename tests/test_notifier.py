@@ -1,12 +1,38 @@
 import os
+import json
+import urllib.parse
 import unittest
 from urllib.error import URLError
 from unittest.mock import patch
 
-from stock_alarm.notifier import send_notification
+from stock_alarm.notifier import send_notification, send_telegram, split_telegram_message
 
 
 class NotifierTest(unittest.TestCase):
+    def test_split_telegram_message_keeps_every_chunk_under_safe_limit(self):
+        message = ("한글 시황 문장\n" * 800) + ("x" * 4000)
+        chunks = split_telegram_message(message)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 3500 for chunk in chunks))
+        self.assertEqual(message.replace("\n", ""), "".join(chunks).replace("\n", ""))
+
+    @patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "1234"}, clear=True)
+    @patch("stock_alarm.notifier.urllib.request.urlopen")
+    def test_send_telegram_sends_long_message_in_multiple_parts(self, urlopen):
+        urlopen.return_value.__enter__.return_value.read.side_effect = [
+            json.dumps({"ok": True, "result": {"message_id": index, "chat": {"id": 1234}}}).encode()
+            for index in range(1, 10)
+        ]
+        receipt = send_telegram("내용\n" * 2000)
+
+        self.assertGreater(urlopen.call_count, 1)
+        for call in urlopen.call_args_list:
+            request = call.args[0]
+            text = urllib.parse.parse_qs(request.data.decode())["text"][0]
+            self.assertLessEqual(len(text), 4096)
+        self.assertIn("|", receipt["message_id"])
+
     def test_missing_telegram_config_falls_back_to_console(self):
         old_notifier = os.environ.get("NOTIFIER")
         old_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -58,6 +84,8 @@ class NotifierTest(unittest.TestCase):
             status="delivered",
             message_id="77",
             chat_id_suffix="1234",
+            event_type="",
+            tickers=[],
         )
 
 

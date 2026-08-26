@@ -16,8 +16,10 @@ if (Test-Path ".venv\Scripts\python.exe") {
     $python = $command.Source
 }
 
-$dashboard = & $python -m stock_alarm.dashboard
-if ($LASTEXITCODE -ne 0 -or -not $dashboard) {
-    throw "Dashboard generation failed."
+$port = if ($env:DASHBOARD_PORT) { $env:DASHBOARD_PORT } else { "8765" }
+$existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
+if (-not $existing) {
+    Start-Process -FilePath $python -ArgumentList "-m", "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
+    Start-Sleep -Seconds 2
 }
-Start-Process -FilePath (Resolve-Path $dashboard)
+Start-Process -FilePath "http://127.0.0.1:$port/"

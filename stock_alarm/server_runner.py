@@ -14,6 +14,9 @@ STEPS: dict[str, list[tuple[str, bool, bool]]] = {
     "open": [("stock_alarm.market_summary", False, True)],
     "intraday": [
         ("stock_alarm", False, True),
+        ("stock_alarm.positions_report", False, True),
+    ],
+    "sell": [
         ("stock_alarm.sell_check", False, True),
         ("stock_alarm.positions_report", False, True),
     ],

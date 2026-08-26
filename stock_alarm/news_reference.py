@@ -6,6 +6,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError, URLError
 from datetime import date
 
 
@@ -23,15 +24,35 @@ def news_titles(query: str, limit: int = 10) -> list[str]:
     if os.environ.get("NO_CACHE", "0") != "1" and os.path.exists(path):
         with open(path, encoding="utf-8") as file:
             return json.load(file)[:limit]
-    url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"where": "news", "query": query})
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=10) as response:
-        text = response.read().decode("utf-8", errors="ignore")
-    result = extract_titles(text, limit)
+    client_id = os.environ.get("NAVER_CLIENT_ID", "")
+    client_secret = os.environ.get("NAVER_CLIENT_SECRET", "")
+    if os.environ.get("NAVER_OFFICIAL_NEWS_API", "0") == "1" and client_id and client_secret:
+        try:
+            result = naver_api_titles(query, client_id, client_secret, limit)
+        except (HTTPError, URLError, OSError, ValueError, KeyError):
+            result = naver_html_titles(query, limit)
+    else:
+        result = naver_html_titles(query, limit)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as file:
         json.dump(result, file, ensure_ascii=False)
     return result
+
+
+def naver_api_titles(query: str, client_id: str, client_secret: str, limit: int = 10) -> list[str]:
+    url = "https://openapi.naver.com/v1/search/news.json?" + urllib.parse.urlencode({"query": query, "display": min(max(limit, 1), 100), "sort": "date"})
+    request = urllib.request.Request(url, headers={"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret, "User-Agent": "stockAlarm/1.0"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    return [title for title in (clean_title(re.sub(r"<[^>]+>", " ", item.get("title", ""))) for item in body.get("items", [])) if title][:limit]
+
+
+def naver_html_titles(query: str, limit: int = 10) -> list[str]:
+    url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"where": "news", "query": query})
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        text = response.read().decode("utf-8", errors="ignore")
+    return extract_titles(text, limit)
 
 
 def extract_titles(text: str, limit: int = 10) -> list[str]:

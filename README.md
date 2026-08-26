@@ -25,8 +25,9 @@ PC를 재부팅했거나 자동 실행 상태를 다시 맞추고 싶으면 `sta
 | 작업 이름 | 실행 시간 | 실행 모드 | 주요 내용 |
 |---|---:|---|---|
 | `stockAlarmOpen` | 매일 08:30 | `open` | 아침 시황 요약, 추천 후보 알림 |
-| `stockAlarmIntradayEvery5Minutes` | 평일 09:00~15:30, 5분마다 | `intraday` | 추천 후보 확인, 매도 검토, 보유 수익률 갱신 |
-| `stockAlarmDaily` | 매일 16:10 | `daily` | 보유 수익률, 추천 성과, 일일요약, 상태점검, 대시보드, 이슈 알림 |
+| `stockAlarmIntradayEvery5Minutes` | 평일 08:50~15:40, 5분마다 | `intraday` | 추천 후보 확인, 가상 트레이더 수익률 변화 기록 |
+| `stockAlarmSellEvery5Minutes` | 평일 08:50~15:40, 5분마다 | `sell` | 독립 매도 조건 점검, 보유 수익률 갱신 |
+| `stockAlarmDaily` | 매일 15:35 | `daily` | 마감 종가 재수집, 추천 성과, 일일요약, 상태점검, 대시보드, 이슈 알림 |
 
 현재 `scripts/run_stock_alarm.ps1` 기준 실행 흐름은 아래와 같습니다.
 
@@ -37,12 +38,14 @@ open
 
 intraday
 - recommendation
+- virtual_trader_report
+- dashboard
+
+sell
 - sell_check
 - positions_report
 
 daily
-- recommendation
-- sell_check
 - positions_report
 - recommendation_performance
 - daily_summary
@@ -114,7 +117,10 @@ open_dashboard.bat
 - 현재가가 20일 이동평균 위
 - 거래대금이 `MIN_TRADING_VALUE` 이상
 - 당일 가격 변동폭이 `MAX_DAY_CHANGE_PCT` 이하
+- 신규 진입일 상승률이 `MAX_ENTRY_DAY_CHANGE_PCT` 이하
+- 20일선 이격률이 절대 상한과 ATR 기반 상한 안쪽
 - 최근 평균 장중 변동폭이 `MAX_AVG_RANGE_PCT` 이하
+- 관심종목 상승 비율이 `MIN_MARKET_UP_RATIO` 이상
 - 추천 점수가 `MIN_RECOMMEND_SCORE` 이상
 - 이미 추천되어 추적 중인 종목은 매도 알림이 올 때까지 중복 추천 제외
 - 매도 알림 이후 다시 추천된 종목은 다시 추적 대상으로 보고 중복 추천 제외
@@ -123,9 +129,9 @@ open_dashboard.bat
 기본 점수 구성:
 
 ```text
-거래량 급증        최대 45점
-거래대금           최대 35점
-20일선 대비 위치   최대 20점
+거래량 급증        최대 40점
+거래대금           최대 30점
+20일선 적정 이격   최대 30점
 ```
 
 뉴스, 공시, 과거 추천 성과 감점은 확장 가능한 구조로 준비되어 있습니다.
@@ -138,8 +144,8 @@ open_dashboard.bat
 
 - 손절 기준 이하
 - 20일선 이탈
-- 직전 수익률 대비 급격한 악화
-- 고점 대비 수익 반납
+- 직전 수익률 대비 급격한 악화 + 손절 또는 20일선 2회 이탈 확인
+- 고점 대비 수익 반납 + 손절 또는 20일선 2회 이탈 확인
 
 이미 매도 알림을 보낸 종목은 같은 매도 알림 대상에서 제외됩니다.
 
@@ -248,8 +254,11 @@ TOP_N=5
 MIN_TRADING_VALUE=5000000000
 VOLUME_MULTIPLIER=1.5
 MAX_DAY_CHANGE_PCT=8
+MAX_ENTRY_DAY_CHANGE_PCT=5
+MAX_MA20_DISTANCE_PCT=10
+MAX_MA20_DISTANCE_ATR=1.5
 MAX_AVG_RANGE_PCT=12
-MIN_MARKET_UP_RATIO=0
+MIN_MARKET_UP_RATIO=0.45
 SELL_LOSS_PCT=5
 SELL_DROP_PCT=3
 SELL_PROTECT_PROFIT_PCT=5

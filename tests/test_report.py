@@ -6,10 +6,42 @@ import subprocess
 
 from unittest.mock import patch
 
-from stock_alarm.report import delivery_status, format_recommendation, format_sell_alert, latest_error, latest_error_summary, lines, tail_csv, tail_text
+from stock_alarm.report import delivery_status, format_recommendation, format_sell_alert, latest_error, latest_error_summary, lines, reconciled_daily_alert_rows, tail_csv, tail_text
 
 
 class ReportTest(unittest.TestCase):
+    def test_reconciled_daily_alert_rows_aggregates_all_batches_for_legacy_logs(self):
+        rows = [
+            {"created_at": "2026-08-10T09:05:00", "ticker": "A"},
+            {"created_at": "2026-08-10T11:30:00", "ticker": "B"},
+        ]
+
+        self.assertEqual(["A", "B"], [row["ticker"] for row in reconciled_daily_alert_rows(rows, [], "2026-08-10", "recommendation")])
+
+    def test_reconciled_daily_alert_rows_counts_only_confirmed_telegram_tickers(self):
+        rows = [
+            {"created_at": "2026-08-13T09:05:00", "ticker": "A"},
+            {"created_at": "2026-08-13T15:05:00", "ticker": "B"},
+        ]
+        deliveries = [
+            {"created_at": "2026-08-13T09:05:01", "channel": "telegram", "status": "delivered", "event_type": "sell", "tickers": "A"},
+            {"created_at": "2026-08-13T15:05:01", "channel": "console", "status": "fallback", "event_type": "sell", "tickers": "B"},
+        ]
+
+        self.assertEqual(["A"], [row["ticker"] for row in reconciled_daily_alert_rows(rows, deliveries, "2026-08-13", "sell")])
+
+    def test_reconciled_daily_alert_rows_matches_legacy_receipt_by_time(self):
+        rows = [
+            {"created_at": "2026-08-13T09:05:32", "ticker": "A"},
+            {"created_at": "2026-08-13T15:05:33", "ticker": "B"},
+        ]
+        deliveries = [
+            {"created_at": "2026-08-13T09:05:33", "channel": "telegram", "status": "delivered"},
+            {"created_at": "2026-08-13T15:05:44", "channel": "console", "status": "fallback"},
+        ]
+
+        self.assertEqual(["A"], [row["ticker"] for row in reconciled_daily_alert_rows(rows, deliveries, "2026-08-13", "sell")])
+
     def test_tail_csv(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "x.csv")
