@@ -31,9 +31,11 @@ def prune_old_snapshots(path: str = DB_PATH, retention_days: int | None = None) 
     with closing(connect(path)) as connection:
         candidates = connection.execute("DELETE FROM candidate_snapshots WHERE evaluated_at < ?", (cutoff,)).rowcount
         positions = connection.execute("DELETE FROM position_checks WHERE checked_at < ?", (cutoff,)).rowcount
+        price_quality = connection.execute("DELETE FROM price_quality WHERE created_at < ?", (cutoff,)).rowcount
+        portfolio_risk = connection.execute("DELETE FROM portfolio_risk_snapshots WHERE created_at < ?", (cutoff,)).rowcount
         runs = connection.execute("DELETE FROM strategy_runs WHERE started_at < ? AND NOT EXISTS (SELECT 1 FROM candidate_snapshots c WHERE c.run_id = strategy_runs.run_id) AND NOT EXISTS (SELECT 1 FROM position_checks p WHERE p.run_id = strategy_runs.run_id)", (cutoff,)).rowcount
         connection.commit()
-    return {"candidates": candidates, "positions": positions, "runs": runs}
+    return {"candidates": candidates, "positions": positions, "price_quality": price_quality, "portfolio_risk": portfolio_risk, "runs": runs}
 
 
 def run(path: str = DB_PATH) -> dict[str, object]:

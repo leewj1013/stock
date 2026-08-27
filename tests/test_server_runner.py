@@ -35,7 +35,7 @@ class ServerRunnerTest(unittest.TestCase):
     @patch("stock_alarm.server_runner.load_env")
     @patch("stock_alarm.server_runner.should_run", return_value=True)
     @patch("stock_alarm.server_runner._write_log")
-    @patch("stock_alarm.server_runner._run_module", side_effect=[1, 0, 0, 0, 0, 0, 0, 0])
+    @patch("stock_alarm.server_runner._run_module", side_effect=[1, 0, 0, 0, 0, 0, 0, 0, 0])
     def test_optional_daily_failure_continues(self, module, _log, _gate, _env):
         self.assertEqual(0, run("daily"))
         self.assertGreater(module.call_count, 2)

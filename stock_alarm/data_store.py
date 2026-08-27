@@ -12,8 +12,8 @@ from typing import Any, Iterable
 
 
 DB_PATH = "data/stock_alarm.db"
-SCHEMA_VERSION = 6
-STRATEGY_VERSION = "anti-chase-confirmed-exit-v4"
+SCHEMA_VERSION = 7
+STRATEGY_VERSION = "learned-risk-managed-v5"
 
 
 def _file_hash(path: str) -> str:
@@ -193,6 +193,75 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             realized_profit_loss INTEGER NOT NULL,
             reason TEXT
         );
+        CREATE TABLE IF NOT EXISTS price_quality (
+            quality_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            price_date TEXT,
+            source TEXT NOT NULL,
+            reference_source TEXT,
+            close INTEGER,
+            reference_close INTEGER,
+            age_minutes REAL,
+            status TEXT NOT NULL,
+            reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_price_quality_time ON price_quality(created_at, ticker);
+        CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+            pick_date TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            name TEXT,
+            strategy_version TEXT NOT NULL,
+            score REAL,
+            factors_json TEXT NOT NULL,
+            entry_date TEXT,
+            entry_price INTEGER,
+            return_1d_pct REAL,
+            return_3d_pct REAL,
+            return_5d_pct REAL,
+            return_10d_pct REAL,
+            return_20d_pct REAL,
+            excess_1d_pct REAL,
+            excess_3d_pct REAL,
+            excess_5d_pct REAL,
+            excess_10d_pct REAL,
+            excess_20d_pct REAL,
+            mfe_20d_pct REAL,
+            mae_20d_pct REAL,
+            quality_status TEXT NOT NULL DEFAULT 'valid',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (pick_date, ticker, strategy_version)
+        );
+        CREATE TABLE IF NOT EXISTS learned_strategy_versions (
+            version_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            effective_date TEXT,
+            weights_json TEXT NOT NULL,
+            sample_count INTEGER NOT NULL,
+            objective_return REAL NOT NULL,
+            baseline_return REAL NOT NULL,
+            max_drawdown REAL NOT NULL,
+            baseline_max_drawdown REAL NOT NULL,
+            status TEXT NOT NULL,
+            rollback_version TEXT,
+            notes TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_learned_strategy_status ON learned_strategy_versions(status, created_at);
+        CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
+            snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            equity INTEGER NOT NULL,
+            high_water INTEGER NOT NULL,
+            daily_start_equity INTEGER NOT NULL,
+            weekly_start_equity INTEGER NOT NULL,
+            daily_return_pct REAL NOT NULL,
+            weekly_return_pct REAL NOT NULL,
+            drawdown_pct REAL NOT NULL,
+            exposure_pct REAL NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_portfolio_risk_time ON portfolio_risk_snapshots(created_at);
         CREATE INDEX IF NOT EXISTS idx_candidates_ticker_time
             ON candidate_snapshots(ticker, evaluated_at);
         CREATE INDEX IF NOT EXISTS idx_position_checks_ticker_time
@@ -316,7 +385,14 @@ def virtual_deposit(amount: int, path: str = DB_PATH) -> dict[str, Any]:
 
 
 def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[str, Any]:
-    valid = [row for row in candidates if int(float(row.get("close") or 0)) > 0 and row.get("ticker")]
+    from .portfolio_risk import new_buys_allowed
+    allowed, reason = new_buys_allowed(path)
+    if not allowed:
+        raise ValueError(f"new virtual buys halted: {reason}")
+    valid = [
+        row for row in candidates
+        if int(float(row.get("close") or 0)) > 0 and row.get("ticker") and row.get("price_quality", "valid") == "valid"
+    ]
     if not valid:
         raise ValueError("no recommendation candidates available")
     max_position_pct = max(0.0, min(100.0, float(os.environ.get("VIRTUAL_TRADER_MAX_POSITION_PCT", "30"))))
@@ -339,6 +415,8 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[s
         ).fetchall()
         open_costs = {row["ticker"]: int(row["open_cost"]) for row in position_rows}
         account_equity = cash + sum(open_costs.values())
+        portfolio_limit_pct = min(float(row.get("portfolio_limit_pct", os.environ.get("RISK_MAX_EXPOSURE_PCT", "70"))) for row in valid)
+        portfolio_budget = max(0, int(account_equity * portfolio_limit_pct / 100) - sum(open_costs.values()))
         spent = 0
         trades = []
         for row in valid:
@@ -349,7 +427,11 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[s
             if not allocation_pct:
                 continue
             target_cost = int(account_equity * allocation_pct / 100)
-            additional_budget = min(max(0, target_cost - open_costs.get(row["ticker"], 0)), cash - spent)
+            additional_budget = min(
+                max(0, target_cost - open_costs.get(row["ticker"], 0)),
+                cash - spent,
+                portfolio_budget - spent,
+            )
             quantity = int(additional_budget // price)
             cost = price * quantity
             if quantity < 1 or spent + cost > cash:
@@ -658,3 +740,105 @@ def latest_virtual_valuation(path: str = DB_PATH) -> dict[str, Any]:
 
 def recent_virtual_trades(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
     return query_rows("SELECT * FROM virtual_trades ORDER BY trade_id DESC LIMIT ?", (limit,), path)
+
+
+def recent_virtual_sales(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM virtual_sales ORDER BY sale_id DESC LIMIT ?", (limit,), path)
+
+
+def record_price_quality(row: dict[str, Any], path: str = DB_PATH) -> None:
+    columns = ["created_at", "ticker", "price_date", "source", "reference_source", "close", "reference_close", "age_minutes", "status", "reason"]
+    values = [row.get(column) for column in columns]
+    with closing(connect(path)) as connection:
+        connection.execute(
+            f"INSERT INTO price_quality({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
+            values,
+        )
+        connection.commit()
+
+
+def recent_price_quality(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM price_quality ORDER BY quality_id DESC LIMIT ?", (limit,), path)
+
+
+def upsert_recommendation_outcomes(rows: Iterable[dict[str, Any]], path: str = DB_PATH) -> None:
+    columns = [
+        "pick_date", "ticker", "name", "strategy_version", "score", "factors_json", "entry_date", "entry_price",
+        "return_1d_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct",
+        "excess_1d_pct", "excess_3d_pct", "excess_5d_pct", "excess_10d_pct", "excess_20d_pct",
+        "mfe_20d_pct", "mae_20d_pct", "quality_status", "updated_at",
+    ]
+    values = [tuple(row.get(column) for column in columns) for row in rows]
+    if not values:
+        return
+    with closing(connect(path)) as connection:
+        connection.executemany(
+            f"INSERT OR REPLACE INTO recommendation_outcomes({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
+            values,
+        )
+        connection.commit()
+
+
+def recent_recommendation_outcomes(limit: int = 250, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows(
+        "SELECT * FROM recommendation_outcomes WHERE quality_status='valid' ORDER BY pick_date DESC, ticker LIMIT ?",
+        (limit,), path,
+    )
+
+
+def save_strategy_version(row: dict[str, Any], path: str = DB_PATH) -> None:
+    columns = ["version_id", "created_at", "effective_date", "weights_json", "sample_count", "objective_return", "baseline_return", "max_drawdown", "baseline_max_drawdown", "status", "rollback_version", "notes"]
+    values = dict(row)
+    if values.get("status") == "active" and str(values.get("effective_date") or "") > datetime.now().date().isoformat():
+        values["status"] = "scheduled"
+    with closing(connect(path)) as connection:
+        connection.execute(
+            f"INSERT OR REPLACE INTO learned_strategy_versions({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
+            tuple(values.get(column) for column in columns),
+        )
+        connection.commit()
+
+
+def active_strategy_version(path: str = DB_PATH) -> dict[str, Any]:
+    rows = query_rows(
+        "SELECT * FROM learned_strategy_versions WHERE status IN ('active','scheduled') AND (effective_date IS NULL OR effective_date <= ?) ORDER BY effective_date DESC, created_at DESC LIMIT 1",
+        (datetime.now().date().isoformat(),), path,
+    )
+    return rows[0] if rows else {}
+
+
+def recent_strategy_versions(limit: int = 20, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM learned_strategy_versions ORDER BY created_at DESC LIMIT ?", (limit,), path)
+
+
+def record_portfolio_risk(row: dict[str, Any], path: str = DB_PATH) -> None:
+    columns = ["created_at", "equity", "high_water", "daily_start_equity", "weekly_start_equity", "daily_return_pct", "weekly_return_pct", "drawdown_pct", "exposure_pct", "status", "reason"]
+    with closing(connect(path)) as connection:
+        connection.execute(
+            f"INSERT INTO portfolio_risk_snapshots({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
+            tuple(row.get(column) for column in columns),
+        )
+        connection.commit()
+
+
+def latest_portfolio_risk(path: str = DB_PATH) -> dict[str, Any]:
+    rows = query_rows("SELECT * FROM portfolio_risk_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=path)
+    return rows[0] if rows else {}
+
+
+def previous_virtual_valuation(before: str, path: str = DB_PATH) -> dict[str, Any]:
+    rows = query_rows(
+        "SELECT * FROM virtual_valuation_snapshots WHERE created_at < ? ORDER BY snapshot_id DESC LIMIT 1",
+        (before,),
+        path,
+    )
+    return rows[0] if rows else {}
+
+
+def virtual_deposits_since(created_at: str, path: str = DB_PATH) -> int:
+    rows = query_rows(
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM virtual_deposits WHERE created_at >= ?",
+        (created_at,),
+        path,
+    )
+    return int(rows[0]["amount"]) if rows else 0

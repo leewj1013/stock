@@ -71,5 +71,5 @@ Unregister-ScheduledTask -TaskName "stockAlarmIntraday1500" -Confirm:$false -Err
 Unregister-ScheduledTask -TaskName "stockAlarmIntradayEveryMinute" -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName "stockAlarmIntradayEvery5Minutes" -Xml $intradayXml -Force | Out-Null
 Register-ScheduledTask -TaskName "stockAlarmSellEvery5Minutes" -Xml $sellXml -Force | Out-Null
-Register-ScheduledTask -TaskName "stockAlarmDaily" -Action $dailyAction -Trigger (New-ScheduledTaskTrigger -Daily -At 15:35) -Settings $taskSettings -Description "Run stockAlarm shortly after Korean market close" -Force
+Register-ScheduledTask -TaskName "stockAlarmDaily" -Action $dailyAction -Trigger (New-ScheduledTaskTrigger -Daily -At 16:00) -Settings $taskSettings -Description "Run stockAlarm after Korean market close" -Force
 Register-ScheduledTask -TaskName "stockAlarmMaintenance" -Action $maintenanceAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 18:00) -Settings $taskSettings -Description "Verify and back up the stockAlarm database" -Force

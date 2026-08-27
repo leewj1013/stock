@@ -91,6 +91,7 @@ if ($mode -eq "daily" -or $mode -eq "performance") {
     RunOptionalStep "sell_performance" "stock_alarm.sell_performance"
 }
 if ($mode -eq "daily") {
+    RunOptionalStep "strategy_learning" "stock_alarm.strategy_learning"
     RunStep "daily_summary" "stock_alarm.daily_summary"
     RunStep "daily_check" "stock_alarm.daily_check"
     RunStep "dashboard" "stock_alarm.dashboard"

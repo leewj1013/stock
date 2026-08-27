@@ -8,7 +8,11 @@ from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
-from .data_store import collection_summary, latest_candidates, latest_virtual_valuation, recent_position_checks, recent_runs, recent_sell_outcomes, recent_virtual_trades, rejection_summary
+from .data_store import (
+    active_strategy_version, collection_summary, latest_candidates, latest_portfolio_risk,
+    latest_virtual_valuation, recent_position_checks, recent_price_quality, recent_runs,
+    recent_sell_outcomes, recent_strategy_versions, recent_virtual_trades, rejection_summary,
+)
 from .health import lines as health_lines
 from .positions_check import active_position_count, active_position_tickers
 from .report import daily_ticker_rows, delivery_status, dedupe_ticker, latest_batch as latest_log_batch, latest_error_summary, reconciled_daily_alert_rows, tail_csv, tail_text
@@ -529,6 +533,10 @@ def primary_metric_cards(
     position_returns = [float(row["return_pct"]) for row in position_rows if row.get("return_pct")]
     average_return = f"{mean(position_returns):.2f}%" if position_returns else "-"
     virtual = latest_virtual_valuation()
+    strategy = active_strategy_version()
+    risk = latest_portfolio_risk()
+    quality = recent_price_quality(100)
+    invalid = sum(row.get("status") != "valid" for row in quality)
     return [
         ("today runs", today_run_summary()),
         ("last telegram", delivery_status(deliveries)),
@@ -538,6 +546,9 @@ def primary_metric_cards(
         ("average position return", average_return),
         ("가상 트레이더 수익률", f"{float(virtual.get('return_pct', 0)):.2f}%" if virtual else "-"),
         ("직전 배치 대비", f"{float(virtual.get('return_change_pct', 0)):+.2f}%p" if virtual else "-"),
+        ("데이터 신뢰도", f"정상 {len(quality) - invalid}/{len(quality)}" if quality else "기록 없음"),
+        ("활성 전략", strategy.get("version_id", "기본 전략")),
+        ("위험 상태", risk.get("status", "초기화 전")),
     ]
 
 
@@ -871,6 +882,7 @@ def render() -> str:
 </div>
 <div class="trader-breakdown"><span>계좌 총수익률 <b id="trader-total-return">0.00%</b></span><span>총손익 <b id="trader-total-profit">0원</b></span></div>
 <div class="trader-status" aria-live="polite"><b id="trader-auto-status">자동매매 상태 확인 중</b><span id="trader-price-status">가격 기준시각 확인 중</span></div>
+<div class="trader-breakdown"><span>전략 <b id="trader-strategy">기본 전략</b></span><span>위험관리 <b id="trader-risk">초기화 전</b></span><span>일간 <b id="trader-daily-return">0.00%</b></span><span>주간 <b id="trader-weekly-return">0.00%</b></span><span>최대낙폭 <b id="trader-drawdown">0.00%</b></span></div>
 <section class="trader-controls">
   <h2>가상 계좌 입금</h2>
   <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
@@ -883,6 +895,9 @@ def render() -> str:
 <div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'경고 ' + str(issue_count) + '건' if issue_count else '모든 작업 정상'}</span></div>
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {table("Today run details", today_run_rows(), ["step", "status"])}
+{table("Price quality", recent_price_quality(30), ["created_at", "ticker", "price_date", "source", "status", "reason"])}
+{table("Strategy versions", recent_strategy_versions(10), ["created_at", "version_id", "effective_date", "sample_count", "objective_return", "baseline_return", "max_drawdown", "status"])}
+{table("Portfolio risk", [latest_portfolio_risk()] if latest_portfolio_risk() else [], ["created_at", "daily_return_pct", "weekly_return_pct", "drawdown_pct", "exposure_pct", "status", "reason"])}
 {table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "message_id", "chat_id_suffix", "error"])}
 {details("전략 데이터 보기", collection_highlights() + table("Recent strategy runs", recent_runs(), ["started_at", "run_type", "market_date", "status", "finished_at"]) + table("Candidate rejection summary", rejection_summary(), ["reason", "count"]) + table("Latest candidate snapshots", latest_candidates(), ["evaluated_at", "ticker", "name", "close", "final_score", "selected", "rejection_reasons"]) + table("Recent position checks", recent_position_checks(), ["checked_at", "ticker", "name", "return_pct", "decision", "reasons"]))}
 {details("전략 설정 보기", table("Current settings", settings_rows(), ["setting", "value"]) + table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"]))}
@@ -963,7 +978,14 @@ function renderTrader(message="") {{
   document.getElementById("home-total-profit").textContent=`총손익 ${{won(trader.total_profit_loss||0)}}`;
   document.getElementById("home-orders").textContent=`매수 ${{trader.today_buys||0}} · 매도 ${{trader.today_sells||0}}`;
   document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
-  document.getElementById("trader-price-status").textContent = trader.price_updated_at ? `가격 ${{trader.price_updated_at.replace("T"," ")}} 기준 · ${{trader.price_source || ""}}` : "저장 가격 기준";
+  document.getElementById("trader-strategy").textContent = trader.strategy_version || "기본 전략";
+  const risk=trader.risk || {{}};
+  document.getElementById("trader-risk").textContent = risk.status === "halted" ? `신규매수 중단 · ${{risk.reason || "위험 한도"}}` : (risk.status || "초기화 전");
+  document.getElementById("trader-daily-return").textContent = `${{Number(risk.daily_return_pct || 0).toFixed(2)}}%`;
+  document.getElementById("trader-weekly-return").textContent = `${{Number(risk.weekly_return_pct || 0).toFixed(2)}}%`;
+  document.getElementById("trader-drawdown").textContent = `${{Number(risk.drawdown_pct || 0).toFixed(2)}}%`;
+  const unavailable=trader.price_unavailable_tickers || [];
+  document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · ${{trader.price_updated_at || ""}}`;
   const body = document.getElementById("trader-holdings"); body.textContent = "";
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
@@ -971,7 +993,7 @@ function renderTrader(message="") {{
     values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>0)cell.className="num";if(index===3||index===5)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
   }});
   if (!body.children.length) body.innerHTML='<tr><td colspan="7" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
-  document.getElementById("buy-button").disabled = !(trader.cash > 0 && traderCandidates.length);
+  document.getElementById("buy-button").disabled = !(trader.cash > 0 && traderCandidates.length) || risk.status === "halted";
   if(message) document.getElementById("trader-message").textContent=message;
 }}
 document.getElementById("deposit-button").addEventListener("click", async () => {{ const input=document.getElementById("deposit-amount"), amount=Math.floor(Number(input.value)); if(!(amount>0)) return renderTrader("1원 이상의 입금금액을 입력해 주세요."); try {{ trader=await traderRequest("/api/trader/deposit",{{method:"POST",body:JSON.stringify({{amount}})}}); input.value=""; renderTrader(`${{won(amount)}}을 DB 계좌에 입금했습니다.`); }} catch(error) {{ renderTrader(error.message); }} }});

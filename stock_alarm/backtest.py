@@ -24,6 +24,15 @@ def naver_close_after(ticker: str, start_day: date, hold_days: int) -> int | Non
     return int(rows[hold_days][4])
 
 
+def naver_next_open(ticker: str, signal_day: date) -> tuple[date, int] | None:
+    rows = naver_rows(ticker, signal_day, signal_day + timedelta(days=10))
+    for row in rows:
+        trading_day = datetime.strptime(str(row[0]), "%Y%m%d").date()
+        if trading_day > signal_day and int(row[1]) > 0:
+            return trading_day, int(row[1])
+    return None
+
+
 def trading_days(days: int) -> list[date]:
     from pykrx import stock
 
@@ -63,10 +72,13 @@ def backtest_rows(
             else recommend_for_day(day, markets, top_n, min_trading_value, volume_multiplier)
         )
         for pick in picks:
-            exit_close = naver_close_after(pick.ticker, day, hold_days) if use_naver else close_after(pick.ticker, day, hold_days)
-            if exit_close:
-                returns = (exit_close - pick.close) / pick.close * 100
-                rows.append([day.isoformat(), pick.ticker, pick.name, pick.close, exit_close, f"{returns:.2f}"])
+            execution = naver_next_open(pick.ticker, day) if use_naver else None
+            entry_day, entry_price = execution if execution else (day, pick.close)
+            exit_close = naver_close_after(pick.ticker, entry_day, hold_days) if use_naver else close_after(pick.ticker, entry_day, hold_days)
+            if exit_close and entry_price:
+                cost_bps = int(os.environ.get("EXECUTION_COST_BPS", "30")) + int(os.environ.get("BACKTEST_SLIPPAGE_BPS", "10"))
+                returns = (exit_close - entry_price) / entry_price * 100 - cost_bps / 100
+                rows.append([day.isoformat(), pick.ticker, pick.name, entry_price, exit_close, f"{returns:.2f}"])
     return rows
 
 

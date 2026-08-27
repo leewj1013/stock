@@ -47,7 +47,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("-WakeToRun", script)
         self.assertIn("-StartWhenAvailable", script)
         self.assertIn("<WakeToRun>true</WakeToRun>", script)
-        self.assertIn("-Daily -At 15:35", script)
+        self.assertIn("-Daily -At 16:00", script)
         self.assertIn("<Interval>PT5M</Interval>", script)
         self.assertIn("T08:50:00", script)
         self.assertIn("<Duration>PT6H50M</Duration>", script)

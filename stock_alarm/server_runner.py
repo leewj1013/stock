@@ -14,7 +14,8 @@ STEPS: dict[str, list[tuple[str, bool, bool]]] = {
     "open": [("stock_alarm.market_summary", False, True)],
     "intraday": [
         ("stock_alarm", False, True),
-        ("stock_alarm.positions_report", False, True),
+        ("stock_alarm.virtual_trader_report", False, True),
+        ("stock_alarm.dashboard", False, False),
     ],
     "sell": [
         ("stock_alarm.sell_check", False, True),
@@ -24,6 +25,7 @@ STEPS: dict[str, list[tuple[str, bool, bool]]] = {
         ("stock_alarm.positions_report", True, False),
         ("stock_alarm.recommendation_performance", True, False),
         ("stock_alarm.sell_performance", True, False),
+        ("stock_alarm.strategy_learning", True, False),
         ("stock_alarm.daily_summary", False, False),
         ("stock_alarm.daily_check", False, False),
         ("stock_alarm.dashboard", False, False),

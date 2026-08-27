@@ -233,13 +233,20 @@ def make_naver_pick(
 
 
 def evaluate_naver_candidate(
-    ticker: str, name: str, end_day: date, min_trading_value: int, volume_multiplier: float
+    ticker: str, name: str, end_day: date, min_trading_value: int, volume_multiplier: float, record_quality: bool = False
 ) -> CandidateEvaluation:
     evaluated_at = datetime.now().isoformat(timespec="seconds")
     base = {"ticker": ticker, "name": name, "evaluated_at": evaluated_at, "passed": 0, "selected": 0}
     rows = naver_rows(ticker, end_day - timedelta(days=90), end_day)
     if len(rows) < 21:
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": "insufficient_history"})
+    from .data_quality import validate_price_rows
+    quality = validate_price_rows(ticker, rows, end_day)
+    if record_quality:
+        from .data_store import record_price_quality
+        record_price_quality(quality)
+    if record_quality and quality["status"] != "valid":
+        return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": f"price_{quality['status']}:{quality['reason']}"})
 
     closes = [int(row[4]) for row in rows[-20:]]
     highs = [int(row[2]) for row in rows[-10:]]
@@ -311,7 +318,12 @@ def evaluate_naver_candidate(
     from .fundamental_reference import snapshot as fundamental_snapshot
     fundamentals = fundamental_snapshot(ticker, end_day)
     financial_score = float(fundamentals.get("financial_score") or 0)
-    score = volume_score + trading_value_score + trend_score + news_score + disclosure_score + financial_score - penalty
+    from .strategy_learning import adjusted_score
+    score = adjusted_score({
+        "volume_score": volume_score, "trading_value_score": trading_value_score, "trend_score": trend_score,
+        "news_score": news_score, "disclosure_score": disclosure_score, "financial_score": financial_score,
+        "relative_strength_score": 0, "performance_penalty": penalty,
+    })
     legacy_score = calculate_legacy_score(close, ma20, volume_ratio, trading_value, atr20_pct) + news_score + disclosure_score + financial_score - penalty
     pick = Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2), volume_score, trading_value_score, trend_score, news_score, disclosure_score, penalty, raw_volume_ratio, volume_fraction, atr20_pct, 0, 0, financial_score, raw_trading_value)
     values.update(
@@ -519,7 +531,13 @@ def apply_relative_strength(evaluations: list[CandidateEvaluation], benchmark: t
         values.update(benchmark_symbol=symbol, market_proxy_return_pct=benchmark_value, relative_strength_pct=relative, relative_strength_score=relative_score)
         pick = item.pick
         if pick:
-            score = max(0.0, min(100.0, pick.score + relative_score))
+            from .strategy_learning import adjusted_score
+            score = adjusted_score({
+                "volume_score": pick.volume_score, "trading_value_score": pick.trading_value_score,
+                "trend_score": pick.trend_score, "news_score": pick.news_score,
+                "disclosure_score": pick.disclosure_score, "financial_score": pick.financial_score,
+                "relative_strength_score": relative_score, "performance_penalty": pick.performance_penalty,
+            })
             pick = replace(pick, score=round(score, 2), relative_strength_pct=relative, relative_strength_score=relative_score)
             values["final_score"] = round(score, 2)
         if values.get("legacy_score") is not None:
@@ -559,7 +577,7 @@ def recommend_naver(end_day: date, top_n: int, min_trading_value: int, volume_mu
     evaluations = []
     for ticker, name in configured_stocks().items():
         if run_id:
-            evaluation = evaluate_naver_candidate(ticker, name, end_day, min_trading_value, volume_multiplier)
+            evaluation = evaluate_naver_candidate(ticker, name, end_day, min_trading_value, volume_multiplier, record_quality=True)
             evaluations.append(evaluation)
             pick = evaluation.pick
         else:
@@ -862,15 +880,58 @@ def allocation_percentages(picks: list[Pick], performance_path: str = "logs/reco
     return allocations
 
 
+def correlation_limited_allocations(picks: list[Pick], allocations: list[float], end_day: date | None = None) -> list[float]:
+    """Limit highly correlated pairs without changing the public 10-30% target calculator."""
+    if len(picks) < 2:
+        return allocations
+    end_day = end_day or date.today()
+    lookback = int(env_float("CORRELATION_LOOKBACK_DAYS", 60))
+    threshold = env_float("CORRELATION_LIMIT", 0.8)
+    group_cap = env_float("CORRELATED_GROUP_MAX_PCT", 40)
+    series = {}
+    for pick in picks:
+        try:
+            rows = naver_rows(pick.ticker, end_day - timedelta(days=lookback * 2), end_day)
+        except Exception:
+            rows = []
+        closes = [float(row[4]) for row in rows[-(lookback + 1):] if float(row[4]) > 0]
+        series[pick.ticker] = [(current - previous) / previous for previous, current in zip(closes, closes[1:])]
+    limited = list(allocations)
+    for left in range(len(picks)):
+        for right in range(left + 1, len(picks)):
+            first, second = series.get(picks[left].ticker, []), series.get(picks[right].ticker, [])
+            size = min(len(first), len(second))
+            if size < 20:
+                continue
+            xs, ys = first[-size:], second[-size:]
+            xbar, ybar = mean(xs), mean(ys)
+            numerator = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys))
+            denominator = (sum((x - xbar) ** 2 for x in xs) * sum((y - ybar) ** 2 for y in ys)) ** 0.5
+            correlation = numerator / denominator if denominator else 0
+            if correlation >= threshold and limited[left] + limited[right] > group_cap:
+                allowed = max(0.0, group_cap - limited[left])
+                minimum = env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10)
+                limited[right] = round(allowed, 2) if allowed >= minimum else 0.0
+    return limited
+
+
 def auto_buy_virtual_trader(picks: list[Pick]) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
     from .data_store import virtual_buy, virtual_trader_state
+    from .portfolio_risk import new_buys_allowed
     if virtual_trader_state().get("cash", 0) <= 0:
         return None
+    allowed, _reason = new_buys_allowed()
+    if not allowed:
+        return None
     allocations = allocation_percentages(picks)
+    allocations = correlation_limited_allocations(picks, allocations)
+    breadth = naver_market_up_ratio(date.today())
+    exposure_limit = 70.0 if breadth >= 0.60 else 40.0 if breadth >= 0.45 else 10.0
     candidates = [
-        {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation}
+        {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation,
+         "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}
         for pick, allocation in zip(picks, allocations)
     ]
     try:

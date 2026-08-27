@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
-from .data_store import import_legacy_virtual_trader, virtual_buy, virtual_deposit, virtual_trader_state
+from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_price_quality, virtual_buy, virtual_deposit, virtual_trader_state
 
 
 HOST = "127.0.0.1"
@@ -46,10 +46,20 @@ def prices() -> dict[str, int]:
 
 def trader_payload() -> dict:
     state = virtual_trader_state(prices())
+    risk = latest_portfolio_risk()
+    strategy = active_strategy_version()
+    quality = recent_price_quality(100)
+    latest_quality = {}
+    for row in quality:
+        latest_quality.setdefault(row.get("ticker"), row)
+    unavailable = [row["ticker"] for row in state["holdings"] if latest_quality.get(row["ticker"], {}).get("status") not in {None, "valid"}]
     return {
         **state,
         "price_updated_at": datetime.now().isoformat(timespec="seconds"),
-        "price_source": "네이버 금융 (실패 시 최근 저장 가격)",
+        "price_source": "네이버 금융 · 검증 실패 종목은 진입가 임시표시",
+        "risk": risk,
+        "strategy_version": strategy.get("version_id", "기본 전략"),
+        "price_unavailable_tickers": unavailable,
     }
 
 

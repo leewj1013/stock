@@ -36,7 +36,7 @@ class DashboardHighlightsTest(unittest.TestCase):
     def test_primary_metric_cards_are_limited_to_operating_summary(self, _tail, _virtual, _positions, _runs, _recommendations, _sells, _count):
         cards = dict(primary_metric_cards())
 
-        self.assertEqual(8, len(cards))
+        self.assertEqual(11, len(cards))
         self.assertEqual("2.50%", cards["average position return"])
         self.assertEqual("-0.24%", cards["가상 트레이더 수익률"])
         self.assertEqual("-0.10%p", cards["직전 배치 대비"])
