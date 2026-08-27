@@ -5,6 +5,14 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 $env:PYTHONIOENCODING = "utf-8"
 $mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }
+$executionMutex = [System.Threading.Mutex]::new($false, "stockAlarmExecutionMutex")
+$mutexAcquired = $false
+
+try {
+    $mutexAcquired = $executionMutex.WaitOne([TimeSpan]::FromMinutes(3))
+    if (-not $mutexAcquired) {
+        throw "Another stockAlarm task is still running after 3 minutes."
+    }
 
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 $stdout = Join-Path $projectRoot "logs\task.out.log"
@@ -100,3 +108,10 @@ if ($mode -eq "daily" -or $mode -eq "issue_alert") {
     RunStep "issue_alert" "stock_alarm.issue_alert"
 }
 exit 0
+}
+finally {
+    if ($mutexAcquired) {
+        $executionMutex.ReleaseMutex()
+    }
+    $executionMutex.Dispose()
+}

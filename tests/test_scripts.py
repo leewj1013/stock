@@ -29,6 +29,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("MODE $mode", script)
         self.assertIn("Set-Content -Path $stderr", script)
         self.assertIn('$env:NO_CACHE = "1"', script)
+        self.assertIn("stockAlarmExecutionMutex", script)
 
     def test_register_task_adds_intraday_checks(self):
         with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
