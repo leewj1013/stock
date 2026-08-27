@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import allowed_origin, is_local_host, prices, valid_remote_token
+from stock_alarm.dashboard_server import allowed_origin, is_local_host, prices, remote_setup_page, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
@@ -13,6 +13,13 @@ class DashboardServerTest(unittest.TestCase):
         with patch.dict("os.environ", {"DASHBOARD_REMOTE_TOKEN": "secret"}):
             self.assertTrue(valid_remote_token("Bearer secret"))
             self.assertFalse(valid_remote_token("Bearer wrong"))
+
+    @patch("stock_alarm.dashboard_server.os.environ", {"DASHBOARD_REMOTE_TOKEN": "secret"})
+    @patch("builtins.open", side_effect=OSError)
+    def test_remote_setup_keeps_token_off_remote_url(self, _open):
+        page = remote_setup_page()
+        self.assertIn('value=&quot;secret&quot;', page)
+        self.assertNotIn("token=secret", page)
     @patch("stock_alarm.dashboard_server.naver_rows", return_value=[["20260826", 0, 0, 0, 204500, 1]])
     @patch("stock_alarm.dashboard_server.virtual_trader_state", return_value={"cash": 0, "holdings": [{"ticker": "086280"}]})
     @patch("stock_alarm.dashboard_server.recommendations", return_value=[])

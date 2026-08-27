@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import hmac
+import html
 import os
+import re
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
@@ -83,6 +85,27 @@ def trader_payload() -> dict:
     }
 
 
+def remote_setup_page() -> str:
+    content = ""
+    for path in ("logs/cloudflared.err.log", "logs/cloudflared.out.log"):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as file:
+                content += file.read()
+        except OSError:
+            pass
+    match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", content)
+    api_url = match.group(0) if match else ""
+    token = os.environ.get("DASHBOARD_REMOTE_TOKEN", "")
+    dashboard_url = "https://leewj1013.github.io/stock/?api=" + quote(api_url, safe="")
+    return f"""<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><title>원격 대시보드 연결</title>
+<style>body{{font-family:Segoe UI,Malgun Gothic,sans-serif;max-width:680px;margin:48px auto;padding:0 20px}}input{{width:100%;padding:10px;box-sizing:border-box}}button,a{{display:inline-block;margin:12px 8px 0 0;padding:10px 14px}}.muted{{color:#666}}</style>
+<h1>원격 대시보드 연결</h1><p>API 주소: <b>{html.escape(api_url or '터널 미실행')}</b></p>
+<label for=\"token\">읽기 전용 접속 토큰</label><input id=\"token\" type=\"password\" readonly value={html.escape(json.dumps(token))}>
+<button id=\"copy\" type=\"button\">토큰 복사</button><a href=\"{html.escape(dashboard_url)}\" target=\"_blank\" rel=\"noreferrer\">GitHub Pages 열기</a>
+<p class=\"muted\" id=\"status\">토큰 복사 후 GitHub Pages의 토큰 입력란에 붙여넣으세요.</p>
+<script>document.getElementById('copy').onclick=async()=>{{await navigator.clipboard.writeText(document.getElementById('token').value);document.getElementById('status').textContent='토큰을 복사했습니다.';}};</script></html>"""
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def _is_local(self) -> bool:
         return is_local_host(self.headers.get("Host", ""))
@@ -134,6 +157,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == "/remote-setup":
+            if not self._is_local():
+                self.send_error(404)
+                return
+            payload = remote_setup_page().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
