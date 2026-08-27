@@ -96,6 +96,26 @@ reports/dashboard.html
 open_dashboard.bat
 ```
 
+### GitHub Pages에서 로컬 DB 실시간 조회
+
+원격 연결은 읽기 전용입니다. 입금·수동매수·브라우저 계좌 이전은 로컬 대시보드에서만 허용됩니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_remote_dashboard.ps1
+```
+
+출력된 `https://...trycloudflare.com` 주소와 `.env`의 `DASHBOARD_REMOTE_TOKEN`을 GitHub Pages의 `로컬 DB 실시간 연결` 입력란에 입력합니다. API 주소는 브라우저 로컬 저장소에, 토큰은 현재 탭의 세션 저장소에만 보관됩니다.
+
+주소 입력과 토큰 복사를 자동화하려면 다음 스크립트를 실행합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\open_remote_dashboard.ps1
+```
+
+GitHub Pages가 열리면 클립보드의 토큰을 입력란에 붙여넣고 `읽기 전용 연결`을 누릅니다. 토큰은 URL이나 Git 저장소에 포함되지 않습니다.
+
+운영용 고정 주소는 Cloudflare 계정에 활성 도메인을 연결하고 Named Tunnel과 Access 정책을 설정해야 합니다. 임시 주소는 터널을 재시작하면 변경됩니다.
+
 대시보드 주요 내용:
 
 - 상단 요약 카드

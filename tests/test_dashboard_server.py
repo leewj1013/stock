@@ -1,10 +1,18 @@
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import prices
+from stock_alarm.dashboard_server import allowed_origin, is_local_host, prices, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
+    def test_remote_security_helpers(self):
+        self.assertTrue(is_local_host("127.0.0.1:8765"))
+        self.assertFalse(is_local_host("stock-api.example.com"))
+        self.assertEqual("https://leewj1013.github.io", allowed_origin("https://leewj1013.github.io"))
+        self.assertEqual("", allowed_origin("https://evil.example"))
+        with patch.dict("os.environ", {"DASHBOARD_REMOTE_TOKEN": "secret"}):
+            self.assertTrue(valid_remote_token("Bearer secret"))
+            self.assertFalse(valid_remote_token("Bearer wrong"))
     @patch("stock_alarm.dashboard_server.naver_rows", return_value=[["20260826", 0, 0, 0, 204500, 1]])
     @patch("stock_alarm.dashboard_server.virtual_trader_state", return_value={"cash": 0, "holdings": [{"ticker": "086280"}]})
     @patch("stock_alarm.dashboard_server.recommendations", return_value=[])

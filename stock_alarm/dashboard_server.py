@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,25 @@ from .data_store import active_strategy_version, import_legacy_virtual_trader, l
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("DASHBOARD_PORT", "8765"))
+REMOTE_ORIGIN = os.environ.get("DASHBOARD_REMOTE_ORIGIN", "https://leewj1013.github.io").rstrip("/")
+
+
+def is_local_host(host: str) -> bool:
+    hostname = host.split(":", 1)[0].strip("[]").lower()
+    return hostname in {"127.0.0.1", "localhost", "::1"}
+
+
+def allowed_origin(origin: str) -> str:
+    clean = origin.rstrip("/")
+    if clean == REMOTE_ORIGIN or clean.startswith("http://127.0.0.1:") or clean.startswith("http://localhost:"):
+        return clean
+    return ""
+
+
+def valid_remote_token(authorization: str) -> bool:
+    expected = os.environ.get("DASHBOARD_REMOTE_TOKEN", "")
+    supplied = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
 
 
 def recommendations() -> list[dict[str, str]]:
@@ -64,28 +84,53 @@ def trader_payload() -> dict:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def _is_local(self) -> bool:
+        return is_local_host(self.headers.get("Host", ""))
+
+    def _remote_read_allowed(self) -> bool:
+        return bool(
+            allowed_origin(self.headers.get("Origin", ""))
+            and valid_remote_token(self.headers.get("Authorization", ""))
+        )
+
+    def _cors(self) -> None:
+        origin = allowed_origin(self.headers.get("Origin", ""))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def _json(self, status: int, body: dict) -> None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._cors()
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if not allowed_origin(self.headers.get("Origin", "")):
+            self.send_error(403)
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/trader":
+            if not self._is_local() and not self._remote_read_allowed():
+                self._json(401, {"error": "원격 대시보드 인증이 필요합니다."})
+                return
             self._json(200, trader_payload())
             return
         if path in {"/", "/dashboard"}:
+            if not self._is_local():
+                self.send_error(404)
+                return
             payload = render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -97,6 +142,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            if not self._is_local():
+                self._json(403, {"error": "원격에서는 조회만 가능합니다."})
+                return
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path

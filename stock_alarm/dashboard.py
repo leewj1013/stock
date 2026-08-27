@@ -889,6 +889,11 @@ def render() -> str:
   <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10~30%이며 정수 수량만 주문합니다.</p>
   <p class="muted" id="trader-message" aria-live="polite">계좌 정보를 불러오는 중입니다.</p>
 </section>
+<section class="trader-controls" id="remote-connection" hidden>
+  <h2>로컬 DB 실시간 연결</h2>
+  <div class="trader-form"><label for="remote-api-url">HTTPS API 주소</label><input id="remote-api-url" type="url" placeholder="https://stock-api.example.com"><label for="remote-api-token">접속 토큰</label><input id="remote-api-token" type="password" autocomplete="current-password"><button id="remote-connect-button" type="button">읽기 전용 연결</button></div>
+  <p class="muted">주소는 이 브라우저에, 토큰은 현재 탭에만 저장됩니다. 원격에서는 입금과 수동주문을 실행할 수 없습니다.</p>
+</section>
 <section><h2>가상계좌 보유종목</h2><table><thead><tr><th>종목명</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">보유수량</th><th class="num">수익률</th><th class="num">평가금액</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 """
     system_tab = f"""
@@ -954,14 +959,21 @@ li{{margin:4px 0}}
 <script>
 const traderCandidates = {trader_candidates};
 const traderKey = "stockAlarm.virtualTrader.v1";
-const traderApiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+const remoteMode = !(["file:","http:"].includes(location.protocol) && ["","127.0.0.1","localhost"].includes(location.hostname));
+const requestedRemoteApi = remoteMode ? (new URLSearchParams(location.search).get("api") || "") : "";
+if(requestedRemoteApi.startsWith("https://")) localStorage.setItem("stockAlarm.remoteApiUrl", requestedRemoteApi.endsWith("/") ? requestedRemoteApi.slice(0,-1) : requestedRemoteApi);
+let traderApiBase = remoteMode ? (localStorage.getItem("stockAlarm.remoteApiUrl") || "") : (location.protocol === "file:" ? "http://127.0.0.1:8765" : "");
+let remoteToken = remoteMode ? (sessionStorage.getItem("stockAlarm.remoteToken") || "") : "";
 let trader = {{cash:0, holdings:[]}};
 const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
 const tabLabels=[...document.querySelectorAll(".tab-label")];
 function syncTabs() {{ tabLabels.forEach(label=>label.setAttribute("aria-selected",document.getElementById(label.htmlFor).checked?"true":"false")); }}
 tabLabels.forEach((label,index)=>{{label.addEventListener("keydown",event=>{{if(event.key==="Enter"||event.key===" "){{event.preventDefault();label.click();}}if(event.key==="ArrowRight"||event.key==="ArrowLeft"){{event.preventDefault();const next=(index+(event.key==="ArrowRight"?1:-1)+tabLabels.length)%tabLabels.length;tabLabels[next].focus();tabLabels[next].click();}}}});label.addEventListener("click",()=>setTimeout(syncTabs));}}); syncTabs();
 async function traderRequest(path, options={{}}) {{
-  const response = await fetch(`${{traderApiBase}}${{path}}`, {{headers:{{"Content-Type":"application/json"}}, ...options}});
+  if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
+  const headers={{"Content-Type":"application/json", ...(options.headers||{{}})}};
+  if(remoteMode && remoteToken) headers.Authorization=`Bearer ${{remoteToken}}`;
+  const response = await fetch(`${{traderApiBase}}${{path}}`, {{...options, headers}});
   const body = await response.json();
   if(!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
   return body;
@@ -993,17 +1005,34 @@ function renderTrader(message="") {{
     values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>0)cell.className="num";if(index===3||index===5)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
   }});
   if (!body.children.length) body.innerHTML='<tr><td colspan="7" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
-  document.getElementById("buy-button").disabled = !(trader.cash > 0 && traderCandidates.length) || risk.status === "halted";
+  document.getElementById("buy-button").disabled = remoteMode || !(trader.cash > 0 && traderCandidates.length) || risk.status === "halted";
   if(message) document.getElementById("trader-message").textContent=message;
 }}
 document.getElementById("deposit-button").addEventListener("click", async () => {{ const input=document.getElementById("deposit-amount"), amount=Math.floor(Number(input.value)); if(!(amount>0)) return renderTrader("1원 이상의 입금금액을 입력해 주세요."); try {{ trader=await traderRequest("/api/trader/deposit",{{method:"POST",body:JSON.stringify({{amount}})}}); input.value=""; renderTrader(`${{won(amount)}}을 DB 계좌에 입금했습니다.`); }} catch(error) {{ renderTrader(error.message); }} }});
 document.getElementById("buy-button").addEventListener("click", async () => {{
   try {{ trader=await traderRequest("/api/trader/buy",{{method:"POST",body:"{{}}"}}); renderTrader(`${{trader.bought}}개 종목을 ${{won(trader.spent)}}에 가상 매수했습니다.`); }} catch(error) {{ renderTrader(error.message); }}
 }});
+const remoteConnection=document.getElementById("remote-connection");
+if(remoteMode) {{
+  remoteConnection.hidden=false;
+  document.getElementById("deposit-button").disabled=true;
+  document.getElementById("buy-button").disabled=true;
+  document.getElementById("remote-api-url").value=traderApiBase;
+  document.getElementById("remote-api-token").value=remoteToken;
+  document.getElementById("remote-connect-button").addEventListener("click", async () => {{
+    const enteredUrl=document.getElementById("remote-api-url").value.trim();
+    const url=enteredUrl.endsWith("/") ? enteredUrl.slice(0,-1) : enteredUrl;
+    const token=document.getElementById("remote-api-token").value.trim();
+    if(!url.startsWith("https://") || !token) return renderTrader("HTTPS API 주소와 접속 토큰을 입력해 주세요.");
+    traderApiBase=url; remoteToken=token;
+    localStorage.setItem("stockAlarm.remoteApiUrl",url); sessionStorage.setItem("stockAlarm.remoteToken",token);
+    try {{ trader=await traderRequest("/api/trader"); renderTrader("로컬 DB에 읽기 전용으로 연결했습니다."); }} catch(error) {{ renderTrader(error.message); }}
+  }});
+}}
 const legacyTrader = localStorage.getItem(traderKey);
-(legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader"))
+(remoteMode ? traderRequest("/api/trader") : (legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader")))
   .then(state => {{trader=state; if(state.imported) localStorage.removeItem(traderKey); renderTrader(state.imported?"기존 브라우저 가상 계좌를 DB로 이전했습니다.":"계좌와 최신 평가 정보를 불러왔습니다.");}})
-  .catch(() => renderTrader("open_dashboard.bat으로 열어야 DB 가상 계좌를 사용할 수 있습니다."));
+  .catch(error => renderTrader(remoteMode ? (error.message || "원격 API 연결 정보를 입력해 주세요.") : "open_dashboard.bat으로 열어야 DB 가상 계좌를 사용할 수 있습니다."));
 document.querySelectorAll("section").forEach((section) => {{
   const rows = [...section.querySelectorAll("tbody tr")];
   const pager = section.querySelector(".pager");
