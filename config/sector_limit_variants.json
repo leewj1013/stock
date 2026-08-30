@@ -1,0 +1,12 @@
+{
+  "description": "Isolated sector-cap experiment; live SECTOR_GROUP_MAX_PCT remains 100 (disabled).",
+  "seed": 20260829,
+  "hac_lag": 5,
+  "fdr_alpha": 0.05,
+  "variants": {
+    "baseline_sector_off": {"enabled": false, "sector_cap_pct": 100},
+    "sector_cap_40": {"enabled": true, "sector_cap_pct": 40},
+    "sector_cap_30": {"enabled": true, "sector_cap_pct": 30},
+    "sector_cap_20": {"enabled": true, "sector_cap_pct": 20}
+  }
+}

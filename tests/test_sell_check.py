@@ -56,6 +56,57 @@ class SellCheckTest(unittest.TestCase):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24))
         self.assertIsNone(alert)
 
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 112, 108, 110, 1]] * 20)
+    def test_first_take_profit_is_partial(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), remaining_quantity=10,
+        )
+        self.assertEqual("partial", alert.sale_type)
+        self.assertEqual("take_profit_1", alert.stage)
+        self.assertEqual(0.5, alert.quantity_fraction)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 101, 99, 100, 1]] * 19 + [[20260724, 0, 95, 93, 94, 1]])
+    def test_stop_loss_still_closes_remainder_after_first_take_profit(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), partial_taken=True, remaining_quantity=5,
+        )
+        self.assertEqual("full", alert.sale_type)
+        self.assertIn("손절 기준", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 115, 105, 110, 1]] * 19 + [[20260723, 0, 106, 98, 99, 1], [20260724, 0, 105, 97, 98, 1]])
+    def test_ma20_break_closes_remainder_after_first_take_profit(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "90"},
+            date(2026, 7, 24), partial_taken=True, remaining_quantity=5,
+        )
+        self.assertEqual("full", alert.sale_type)
+        self.assertIn("20일선 2회 연속 이탈", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 122, 118, 120, 1]] * 20)
+    def test_second_take_profit_closes_all_remainder(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), partial_taken=True, remaining_quantity=5,
+        )
+        self.assertEqual("full", alert.sale_type)
+        self.assertEqual("take_profit_2", alert.stage)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 122, 118, 120, 1]] * 20)
+    def test_single_share_waits_until_second_target_then_sells_all(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), remaining_quantity=1,
+        )
+        self.assertEqual("full", alert.sale_type)
+        self.assertEqual("take_profit_2", alert.stage)
+
     def test_returns_are_scoped_by_position_id(self):
         with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
@@ -96,8 +147,16 @@ class SellCheckTest(unittest.TestCase):
         self.assertIn("매도 알림", message)
         self.assertIn("🔴 자동 매도", message)
         self.assertIn("수익률 -6.00%", message)
+        self.assertIn("재추천 제한: 5일", message)
         self.assertEqual("고점 대비 수익 반납", alert_summary(SellAlert("A", "A", 100, 102, 2, "고점 대비 반납")))
         self.assertEqual("20일선 이탈", alert_summary(SellAlert("A", "A", 100, 101, 1, "20일선 이탈")))
+
+    def test_format_message_shows_no_cooldown_for_partial_take_profit(self):
+        alert = SellAlert("005930", "Samsung", 100, 110, 10.0, "1차 익절 목표 +10.0% 도달", sale_type="partial", stage="take_profit_1")
+
+        message = format_message([alert])
+
+        self.assertIn("재추천 제한: 없음(잔량 보유 중)", message)
 
     def test_format_message_includes_virtual_sale_execution(self):
         alert = SellAlert("005930", "Samsung", 100, 110, 10.0, "고점 대비 반납", 5)

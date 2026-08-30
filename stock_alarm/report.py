@@ -21,11 +21,6 @@ def tail_csv(path: str, count: int = 5) -> list[dict[str, str]]:
     return rows[-count:]
 
 
-def latest_batch(rows: list[dict[str, str]], time_column: str = "created_at") -> list[dict[str, str]]:
-    latest = rows[-1].get(time_column, "") if rows else ""
-    return [row for row in rows if row.get(time_column, "") == latest]
-
-
 def dedupe_ticker(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     result = []
     seen = set()

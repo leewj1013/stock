@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from stock_alarm.data_store import finish_run, import_legacy_virtual_trader, record_virtual_valuation, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
 
@@ -102,6 +103,31 @@ class DataStoreTest(unittest.TestCase):
         self.assertEqual(1, result["sold"])
         self.assertEqual([], result["holdings"])
         self.assertEqual(103_000, result["cash"])
+
+    def test_partial_take_profit_records_state_then_second_stage_closes_remainder(self):
+        virtual_deposit(100_000, self.path)
+        with patch.dict(os.environ, {"VIRTUAL_TRADER_MAX_POSITION_PCT": "100", "RISK_MAX_EXPOSURE_PCT": "100"}):
+            virtual_buy([{"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 100}], self.path)
+
+        first = virtual_sell([{"ticker": "A", "name": "Alpha", "close": 11_000, "reason": "1차 익절", "sale_type": "partial", "stage": "take_profit_1", "quantity_fraction": 0.5}], self.path)
+        self.assertEqual(5, first["executions"][0]["quantity"])
+        self.assertEqual("partial", first["holdings"][0]["position_status"])
+        self.assertEqual(5, first["holdings"][0]["quantity"])
+
+        second = virtual_sell([{"ticker": "A", "name": "Alpha", "close": 12_000, "reason": "2차 익절", "sale_type": "full", "stage": "take_profit_2"}], self.path)
+        self.assertEqual([], second["holdings"])
+        self.assertEqual("take_profit_2", second["executions"][0]["stage"])
+
+    def test_portfolio_halt_does_not_block_individual_virtual_sell(self):
+        from datetime import datetime
+        from stock_alarm.portfolio_risk import snapshot
+
+        virtual_deposit(100_000, self.path)
+        virtual_buy([{"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 20}], self.path)
+        snapshot({"total_equity": 100_000, "holdings_value": 80_000}, self.path, datetime(2026, 8, 27, 9, 0))
+        result = virtual_sell([{"ticker": "A", "name": "Alpha", "close": 9_000, "reason": "개별 손절"}], self.path)
+        self.assertEqual(1, result["sold"])
+        self.assertEqual([], result["holdings"])
 
 
 if __name__ == "__main__":

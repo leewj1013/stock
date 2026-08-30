@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "description": "Read-only portfolio backtest variants. These values never update the live strategy configuration.",
+  "base_factor_points": {
+    "volume_score": 40.0,
+    "trading_value_score": 30.0,
+    "trend_score": 30.0,
+    "relative_strength_score": 5.0,
+    "news_score": 1.0,
+    "disclosure_score": 1.0,
+    "financial_score": 5.0
+  },
+  "variants": {
+    "variant_1": {
+      "label": "baseline",
+      "rationale": "현재 운영 점수 배분 40/30/30/±5와 외부요인 배수 1.0을 그대로 사용",
+      "weights": {
+        "volume_score": 1.0,
+        "trading_value_score": 1.0,
+        "trend_score": 1.0,
+        "relative_strength_score": 1.0,
+        "news_score": 1.0,
+        "disclosure_score": 1.0,
+        "financial_score": 1.0
+      }
+    },
+    "variant_2": {
+      "label": "remove_trend_proportional",
+      "rationale": "노이즈 판정 추세를 0으로 두고 추세 30점을 거래량:거래대금 기존 비율 40:30으로 재분배",
+      "weights": {
+        "volume_score": 1.42857143,
+        "trading_value_score": 1.42857143,
+        "trend_score": 0.0,
+        "relative_strength_score": 1.0,
+        "news_score": 1.0,
+        "disclosure_score": 1.0,
+        "financial_score": 1.0
+      }
+    },
+    "variant_3": {
+      "label": "volume_focus_reduced_unstable",
+      "rationale": "거래량을 70점으로 확대하고 거래대금 20점·추세 10점·상대강도 ±2.5점으로 축소",
+      "weights": {
+        "volume_score": 1.75,
+        "trading_value_score": 0.66666667,
+        "trend_score": 0.33333333,
+        "relative_strength_score": 0.5,
+        "news_score": 1.0,
+        "disclosure_score": 1.0,
+        "financial_score": 1.0
+      }
+    },
+    "variant_4": {
+      "label": "absolute_ic_proportional_reference",
+      "rationale": "요인분석 전체 3·5일 평균 IC 절대값 0.073211/0.03075874/0.04057495/0.03675309에 비례해 기술 점수 용량 105점을 재분배한 참고안",
+      "weights": {
+        "volume_score": 1.0600178,
+        "trading_value_score": 0.59380533,
+        "trend_score": 0.7833098,
+        "relative_strength_score": 4.2571668,
+        "news_score": 1.0,
+        "disclosure_score": 1.0,
+        "financial_score": 1.0
+      }
+    }
+  }
+}

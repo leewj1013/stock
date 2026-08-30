@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
-from stock_alarm.app import Pick, open_recommended_tickers, recommend_for_day, top_picks
+from stock_alarm.app import Pick, open_recommended_tickers, recommend_for_day, sell_cooldown_days, top_picks
 
 
 class RecommendSortTest(unittest.TestCase):
@@ -156,6 +156,36 @@ class RecommendSortTest(unittest.TestCase):
                 writer.writerow(["2026-07-30T15:00:00", "A"])
 
             self.assertEqual({"A"}, open_recommended_tickers(positions, alerts, recommendations))
+
+    def test_sell_cooldown_days_tiers_by_reason(self):
+        self.assertEqual(5, sell_cooldown_days("손절 기준 -5.0% 이탈"))
+        self.assertEqual(2, sell_cooldown_days("20일선 2회 연속 이탈"))
+        self.assertEqual(3, sell_cooldown_days("10일 보유 후 기대수익 미달"))
+        self.assertEqual(3, sell_cooldown_days(""))
+        self.assertEqual(1, sell_cooldown_days("2차 익절 목표 +20.0% 도달", stage="take_profit_2"))
+
+    @patch("stock_alarm.app.datetime")
+    def test_stop_loss_sell_uses_longer_cooldown_than_ma20(self, datetime_mock):
+        import csv
+        import os
+        import tempfile
+
+        datetime_mock.now.return_value = datetime(2026, 7, 31, 9, 0, 0)
+        datetime_mock.fromisoformat.side_effect = datetime.fromisoformat
+        with tempfile.TemporaryDirectory() as directory:
+            positions = os.path.join(directory, "positions.csv")
+            alerts = os.path.join(directory, "sell_alerts.csv")
+            recommendations = os.path.join(directory, "recommendations.csv")
+            open(positions, "w", newline="", encoding="utf-8-sig").write("ticker,name,entry_price,entry_date\n")
+            with open(alerts, "w", newline="", encoding="utf-8-sig") as file:
+                writer = csv.writer(file)
+                writer.writerow(["created_at", "ticker", "reason", "sale_type", "stage"])
+                # 3 days ago: MA20-only exit (short cooldown) should have expired.
+                writer.writerow(["2026-07-28T15:00:00", "A", "20일선 2회 연속 이탈", "full", ""])
+                # 3 days ago: stop-loss exit (long cooldown) should still block.
+                writer.writerow(["2026-07-28T15:00:00", "B", "손절 기준 -5.0% 이탈", "full", ""])
+
+            self.assertEqual({"B"}, open_recommended_tickers(positions, alerts, recommendations))
 
 
 if __name__ == "__main__":

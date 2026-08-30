@@ -35,6 +35,22 @@ Write-Output "== daily check =="
 & $python -m stock_alarm.daily_check
 
 Write-Output ""
+Write-Output "== dashboard api server =="
+$port = if ($env:DASHBOARD_PORT) { $env:DASHBOARD_PORT } else { "8765" }
+$listening = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
+if (-not $listening) {
+    Start-Process -FilePath $python -ArgumentList "-m", "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
+    Start-Sleep -Seconds 2
+    $listening = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
+}
+if ($listening) {
+    Write-Output "Dashboard API server is listening on port $port."
+} else {
+    Write-Output "WARNING: Dashboard API server did not start on port $port."
+    Write-Output "Run '$python -m stock_alarm.dashboard_server' manually to see the error."
+}
+
+Write-Output ""
 Write-Output "== dashboard =="
 $dashboard = & $python -m stock_alarm.dashboard
 Write-Output $dashboard
@@ -42,4 +58,4 @@ Start-Process -FilePath (Resolve-Path $dashboard)
 
 Write-Output ""
 Write-Output "stockAlarm startup check finished."
-Write-Output "After the 08:30 open run, double-click open_check.bat."
+Write-Output "Use open_dashboard.bat to refresh and open the dashboard."

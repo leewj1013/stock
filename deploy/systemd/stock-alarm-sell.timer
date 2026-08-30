@@ -1,0 +1,13 @@
+[Unit]
+Description=Stock alarm independent sell checks
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:52,57:00 Asia/Seoul
+OnCalendar=Mon..Fri *-*-* 09..14:02/5:00 Asia/Seoul
+OnCalendar=Mon..Fri *-*-* 15:02..42/5:00 Asia/Seoul
+AccuracySec=15s
+Persistent=false
+Unit=stock-alarm@sell.service
+
+[Install]
+WantedBy=timers.target

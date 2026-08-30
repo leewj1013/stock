@@ -1,14 +1,37 @@
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.app import Pick, allocation_percentages, format_message, reason_summary
+from stock_alarm.app import (
+    Pick,
+    allocation_percentages,
+    correlation_limited_allocations,
+    format_message,
+    reason_summary,
+)
 
 
 class FormatMessageTest(unittest.TestCase):
+    def test_connected_high_correlation_group_is_capped_at_40_percent(self):
+        picks = [Pick(**{**self.pick().__dict__, "ticker": ticker}) for ticker in ("A", "B", "C")]
+        closes = [100.0]
+        for index in range(1, 62):
+            closes.append(closes[-1] * (1.01 if index % 3 else 0.995))
+        rows = [[f"202201{index:02d}", close, close, close, close, 100] for index, close in enumerate(closes)]
+        with patch.dict("os.environ", {
+            "CORRELATION_LIMIT": "0.8", "CORRELATED_GROUP_MAX_PCT": "40",
+            "VIRTUAL_TRADER_MIN_POSITION_PCT": "10",
+        }):
+            limited = correlation_limited_allocations(
+                picks, [30.0, 30.0, 30.0], price_rows_by_ticker={pick.ticker: rows for pick in picks},
+            )
+        self.assertLessEqual(sum(limited), 40.0)
+        self.assertEqual([0.0, 10.0, 30.0], sorted(limited))
+
     def test_allocation_percentages_are_position_targets_and_penalize_volatility(self):
         low_vol = self.pick()
         high_vol = Pick(**{**low_vol.__dict__, "ticker": "B", "atr20_pct": 4})
-        allocations = allocation_percentages([low_vol, high_vol], performance_path="missing.csv")
+        with patch.dict("os.environ", {"VIRTUAL_TRADER_POSITION_SIZING_MODE": "dynamic"}):
+            allocations = allocation_percentages([low_vol, high_vol], performance_path="missing.csv")
 
         self.assertLessEqual(sum(allocations), 60)
         self.assertTrue(all(10 <= value <= 30 for value in allocations))
@@ -18,7 +41,8 @@ class FormatMessageTest(unittest.TestCase):
     def test_allocation_learns_from_historical_performance(self, _factors):
         first = self.pick()
         second = Pick(**{**first.__dict__, "ticker": "B"})
-        allocations = allocation_percentages([first, second])
+        with patch.dict("os.environ", {"VIRTUAL_TRADER_POSITION_SIZING_MODE": "dynamic"}):
+            allocations = allocation_percentages([first, second])
 
         self.assertGreater(allocations[1], allocations[0])
 
@@ -28,7 +52,7 @@ class FormatMessageTest(unittest.TestCase):
     def test_includes_ticker_score_and_disclaimer(self):
         message = format_message([self.pick()])
         self.assertIn("가상투자 비중: 전체 가상계좌 자산 기준", message)
-        self.assertIn("가상투자 예정 22.95%", message)
+        self.assertIn("가상투자 예정 10.00%", message)
         self.assertIn("Samsung(005930)", message)
         self.assertIn("거래량 2.3배", message)
         self.assertIn("신호: 거래량 급증", message)

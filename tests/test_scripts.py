@@ -21,7 +21,9 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('$mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }', script)
         self.assertIn('if ($mode -eq "intraday")', script)
         self.assertIn("WARN $name exit=$code", script)
-        self.assertIn('if ($mode -eq "daily" -or $mode -eq "issue_alert")', script)
+        self.assertIn('if ($mode -eq "issue_alert")', script)
+        self.assertIn('RunOptionalStep "issue_alert" "stock_alarm.issue_alert"', script)
+        self.assertIn("} finally {", script)
         self.assertIn("stock_alarm.failure_alert", script)
         self.assertIn("stock_alarm.run_gate $mode", script)
         self.assertIn("SKIP $mode", script)
@@ -78,7 +80,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.daily_check", script)
         self.assertIn("stock_alarm.dashboard", script)
         self.assertIn("Start-Process", script)
-        self.assertIn("open_check.bat", script)
+        self.assertIn("open_dashboard.bat", script)
 
     def test_open_dashboard_macro(self):
         with open("open_dashboard.bat", encoding="utf-8-sig") as file:

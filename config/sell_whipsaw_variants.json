@@ -1,0 +1,9 @@
+{
+  "baseline": {},
+  "wider_band_1pct": {"ma_confirm_days": 2, "ma_band_pct": 1.0},
+  "wider_band_2pct": {"ma_confirm_days": 2, "ma_band_pct": 2.0},
+  "confirm_3day": {"ma_confirm_days": 3},
+  "atr_band_025": {"ma_confirm_days": 2, "ma_atr_band_multiplier": 0.25},
+  "atr_band_050": {"ma_confirm_days": 2, "ma_atr_band_multiplier": 0.5},
+  "tighter_stop": {"stop_loss_pct": 4.0, "stop_atr_multiplier": 1.5}
+}

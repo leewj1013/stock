@@ -13,6 +13,7 @@ def validate_price_rows(
     expected_day: date | None = None,
     source: str = "naver",
     reference_close: int | None = None,
+    reference_source: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now()
@@ -38,7 +39,7 @@ def validate_price_rows(
     result = {
         "created_at": now.isoformat(timespec="seconds"), "ticker": ticker,
         "price_date": price_day.isoformat() if price_day else "", "source": source,
-        "reference_source": "pykrx" if reference_close else "", "close": close,
+        "reference_source": reference_source if reference_close else "", "close": close,
         "reference_close": reference_close, "age_minutes": 0 if price_day == expected_day else None,
         "status": status, "reason": ",".join(reasons),
     }
@@ -66,7 +67,7 @@ def checked_prices(
             reference_close = reference_provider(ticker) if reference_provider and rows else None
         except Exception:
             reference_close = None
-        check = validate_price_rows(ticker, rows, expected_day, reference_close=reference_close)
+        check = validate_price_rows(ticker, rows, expected_day, reference_close=reference_close, reference_source=reference_name)
         if reference_provider and rows and reference_close is None:
             check["reference_source"] = reference_name or "reference"
             check["reason"] = ",".join(filter(None, [check.get("reason"), "reference_unavailable"]))

@@ -12,8 +12,8 @@ from typing import Any, Iterable
 
 
 DB_PATH = "data/stock_alarm.db"
-SCHEMA_VERSION = 7
-STRATEGY_VERSION = "learned-risk-managed-v5"
+SCHEMA_VERSION = 9
+STRATEGY_VERSION = "learned-risk-managed-v6"
 
 
 def _file_hash(path: str) -> str:
@@ -125,6 +125,9 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             return_drop_triggered INTEGER NOT NULL,
             giveback_triggered INTEGER NOT NULL,
             time_stop_triggered INTEGER NOT NULL DEFAULT 0,
+            take_profit_triggered INTEGER NOT NULL DEFAULT 0,
+            sale_type TEXT NOT NULL DEFAULT 'full',
+            stage TEXT,
             decision TEXT NOT NULL,
             reasons TEXT,
             PRIMARY KEY (run_id, position_id)
@@ -191,7 +194,17 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             proceeds INTEGER NOT NULL CHECK (proceeds > 0),
             cost_basis INTEGER NOT NULL CHECK (cost_basis > 0),
             realized_profit_loss INTEGER NOT NULL,
-            reason TEXT
+            reason TEXT,
+            sale_type TEXT NOT NULL DEFAULT 'full',
+            stage TEXT
+        );
+        CREATE TABLE IF NOT EXISTS virtual_position_states (
+            ticker TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'open',
+            remaining_quantity INTEGER NOT NULL DEFAULT 0,
+            first_take_profit_price INTEGER,
+            first_take_profit_at TEXT,
+            updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS price_quality (
             quality_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,7 +257,10 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             baseline_max_drawdown REAL NOT NULL,
             status TEXT NOT NULL,
             rollback_version TEXT,
-            notes TEXT
+            notes TEXT,
+            validation_json TEXT,
+            p_value REAL,
+            decision_reason TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_learned_strategy_status ON learned_strategy_versions(status, created_at);
         CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
@@ -287,12 +303,25 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
     if "legacy_passed" not in candidate_columns:
         connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN legacy_passed INTEGER NOT NULL DEFAULT 0")
     position_columns = {row[1] for row in connection.execute("PRAGMA table_info(position_checks)")}
-    for name, definition in (("atr20_pct", "REAL"), ("dynamic_stop_loss_pct", "REAL"), ("time_stop_triggered", "INTEGER NOT NULL DEFAULT 0")):
+    for name, definition in (
+        ("atr20_pct", "REAL"), ("dynamic_stop_loss_pct", "REAL"),
+        ("time_stop_triggered", "INTEGER NOT NULL DEFAULT 0"),
+        ("take_profit_triggered", "INTEGER NOT NULL DEFAULT 0"),
+        ("sale_type", "TEXT NOT NULL DEFAULT 'full'"), ("stage", "TEXT"),
+    ):
         if name not in position_columns:
             connection.execute(f"ALTER TABLE position_checks ADD COLUMN {name} {definition}")
     sell_columns = {row[1] for row in connection.execute("PRAGMA table_info(sell_outcomes)")}
     if "entry_price" not in sell_columns:
         connection.execute("ALTER TABLE sell_outcomes ADD COLUMN entry_price INTEGER")
+    virtual_sale_columns = {row[1] for row in connection.execute("PRAGMA table_info(virtual_sales)")}
+    for name, definition in (("sale_type", "TEXT NOT NULL DEFAULT 'full'"), ("stage", "TEXT")):
+        if name not in virtual_sale_columns:
+            connection.execute(f"ALTER TABLE virtual_sales ADD COLUMN {name} {definition}")
+    strategy_columns = {row[1] for row in connection.execute("PRAGMA table_info(learned_strategy_versions)")}
+    for name, definition in (("validation_json", "TEXT"), ("p_value", "REAL"), ("decision_reason", "TEXT")):
+        if name not in strategy_columns:
+            connection.execute(f"ALTER TABLE learned_strategy_versions ADD COLUMN {name} {definition}")
     connection.commit()
     return connection
 
@@ -303,13 +332,14 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
         account = connection.execute("SELECT cash FROM virtual_accounts WHERE account_id = 1").fetchone()
         rows = connection.execute(
             """WITH buys AS (
-                 SELECT ticker, MAX(name) AS name, SUM(quantity) AS bought_quantity, SUM(cost) AS bought_cost
+                 SELECT ticker, MAX(name) AS name, MIN(created_at) AS first_entry_at,
+                        SUM(quantity) AS bought_quantity, SUM(cost) AS bought_cost
                  FROM virtual_trades GROUP BY ticker
                ), sales AS (
                  SELECT ticker, SUM(quantity) AS sold_quantity, SUM(cost_basis) AS sold_cost
                  FROM virtual_sales GROUP BY ticker
                )
-               SELECT buys.ticker, buys.name,
+               SELECT buys.ticker, buys.name, buys.first_entry_at,
                       buys.bought_quantity - COALESCE(sales.sold_quantity, 0) AS quantity,
                       buys.bought_cost - COALESCE(sales.sold_cost, 0) AS cost
                FROM buys LEFT JOIN sales USING(ticker)
@@ -328,17 +358,26 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
         today_prefix = datetime.now().date().isoformat() + "%"
         today_buys = int(connection.execute("SELECT COUNT(*) FROM virtual_trades WHERE created_at LIKE ?", (today_prefix,)).fetchone()[0])
         today_sells = int(connection.execute("SELECT COUNT(*) FROM virtual_sales WHERE created_at LIKE ?", (today_prefix,)).fetchone()[0])
+        position_states = {
+            row["ticker"]: dict(row)
+            for row in connection.execute("SELECT * FROM virtual_position_states").fetchall()
+        }
     holdings = []
     for row in rows:
         cost, quantity = int(row["cost"]), int(row["quantity"])
         current_price = int(prices.get(row["ticker"]) or round(cost / quantity))
         valuation = current_price * quantity
         profit_loss = valuation - cost
+        position_state = position_states.get(row["ticker"], {})
         holdings.append({
             "ticker": row["ticker"], "name": row["name"], "quantity": quantity,
+            "first_entry_at": row["first_entry_at"],
             "cost": cost, "average_price": round(cost / quantity, 2), "current_price": current_price,
             "valuation": valuation, "profit_loss": profit_loss,
             "return_pct": round(profit_loss / cost * 100, 2) if cost else 0,
+            "position_status": position_state.get("status") or "open",
+            "first_take_profit_price": position_state.get("first_take_profit_price"),
+            "first_take_profit_at": position_state.get("first_take_profit_at"),
         })
     cash = int(account["cash"]) if account else 0
     holdings_value = sum(row["valuation"] for row in holdings)
@@ -444,6 +483,18 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[s
             """INSERT INTO virtual_trades(created_at,ticker,name,price,quantity,cost,allocation_pct,score)
                VALUES(?,?,?,?,?,?,?,?)""", trades,
         )
+        for trade in trades:
+            connection.execute(
+                """INSERT INTO virtual_position_states(ticker,status,remaining_quantity,updated_at)
+                   VALUES(?, 'open', ?, ?)
+                   ON CONFLICT(ticker) DO UPDATE SET
+                     status=CASE WHEN virtual_position_states.status='closed' THEN 'open' ELSE virtual_position_states.status END,
+                     remaining_quantity=virtual_position_states.remaining_quantity + excluded.remaining_quantity,
+                     first_take_profit_price=CASE WHEN virtual_position_states.status='closed' THEN NULL ELSE virtual_position_states.first_take_profit_price END,
+                     first_take_profit_at=CASE WHEN virtual_position_states.status='closed' THEN NULL ELSE virtual_position_states.first_take_profit_at END,
+                     updated_at=excluded.updated_at""",
+                (trade[1], trade[4], now),
+            )
         connection.execute("UPDATE virtual_accounts SET cash = cash - ?, updated_at = ? WHERE account_id = 1", (spent, now))
         connection.commit()
     executions = [
@@ -479,6 +530,11 @@ def import_legacy_virtual_trader(state: dict[str, Any], path: str = DB_PATH) -> 
             """INSERT INTO virtual_trades(created_at,ticker,name,price,quantity,cost,allocation_pct,score,source)
                VALUES(?,?,?,?,?,?,?,?,?)""", trades,
         )
+        for trade in trades:
+            connection.execute(
+                "INSERT OR REPLACE INTO virtual_position_states(ticker,status,remaining_quantity,updated_at) VALUES(?, 'open', ?, ?)",
+                (trade[1], trade[4], now),
+            )
         connection.commit()
     return bool(cash or trades)
 
@@ -500,14 +556,48 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
             quantity, cost_basis = int(bought[0] - sold[0]), int(bought[1] - sold[1])
             if quantity <= 0 or cost_basis <= 0:
                 continue
-            proceeds = price * quantity
-            sales.append((now, ticker, alert.get("name") or bought[2] or "", price, quantity, proceeds, cost_basis, proceeds - cost_basis, alert.get("reason", "")))
+            sale_type = str(alert.get("sale_type") or "full")
+            fraction = max(0.0, min(1.0, float(alert.get("quantity_fraction") or 1.0)))
+            requested = int(alert.get("quantity") or 0)
+            if sale_type == "partial":
+                sale_quantity = requested or int(quantity * fraction)
+                sale_quantity = min(max(1, sale_quantity), quantity - 1) if quantity >= 2 else 0
+            else:
+                sale_quantity = quantity
+            if sale_quantity <= 0:
+                continue
+            sale_cost_basis = cost_basis if sale_quantity == quantity else int(round(cost_basis * sale_quantity / quantity))
+            proceeds = price * sale_quantity
+            stage = str(alert.get("stage") or "")
+            sales.append((now, ticker, alert.get("name") or bought[2] or "", price, sale_quantity, proceeds, sale_cost_basis, proceeds - sale_cost_basis, alert.get("reason", ""), sale_type, stage))
             total_proceeds += proceeds
         if sales:
             connection.executemany(
-                """INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason)
-                   VALUES(?,?,?,?,?,?,?,?,?)""", sales,
+                """INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason,sale_type,stage)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""", sales,
             )
+            for sale in sales:
+                remaining = connection.execute(
+                    """SELECT COALESCE(SUM(quantity),0) -
+                              COALESCE((SELECT SUM(quantity) FROM virtual_sales WHERE ticker=?),0)
+                       FROM virtual_trades WHERE ticker=?""",
+                    (sale[1], sale[1]),
+                ).fetchone()[0]
+                connection.execute(
+                    """INSERT INTO virtual_position_states(
+                         ticker,status,remaining_quantity,first_take_profit_price,first_take_profit_at,updated_at
+                       ) VALUES(?,?,?,?,?,?)
+                       ON CONFLICT(ticker) DO UPDATE SET
+                         status=excluded.status, remaining_quantity=excluded.remaining_quantity,
+                         first_take_profit_price=COALESCE(excluded.first_take_profit_price,virtual_position_states.first_take_profit_price),
+                         first_take_profit_at=COALESCE(excluded.first_take_profit_at,virtual_position_states.first_take_profit_at),
+                         updated_at=excluded.updated_at""",
+                    (
+                        sale[1], "partial" if remaining > 0 and sale[9] == "partial" else "closed" if remaining <= 0 else "open",
+                        remaining, sale[3] if sale[9] == "partial" else None,
+                        now if sale[9] == "partial" else None, now,
+                    ),
+                )
             account = connection.execute("SELECT 1 FROM virtual_accounts WHERE account_id=1").fetchone()
             if account:
                 connection.execute("UPDATE virtual_accounts SET cash=cash+?, updated_at=? WHERE account_id=1", (total_proceeds, now))
@@ -515,7 +605,7 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
                 connection.execute("INSERT INTO virtual_accounts(account_id,cash,created_at,updated_at) VALUES(1,?,?,?)", (total_proceeds, now, now))
         connection.commit()
     executions = [
-        {"ticker": sale[1], "name": sale[2], "price": sale[3], "quantity": sale[4], "proceeds": sale[5], "cost_basis": sale[6], "realized_profit_loss": sale[7]}
+        {"ticker": sale[1], "name": sale[2], "price": sale[3], "quantity": sale[4], "proceeds": sale[5], "cost_basis": sale[6], "realized_profit_loss": sale[7], "sale_type": sale[9], "stage": sale[10]}
         for sale in sales
     ]
     return {**virtual_trader_state(path=path), "sold": len(sales), "proceeds": total_proceeds, "executions": executions}
@@ -530,6 +620,9 @@ def collection_settings() -> dict[str, str]:
         "DART_LOOKUP", "DART_SCORE_WEIGHT", "SELL_LOSS_PCT", "SELL_DROP_PCT",
         "SELL_PROTECT_PROFIT_PCT", "SELL_GIVEBACK_PCT",
         "SELL_ATR_MULTIPLIER", "SELL_TIME_STOP_DAYS", "SELL_TIME_STOP_MIN_RETURN_PCT",
+        "TAKE_PROFIT_1_PCT", "TAKE_PROFIT_1_SELL_RATIO", "TAKE_PROFIT_2_PCT",
+        "LEARNING_MIN_SAMPLES", "LEARNING_MAX_SAMPLES", "LEARNING_VALIDATION_MIN_SAMPLES", "LEARNING_VALIDATION_FOLDS",
+        "LEARNING_SIGNIFICANCE_LEVEL", "LEARNING_MAX_DAILY_WEIGHT_CHANGE",
         "EXECUTION_COST_BPS", "PERFORMANCE_MIN_SAMPLES", "FUNDAMENTAL_LOOKUP", "MARKET_BENCHMARK_TICKER",
     ]
     return {name: os.environ.get(name, "") for name in names}
@@ -600,9 +693,10 @@ def write_position_checks(run_id: str, rows: Iterable[dict[str, Any]], path: str
         "position_id", "checked_at", "ticker", "name", "entry_date", "entry_price",
         "close", "holding_days", "return_pct", "previous_return_pct", "max_return_pct",
         "drawdown_from_peak_pct", "ma20", "distance_ma20_pct", "atr20_pct", "dynamic_stop_loss_pct", "stop_loss_triggered",
-        "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered", "decision", "reasons",
+        "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered",
+        "take_profit_triggered", "sale_type", "stage", "decision", "reasons",
     ]
-    trigger_columns = {"stop_loss_triggered", "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered"}
+    trigger_columns = {"stop_loss_triggered", "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered", "take_profit_triggered"}
     values = [(run_id, *(row.get(column, 0) if column in trigger_columns else row.get(column) for column in columns)) for row in rows]
     if not values:
         return
@@ -624,22 +718,6 @@ def query_rows(sql: str, parameters: tuple = (), path: str = DB_PATH) -> list[di
             return [dict(row) for row in connection.execute(sql, parameters).fetchall()]
     except sqlite3.DatabaseError:
         return []
-
-
-def collection_summary(path: str = DB_PATH) -> dict[str, int]:
-    rows = query_rows(
-        """
-        SELECT
-          (SELECT COUNT(*) FROM strategy_runs) AS runs,
-          (SELECT COUNT(*) FROM candidate_snapshots) AS candidates,
-          (SELECT COUNT(*) FROM candidate_snapshots WHERE selected = 1) AS selected,
-          (SELECT COUNT(*) FROM position_checks) AS position_checks,
-          (SELECT COUNT(*) FROM position_checks WHERE decision = 'SELL') AS sell_decisions,
-          (SELECT COUNT(*) FROM position_checks WHERE decision = 'HOLD') AS hold_decisions
-        """,
-        path=path,
-    )
-    return rows[0] if rows else {"runs": 0, "candidates": 0, "selected": 0, "position_checks": 0, "sell_decisions": 0, "hold_decisions": 0}
 
 
 def recent_runs(limit: int = 20, path: str = DB_PATH) -> list[dict[str, Any]]:
@@ -680,7 +758,7 @@ def rejection_summary(path: str = DB_PATH) -> list[dict[str, Any]]:
 def recent_position_checks(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
     return query_rows(
         """
-        SELECT checked_at, ticker, name, entry_price, close, holding_days, return_pct,
+        SELECT checked_at, ticker, name, entry_price, close, ma20, holding_days, return_pct,
                max_return_pct, drawdown_from_peak_pct, distance_ma20_pct, atr20_pct,
                dynamic_stop_loss_pct, time_stop_triggered, decision, reasons
         FROM position_checks ORDER BY checked_at DESC LIMIT ?
@@ -733,17 +811,25 @@ def record_virtual_valuation(prices: dict[str, int], path: str = DB_PATH) -> dic
     }
 
 
-def latest_virtual_valuation(path: str = DB_PATH) -> dict[str, Any]:
-    rows = query_rows("SELECT * FROM virtual_valuation_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=path)
-    return rows[0] if rows else {}
-
-
 def recent_virtual_trades(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
     return query_rows("SELECT * FROM virtual_trades ORDER BY trade_id DESC LIMIT ?", (limit,), path)
 
 
 def recent_virtual_sales(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
-    return query_rows("SELECT * FROM virtual_sales ORDER BY sale_id DESC LIMIT ?", (limit,), path)
+    return query_rows(
+        """SELECT s.*,
+                  (SELECT MIN(t.created_at) FROM virtual_trades t
+                   WHERE t.ticker = s.ticker AND t.created_at <= s.created_at) AS entry_at
+           FROM virtual_sales s ORDER BY s.sale_id DESC LIMIT ?""",
+        (limit,), path,
+    )
+
+
+def virtual_position_states(path: str = DB_PATH) -> dict[str, dict[str, Any]]:
+    return {
+        row["ticker"]: row
+        for row in query_rows("SELECT * FROM virtual_position_states", path=path)
+    }
 
 
 def record_price_quality(row: dict[str, Any], path: str = DB_PATH) -> None:
@@ -787,7 +873,7 @@ def recent_recommendation_outcomes(limit: int = 250, path: str = DB_PATH) -> lis
 
 
 def save_strategy_version(row: dict[str, Any], path: str = DB_PATH) -> None:
-    columns = ["version_id", "created_at", "effective_date", "weights_json", "sample_count", "objective_return", "baseline_return", "max_drawdown", "baseline_max_drawdown", "status", "rollback_version", "notes"]
+    columns = ["version_id", "created_at", "effective_date", "weights_json", "sample_count", "objective_return", "baseline_return", "max_drawdown", "baseline_max_drawdown", "status", "rollback_version", "notes", "validation_json", "p_value", "decision_reason"]
     values = dict(row)
     if values.get("status") == "active" and str(values.get("effective_date") or "") > datetime.now().date().isoformat():
         values["status"] = "scheduled"
@@ -805,10 +891,6 @@ def active_strategy_version(path: str = DB_PATH) -> dict[str, Any]:
         (datetime.now().date().isoformat(),), path,
     )
     return rows[0] if rows else {}
-
-
-def recent_strategy_versions(limit: int = 20, path: str = DB_PATH) -> list[dict[str, Any]]:
-    return query_rows("SELECT * FROM learned_strategy_versions ORDER BY created_at DESC LIMIT ?", (limit,), path)
 
 
 def record_portfolio_risk(row: dict[str, Any], path: str = DB_PATH) -> None:

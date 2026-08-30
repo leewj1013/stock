@@ -36,6 +36,12 @@ class RunGateTest(unittest.TestCase):
         self.assertTrue(should_run("open", datetime(2026, 8, 3, 8, 30)))
         trading_day.assert_not_called()
 
+    @patch("stock_alarm.run_gate.is_trading_day")
+    def test_open_skips_a_weekday_public_holiday_without_market_lookup(self, trading_day):
+        # 2026-01-01 is a Thursday and a KRX holiday (신정).
+        self.assertFalse(should_run("open", datetime(2026, 1, 1, 8, 30)))
+        trading_day.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

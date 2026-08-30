@@ -44,11 +44,11 @@ def migrate_recommendation_row(old_header: list[str], row: list[str]) -> list[st
 
 
 def migrate_sell_alert_row(old_header: list[str], row: list[str]) -> list[str]:
-    expected = ["created_at", "ticker", "name", "entry_price", "close", "return_pct", "summary", "reason"]
+    expected = ["created_at", "ticker", "name", "entry_price", "close", "return_pct", "summary", "reason", "sale_type", "stage", "quantity_fraction"]
     if old_header == ["created_at", "ticker", "name", "entry_price", "close", "return_pct", "reason"]:
         if len(row) >= 8:
-            return row[:8]
+            return (row + ["full", "", "1"])[0:11]
         padded = row + [""] * (7 - len(row))
-        return [*padded[:6], "", padded[6]]
+        return [*padded[:6], "", padded[6], "full", "", "1"]
     values = {name: row[index] for index, name in enumerate(old_header) if index < len(row)}
-    return [values.get(name, "") for name in expected]
+    return [values.get(name, "full" if name == "sale_type" else "1" if name == "quantity_fraction" else "") for name in expected]

@@ -6,17 +6,20 @@ if (-not (Test-Path -LiteralPath $cloudflared)) {
     throw "cloudflared is missing: $cloudflared"
 }
 
-$port = 8765
-$listener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+$port = if ($env:DASHBOARD_PORT) { $env:DASHBOARD_PORT } else { "8765" }
+$remotePort = if ($env:DASHBOARD_REMOTE_PORT) { $env:DASHBOARD_REMOTE_PORT } else { "8766" }
+$listener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
 if (-not $listener) {
     Start-Process -FilePath ".\.venv\Scripts\python.exe" -ArgumentList "-m", "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
     Start-Sleep -Seconds 2
 }
 
+# Only the read-only remote port is ever handed to the tunnel. The full
+# dashboard/admin port ($port) never leaves this machine.
 New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null
 $stdout = Join-Path $projectRoot "logs\cloudflared.out.log"
 $stderr = Join-Path $projectRoot "logs\cloudflared.err.log"
-$process = Start-Process -FilePath $cloudflared -ArgumentList "tunnel", "--url", "http://127.0.0.1:$port", "--no-autoupdate" -WorkingDirectory $projectRoot -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+$process = Start-Process -FilePath $cloudflared -ArgumentList "tunnel", "--url", "http://127.0.0.1:$remotePort", "--no-autoupdate" -WorkingDirectory $projectRoot -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 Set-Content -LiteralPath ".\logs\cloudflared.pid" -Value $process.Id -Encoding ascii
 
 $url = ""

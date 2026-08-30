@@ -233,11 +233,19 @@ def make_naver_pick(
 
 
 def evaluate_naver_candidate(
-    ticker: str, name: str, end_day: date, min_trading_value: int, volume_multiplier: float, record_quality: bool = False
+    ticker: str,
+    name: str,
+    end_day: date,
+    min_trading_value: int,
+    volume_multiplier: float,
+    record_quality: bool = False,
+    price_rows: list[list] | None = None,
+    external_lookup: bool = True,
+    score_weights: dict[str, float] | None = None,
 ) -> CandidateEvaluation:
     evaluated_at = datetime.now().isoformat(timespec="seconds")
     base = {"ticker": ticker, "name": name, "evaluated_at": evaluated_at, "passed": 0, "selected": 0}
-    rows = naver_rows(ticker, end_day - timedelta(days=90), end_day)
+    rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=90), end_day)
     if len(rows) < 21:
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": "insufficient_history"})
     from .data_quality import validate_price_rows
@@ -312,18 +320,26 @@ def evaluate_naver_candidate(
         return CandidateEvaluation(ticker, name, values)
     name = stock_name(ticker, name)
     volume_score, trading_value_score, trend_score = calculate_score_parts(close, ma20, volume_ratio, trading_value, atr20_pct)
-    news_score = news_bonus(name)
-    disclosure_score = dart_bonus(ticker)
-    penalty = performance_penalty(ticker)
-    from .fundamental_reference import snapshot as fundamental_snapshot
-    fundamentals = fundamental_snapshot(ticker, end_day)
+    news_score = news_bonus(name) if external_lookup else 0.0
+    disclosure_score = dart_bonus(ticker) if external_lookup else 0.0
+    penalty = performance_penalty(ticker) if external_lookup else 0.0
+    if external_lookup:
+        from .fundamental_reference import snapshot as fundamental_snapshot
+        fundamentals = fundamental_snapshot(ticker, end_day)
+    else:
+        fundamentals = {"financial_score": 0.0, "financial_notes": "disabled_for_point_in_time_backtest"}
     financial_score = float(fundamentals.get("financial_score") or 0)
-    from .strategy_learning import adjusted_score
-    score = adjusted_score({
+    score_parts = {
         "volume_score": volume_score, "trading_value_score": trading_value_score, "trend_score": trend_score,
         "news_score": news_score, "disclosure_score": disclosure_score, "financial_score": financial_score,
         "relative_strength_score": 0, "performance_penalty": penalty,
-    })
+    }
+    if score_weights is None:
+        from .strategy_learning import adjusted_score
+        score = adjusted_score(score_parts)
+    else:
+        from .strategy_learning import score_with_weights
+        score = score_with_weights(score_parts, score_weights)
     legacy_score = calculate_legacy_score(close, ma20, volume_ratio, trading_value, atr20_pct) + news_score + disclosure_score + financial_score - penalty
     pick = Pick(ticker, name, close, volume_ratio, trading_value, round(score, 2), volume_score, trading_value_score, trend_score, news_score, disclosure_score, penalty, raw_volume_ratio, volume_fraction, atr20_pct, 0, 0, financial_score, raw_trading_value)
     values.update(
@@ -492,13 +508,27 @@ def market_up_ratio(moves: list[bool]) -> float:
     return sum(moves) / len(moves) if moves else 0
 
 
-def naver_market_up_ratio(end_day: date) -> float:
+def market_exposure_limit_pct(up_ratio: float) -> float:
+    """Return the live 4.3 portfolio exposure cap for a breadth observation."""
+    return 70.0 if up_ratio >= 0.60 else 40.0 if up_ratio >= 0.45 else 10.0
+
+
+def watchlist_market_up_ratio(end_day: date) -> float:
     moves = []
     for ticker in configured_stocks():
         rows = naver_rows(ticker, end_day - timedelta(days=10), end_day)
         if len(rows) >= 2:
             moves.append(int(rows[-1][4]) > int(rows[-2][4]))
     return market_up_ratio(moves)
+
+
+def naver_market_up_ratio(end_day: date) -> float:
+    """Whole KOSPI+KOSDAQ advance/decline ratio, falling back to the watchlist
+    approximation if the market-cap page scrape is unavailable."""
+    from .market_breadth import cached_whole_market_up_ratio
+
+    ratio = cached_whole_market_up_ratio()
+    return ratio if ratio is not None else watchlist_market_up_ratio(end_day)
 
 
 def passes_market_filter(end_day: date) -> bool:
@@ -517,7 +547,11 @@ def market_benchmark_return(end_day: date) -> tuple[str, float | None]:
     return symbol, None
 
 
-def apply_relative_strength(evaluations: list[CandidateEvaluation], benchmark: tuple[str, float | None] | None = None) -> list[CandidateEvaluation]:
+def apply_relative_strength(
+    evaluations: list[CandidateEvaluation],
+    benchmark: tuple[str, float | None] | None = None,
+    score_weights: dict[str, float] | None = None,
+) -> list[CandidateEvaluation]:
     returns = [float(item.values["day_return_pct"]) for item in evaluations if item.values.get("day_return_pct") is not None]
     symbol, benchmark_value = benchmark or ("WATCHLIST", None)
     benchmark_value = benchmark_value if benchmark_value is not None else (mean(returns) if returns else 0.0)
@@ -531,13 +565,18 @@ def apply_relative_strength(evaluations: list[CandidateEvaluation], benchmark: t
         values.update(benchmark_symbol=symbol, market_proxy_return_pct=benchmark_value, relative_strength_pct=relative, relative_strength_score=relative_score)
         pick = item.pick
         if pick:
-            from .strategy_learning import adjusted_score
-            score = adjusted_score({
+            parts = {
                 "volume_score": pick.volume_score, "trading_value_score": pick.trading_value_score,
                 "trend_score": pick.trend_score, "news_score": pick.news_score,
                 "disclosure_score": pick.disclosure_score, "financial_score": pick.financial_score,
                 "relative_strength_score": relative_score, "performance_penalty": pick.performance_penalty,
-            })
+            }
+            if score_weights is None:
+                from .strategy_learning import adjusted_score
+                score = adjusted_score(parts)
+            else:
+                from .strategy_learning import score_with_weights
+                score = score_with_weights(parts, score_weights)
             pick = replace(pick, score=round(score, 2), relative_strength_pct=relative, relative_strength_score=relative_score)
             values["final_score"] = round(score, 2)
         if values.get("legacy_score") is not None:
@@ -640,16 +679,36 @@ def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
     return result
 
 
+def sell_cooldown_days(reason: str, stage: str = "") -> float:
+    """Recommendation cooldown length after a sell alert, tiered by how strong
+    a signal it was: a stop-loss means the setup was wrong and should sit out
+    longer, while a weak MA20-only break or a profit-taking exit can be
+    reconsidered sooner.
+    """
+    reason = reason or ""
+    if (stage or "").strip().startswith("take_profit"):
+        return env_float("SELL_RECOMMEND_COOLDOWN_TAKE_PROFIT_DAYS", 1)
+    if "손절 기준" in reason:
+        return env_float("SELL_RECOMMEND_COOLDOWN_STOP_LOSS_DAYS", 5)
+    if "기대수익 미달" in reason:
+        return env_float("SELL_RECOMMEND_COOLDOWN_TIME_STOP_DAYS", 3)
+    if "20일선" in reason:
+        return env_float("SELL_RECOMMEND_COOLDOWN_MA20_DAYS", 2)
+    return env_float("SELL_RECOMMEND_COOLDOWN_DAYS", 3)
+
+
 def open_recommended_tickers(
     positions_path: str = POSITIONS_PATH,
     sell_alerts_path: str = SELL_ALERTS_PATH,
     recommendations_path: str = "logs/recommendations.csv",
 ) -> set[str]:
-    sell_alerts = latest_sell_alert_times(sell_alerts_path)
+    sell_events = latest_full_sell_events(sell_alerts_path)
+    sell_alerts = {ticker: event["time"] for ticker, event in sell_events.items()}
     result = set()
-    cooldown_until = datetime.now() - timedelta(days=int(env_float("SELL_RECOMMEND_COOLDOWN_DAYS", 3)))
-    for ticker, sell_time in sell_alerts.items():
-        if sell_time >= cooldown_until:
+    now = datetime.now()
+    for ticker, event in sell_events.items():
+        cooldown_days = sell_cooldown_days(event.get("reason", ""), event.get("stage", ""))
+        if event["time"] >= now - timedelta(days=cooldown_days):
             result.add(ticker)
     for ticker, entry_time in latest_position_times(positions_path).items():
         sell_time = sell_alerts.get(ticker)
@@ -675,8 +734,27 @@ def latest_position_times(path: str) -> dict[str, datetime]:
     return result
 
 
+def latest_full_sell_events(path: str) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    if not os.path.exists(path):
+        return result
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            # A first-stage take profit keeps the recommendation episode open.
+            if (row.get("sale_type") or "full").strip().lower() == "partial":
+                continue
+            ticker = row.get("ticker", "").strip()
+            event_time = parse_time(row.get("created_at", ""))
+            if not ticker or not event_time:
+                continue
+            existing = result.get(ticker)
+            if existing is None or event_time > existing["time"]:
+                result[ticker] = {"time": event_time, "reason": row.get("reason", ""), "stage": row.get("stage", "")}
+    return result
+
+
 def latest_sell_alert_times(path: str) -> dict[str, datetime]:
-    return latest_event_times(path, "created_at")
+    return {ticker: event["time"] for ticker, event in latest_full_sell_events(path).items()}
 
 
 def latest_recommendation_times(path: str) -> dict[str, datetime]:
@@ -704,13 +782,6 @@ def parse_time(value: str) -> datetime | None:
             return datetime.fromisoformat(value[:10])
         except ValueError:
             return None
-
-
-def read_tickers(path: str) -> set[str]:
-    if not os.path.exists(path):
-        return set()
-    with open(path, newline="", encoding="utf-8-sig") as file:
-        return {row.get("ticker", "").strip() for row in csv.DictReader(file) if row.get("ticker")}
 
 
 def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_multiplier: float, run_id: str | None = None) -> list[Pick]:
@@ -821,10 +892,6 @@ def refresh_kakao_token() -> bool:
     return True
 
 
-def pick_reason(pick: Pick) -> str:
-    return f"거래량 {pick.volume_ratio:.1f}배, 20일선 상회, 거래대금 {pick.trading_value / 100_000_000:.0f}억원"
-
-
 def reason_summary(volume_ratio: float, news: float, disclosure: float, penalty: float) -> str:
     parts: list[str] = []
     if volume_ratio >= 2:
@@ -865,6 +932,9 @@ def allocation_percentages(picks: list[Pick], performance_path: str = "logs/reco
     """Return per-position target weights against total virtual-account equity."""
     if not picks:
         return []
+    if os.environ.get("VIRTUAL_TRADER_POSITION_SIZING_MODE", "fixed").strip().lower() == "fixed":
+        fixed = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_FIXED_POSITION_PCT", 10)))
+        return [round(fixed, 2) for _pick in picks]
     learned = historical_allocation_factors(performance_path)
     minimum = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10)))
     maximum = max(minimum, min(100.0, env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30)))
@@ -880,23 +950,42 @@ def allocation_percentages(picks: list[Pick], performance_path: str = "logs/reco
     return allocations
 
 
-def correlation_limited_allocations(picks: list[Pick], allocations: list[float], end_day: date | None = None) -> list[float]:
-    """Limit highly correlated pairs without changing the public 10-30% target calculator."""
+def correlation_limited_allocations(
+    picks: list[Pick],
+    allocations: list[float],
+    end_day: date | None = None,
+    price_rows_by_ticker: dict[str, list[list]] | None = None,
+    locked_tickers: set[str] | None = None,
+    threshold_override: float | None = None,
+    group_cap_override: float | None = None,
+    minimum_override: float | None = None,
+) -> list[float]:
+    """Cap connected groups of highly correlated positions at the live limit.
+
+    ``price_rows_by_ticker`` lets isolated replay paths inject point-in-time
+    history while live execution keeps using Naver. ``locked_tickers`` are
+    existing holdings: their weights are never reduced here, but they consume
+    group capacity and can block a new allocation.
+    """
     if len(picks) < 2:
         return allocations
     end_day = end_day or date.today()
     lookback = int(env_float("CORRELATION_LOOKBACK_DAYS", 60))
-    threshold = env_float("CORRELATION_LIMIT", 0.8)
-    group_cap = env_float("CORRELATED_GROUP_MAX_PCT", 40)
+    threshold = env_float("CORRELATION_LIMIT", 0.8) if threshold_override is None else float(threshold_override)
+    group_cap = env_float("CORRELATED_GROUP_MAX_PCT", 40) if group_cap_override is None else float(group_cap_override)
     series = {}
     for pick in picks:
-        try:
-            rows = naver_rows(pick.ticker, end_day - timedelta(days=lookback * 2), end_day)
-        except Exception:
-            rows = []
+        if price_rows_by_ticker is not None:
+            rows = price_rows_by_ticker.get(pick.ticker, [])
+        else:
+            try:
+                rows = naver_rows(pick.ticker, end_day - timedelta(days=lookback * 2), end_day)
+            except Exception:
+                rows = []
         closes = [float(row[4]) for row in rows[-(lookback + 1):] if float(row[4]) > 0]
         series[pick.ticker] = [(current - previous) / previous for previous, current in zip(closes, closes[1:])]
     limited = list(allocations)
+    adjacency = {index: set() for index in range(len(picks))}
     for left in range(len(picks)):
         for right in range(left + 1, len(picks)):
             first, second = series.get(picks[left].ticker, []), series.get(picks[right].ticker, [])
@@ -908,10 +997,67 @@ def correlation_limited_allocations(picks: list[Pick], allocations: list[float],
             numerator = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys))
             denominator = (sum((x - xbar) ** 2 for x in xs) * sum((y - ybar) ** 2 for y in ys)) ** 0.5
             correlation = numerator / denominator if denominator else 0
-            if correlation >= threshold and limited[left] + limited[right] > group_cap:
-                allowed = max(0.0, group_cap - limited[left])
-                minimum = env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10)
-                limited[right] = round(allowed, 2) if allowed >= minimum else 0.0
+            if correlation >= threshold:
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+    locked_tickers = locked_tickers or set()
+    visited = set()
+    minimum = env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10) if minimum_override is None else float(minimum_override)
+    for start in range(len(picks)):
+        if start in visited or not adjacency[start]:
+            continue
+        stack, component = [start], []
+        while stack:
+            index = stack.pop()
+            if index in visited:
+                continue
+            visited.add(index)
+            component.append(index)
+            stack.extend(adjacency[index] - visited)
+        locked = [index for index in component if picks[index].ticker in locked_tickers]
+        unlocked = sorted(index for index in component if picks[index].ticker not in locked_tickers)
+        remaining = max(0.0, group_cap - sum(limited[index] for index in locked))
+        for index in unlocked:
+            allowed = min(limited[index], remaining)
+            limited[index] = round(allowed, 2) if allowed >= minimum else 0.0
+            remaining = max(0.0, remaining - limited[index])
+    return limited
+
+
+def sector_limited_allocations(
+    picks: list[Pick], allocations: list[float], end_day: date | None = None,
+    sector_by_ticker: dict[str, str] | None = None, locked_tickers: set[str] | None = None,
+    group_cap_override: float | None = None, minimum_override: float | None = None,
+    cache_path: str | None = None, refresh_mapping: bool = False,
+) -> list[float]:
+    """Cap each Naver industry without increasing any prior allocation.
+
+    Existing holdings are locked: they consume sector capacity but are never
+    sold by this entry constraint. Missing classifications are isolated per
+    ticker instead of being incorrectly grouped into one unknown sector.
+    """
+    if len(picks) != len(allocations):
+        raise ValueError("picks and allocations must have the same length")
+    group_cap = env_float("SECTOR_GROUP_MAX_PCT", 100) if group_cap_override is None else float(group_cap_override)
+    if not picks or group_cap >= 100:
+        return list(allocations)
+    if sector_by_ticker is None:
+        from pathlib import Path
+        from .sector_reference import DEFAULT_CACHE, load_sector_mapping
+        sector_by_ticker = load_sector_mapping({pick.ticker for pick in picks}, Path(cache_path) if cache_path else DEFAULT_CACHE, refresh_mapping)
+    locked_tickers = locked_tickers or set()
+    minimum = env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10) if minimum_override is None else float(minimum_override)
+    groups: dict[str, list[int]] = {}
+    for index, pick in enumerate(picks):
+        sector = sector_by_ticker.get(pick.ticker) or f"__unclassified__:{pick.ticker}"
+        groups.setdefault(sector, []).append(index)
+    limited = list(allocations)
+    for indexes in groups.values():
+        remaining = max(0.0, group_cap - sum(limited[index] for index in indexes if picks[index].ticker in locked_tickers))
+        for index in (index for index in indexes if picks[index].ticker not in locked_tickers):
+            allowed = min(limited[index], remaining)
+            limited[index] = round(allowed, 2) if allowed >= minimum else 0.0
+            remaining = max(0.0, remaining - limited[index])
     return limited
 
 
@@ -920,15 +1066,23 @@ def auto_buy_virtual_trader(picks: list[Pick]) -> dict | None:
         return None
     from .data_store import virtual_buy, virtual_trader_state
     from .portfolio_risk import new_buys_allowed
-    if virtual_trader_state().get("cash", 0) <= 0:
+    state = virtual_trader_state()
+    if state.get("cash", 0) <= 0:
         return None
     allowed, _reason = new_buys_allowed()
     if not allowed:
         return None
     allocations = allocation_percentages(picks)
     allocations = correlation_limited_allocations(picks, allocations)
+    if env_float("SECTOR_GROUP_MAX_PCT", 100) < 100:
+        existing = [Pick(row["ticker"], row["name"], int(row["current_price"]), 0, 0, 0) for row in state.get("holdings", [])]
+        equity = float(state.get("total_equity") or 0)
+        existing_allocations = [float(row["valuation"]) / equity * 100 if equity else 0.0 for row in state.get("holdings", [])]
+        combined = existing + picks
+        limited = sector_limited_allocations(combined, existing_allocations + allocations, locked_tickers={pick.ticker for pick in existing})
+        allocations = limited[len(existing):]
     breadth = naver_market_up_ratio(date.today())
-    exposure_limit = 70.0 if breadth >= 0.60 else 40.0 if breadth >= 0.45 else 10.0
+    exposure_limit = market_exposure_limit_pct(breadth)
     candidates = [
         {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation,
          "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}

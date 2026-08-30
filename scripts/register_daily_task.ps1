@@ -62,7 +62,10 @@ $intradayXml = @"
   </Actions>
 </Task>
 "@
-$sellXml = $intradayXml.Replace("stockAlarmIntradayEvery5Minutes", "stockAlarmSellEvery5Minutes").Replace('intraday</Arguments>', 'sell</Arguments>')
+# Offset by 2 minutes so the two 5-minute tasks don't fire at the same instant
+# and contend for run_stock_alarm.ps1's execution mutex every single cycle.
+$sellStartBoundary = $startBoundary.Replace("08:50:00", "08:52:00")
+$sellXml = $intradayXml.Replace("stockAlarmIntradayEvery5Minutes", "stockAlarmSellEvery5Minutes").Replace('intraday</Arguments>', 'sell</Arguments>').Replace($startBoundary, $sellStartBoundary)
 
 Register-ScheduledTask -TaskName "stockAlarmOpen" -Action $openAction -Trigger (New-ScheduledTaskTrigger -Daily -At 08:30) -Settings $taskSettings -Description "Run stockAlarm before Korean market open" -Force
 Unregister-ScheduledTask -TaskName "stockAlarmIntraday1030" -Confirm:$false -ErrorAction SilentlyContinue

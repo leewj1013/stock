@@ -5,23 +5,27 @@ import hmac
 import html
 import os
 import re
+import threading
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, urlparse
 
 from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
-from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_price_quality, virtual_buy, virtual_deposit, virtual_trader_state
+from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
+from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("DASHBOARD_PORT", "8765"))
+# Only this port is ever handed to the Cloudflare tunnel (see start_remote_dashboard.ps1).
+# It must never be able to reach the full dashboard, /remote-setup, or any POST route:
+# a tunnel forwards every request to 127.0.0.1 regardless of the caller's real address, so
+# an HTTP Host header (or client_address) can never tell a genuine local visit apart from
+# one relayed through the tunnel. Keeping the write/admin routes on a separate port that is
+# never tunneled is what actually enforces "local-only", not a header check.
+REMOTE_PORT = int(os.environ.get("DASHBOARD_REMOTE_PORT", "8766"))
 REMOTE_ORIGIN = os.environ.get("DASHBOARD_REMOTE_ORIGIN", "https://leewj1013.github.io").rstrip("/")
-
-
-def is_local_host(host: str) -> bool:
-    hostname = host.split(":", 1)[0].strip("[]").lower()
-    return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
 def allowed_origin(origin: str) -> str:
@@ -75,6 +79,55 @@ def trader_payload() -> dict:
     for row in quality:
         latest_quality.setdefault(row.get("ticker"), row)
     unavailable = [row["ticker"] for row in state["holdings"] if latest_quality.get(row["ticker"], {}).get("status") not in {None, "valid"}]
+    breadth = None
+    try:
+        with open(MARKET_BREADTH_CACHE_PATH, encoding="utf-8") as file:
+            breadth = float(json.load(file).get("ratio"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
+    market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
+    latest_checks = {}
+    for row in recent_position_checks(1000):
+        latest_checks.setdefault(row.get("ticker"), row)
+    for holding in state["holdings"]:
+        check = latest_checks.get(holding.get("ticker"), {})
+        try:
+            fallback_holding_days = (date.today() - date.fromisoformat(str(holding.get("first_entry_at") or "")[:10])).days
+        except ValueError:
+            fallback_holding_days = None
+        stop_pct = float(check.get("dynamic_stop_loss_pct") or -5)
+        stop_price = round(float(holding.get("average_price") or 0) * (1 + stop_pct / 100))
+        distance = check.get("distance_ma20_pct")
+        if holding.get("position_status") == "partial":
+            watch_state = "1차 익절 완료"
+        elif check.get("decision") == "SELL":
+            watch_state = "매도조건 충족"
+        elif check.get("return_pct") is not None and float(check["return_pct"]) <= stop_pct * .8:
+            watch_state = "손절선 근접"
+        elif distance is not None and float(distance) <= 2:
+            watch_state = "20일선 주의"
+        else:
+            watch_state = "정상 보유"
+        holding.update({
+            "allocation_pct": round(float(holding.get("valuation") or 0) / max(float(state.get("total_equity") or 0), 1) * 100, 2),
+            "holding_days": check.get("holding_days") if check.get("holding_days") is not None else fallback_holding_days,
+            "watch_state": watch_state,
+            "stop_price": stop_price,
+            "ma20": check.get("ma20"),
+        })
+    sales = []
+    for row in recent_virtual_sales(500):
+        cost_basis = int(row.get("cost_basis") or 0)
+        realized = int(row.get("realized_profit_loss") or 0)
+        sales.append({
+            **row,
+            "return_pct": round(realized / cost_basis * 100, 2) if cost_basis else 0.0,
+            "sale_label": "부분매도" if row.get("sale_type") == "partial" else "전량매도",
+        })
+    wins = sum(int(row.get("realized_profit_loss") or 0) > 0 for row in sales)
+    total_cost = sum(int(row.get("cost_basis") or 0) for row in sales)
+    total_realized = sum(int(row.get("realized_profit_loss") or 0) for row in sales)
     return {
         **state,
         "price_updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -82,6 +135,16 @@ def trader_payload() -> dict:
         "risk": risk,
         "strategy_version": strategy.get("version_id", "기본 전략"),
         "price_unavailable_tickers": unavailable,
+        "market_up_ratio_pct": round(breadth * 100, 2) if breadth is not None else None,
+        "market_exposure_limit_pct": market_limit,
+        "market_mode": market_mode,
+        "sales": sales,
+        "sale_summary": {
+            "count": len(sales),
+            "realized_profit_loss": total_realized,
+            "win_rate_pct": round(wins / len(sales) * 100, 2) if sales else 0.0,
+            "return_pct": round(total_realized / total_cost * 100, 2) if total_cost else 0.0,
+        },
     }
 
 
@@ -107,14 +170,82 @@ def remote_setup_page() -> str:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    def _is_local(self) -> bool:
-        return is_local_host(self.headers.get("Host", ""))
+    """Full local admin UI: dashboard page, remote-setup page (which prints the
+    remote token in cleartext), and every trader write route. Deliberately has
+    no auth of its own -- it is only ever reachable by whoever is sitting at
+    this machine, because HOST binds to 127.0.0.1 and this port is never
+    handed to the Cloudflare tunnel (see REMOTE_PORT above).
+    """
 
-    def _remote_read_allowed(self) -> bool:
-        return bool(
-            allowed_origin(self.headers.get("Origin", ""))
-            and valid_remote_token(self.headers.get("Authorization", ""))
-        )
+    def _json(self, status: int, body: dict) -> None:
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path == "/api/trader":
+            self._json(200, trader_payload())
+            return
+        if path in {"/", "/dashboard"}:
+            payload = render().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == "/remote-setup":
+            payload = remote_setup_page().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            path = urlparse(self.path).path
+            if path == "/api/trader/deposit":
+                virtual_deposit(int(body.get("amount", 0)))
+                self._json(200, trader_payload())
+                return
+            if path == "/api/trader/buy":
+                result = virtual_buy(recommendations())
+                self._json(200, {**trader_payload(), **{key: result[key] for key in ("spent", "bought", "executions")}})
+                return
+            if path == "/api/trader/import":
+                imported = import_legacy_virtual_trader(body)
+                self._json(200, {**trader_payload(), "imported": imported})
+                return
+            self.send_error(404)
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            self._json(400, {"error": str(error)})
+        except Exception as error:
+            write_error_log(error)
+            self._json(500, {"error": "가상 트레이더 처리 중 오류가 발생했습니다."})
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+class RemoteReadOnlyHandler(BaseHTTPRequestHandler):
+    """The only handler ever exposed through the Cloudflare tunnel.
+
+    Serves a single read-only, token-gated route and nothing else -- no
+    dashboard HTML, no /remote-setup (which would leak the token itself), no
+    write routes. Anyone who finds the tunnel URL still needs a valid
+    DASHBOARD_REMOTE_TOKEN to get anything back.
+    """
 
     def _cors(self) -> None:
         origin = allowed_origin(self.headers.get("Origin", ""))
@@ -144,64 +275,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path == "/api/trader":
-            if not self._is_local() and not self._remote_read_allowed():
-                self._json(401, {"error": "원격 대시보드 인증이 필요합니다."})
-                return
-            self._json(200, trader_payload())
+        if path != "/api/trader":
+            self.send_error(404)
             return
-        if path in {"/", "/dashboard"}:
-            if not self._is_local():
-                self.send_error(404)
-                return
-            payload = render().encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+        if not allowed_origin(self.headers.get("Origin", "")) or not valid_remote_token(self.headers.get("Authorization", "")):
+            self._json(401, {"error": "원격 대시보드 인증이 필요합니다."})
             return
-        if path == "/remote-setup":
-            if not self._is_local():
-                self.send_error(404)
-                return
-            payload = remote_setup_page().encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        self.send_error(404)
+        self._json(200, trader_payload())
 
     def do_POST(self) -> None:  # noqa: N802
-        try:
-            if not self._is_local():
-                self._json(403, {"error": "원격에서는 조회만 가능합니다."})
-                return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length) or b"{}")
-            path = urlparse(self.path).path
-            if path == "/api/trader/deposit":
-                virtual_deposit(int(body.get("amount", 0)))
-                self._json(200, trader_payload())
-                return
-            if path == "/api/trader/buy":
-                result = virtual_buy(recommendations())
-                self._json(200, {**trader_payload(), **{key: result[key] for key in ("spent", "bought", "executions")}})
-                return
-            if path == "/api/trader/import":
-                imported = import_legacy_virtual_trader(body)
-                self._json(200, {**trader_payload(), "imported": imported})
-                return
-            self.send_error(404)
-        except (ValueError, TypeError, json.JSONDecodeError) as error:
-            self._json(400, {"error": str(error)})
-        except Exception as error:
-            write_error_log(error)
-            self._json(500, {"error": "가상 트레이더 처리 중 오류가 발생했습니다."})
+        self._json(403, {"error": "원격에서는 조회만 가능합니다."})
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -209,6 +292,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     load_env()
+    remote_server = ThreadingHTTPServer((HOST, REMOTE_PORT), RemoteReadOnlyHandler)
+    threading.Thread(target=remote_server.serve_forever, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
     print(f"http://{HOST}:{PORT}/", flush=True)
     server.serve_forever()

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "description": "Backtest-only peak-decay experiments. Existing A/C/E policies are imported for a like-for-like comparison.",
+  "include_config": "config/risk_release_variants.json",
+  "include_variants": ["variant_A", "variant_C_20_30", "variant_C_60_50", "variant_E_3", "variant_E_5"],
+  "common": {"hac_lag": 5, "fdr_alpha": 0.05},
+  "variants": {
+    "variant_F_monthly_1": {
+      "label": "monthly_peak_decay_1pct", "mode": "peak_decay", "decay_frequency": "monthly", "decay_pct": 1.0,
+      "rationale": "낙폭 에피소드 중 월 경계마다 유효 최고수위를 1% 낮추는 보수적 감쇠안"
+    },
+    "variant_F_monthly_2": {
+      "label": "monthly_peak_decay_2pct", "mode": "peak_decay", "decay_frequency": "monthly", "decay_pct": 2.0,
+      "rationale": "월 2% 감쇠로 해제 속도 민감도를 확인하는 비교안"
+    },
+    "variant_F_quarterly_3": {
+      "label": "quarterly_peak_decay_3pct", "mode": "peak_decay", "decay_frequency": "quarterly", "decay_pct": 3.0,
+      "rationale": "분기 경계마다 최고수위를 3% 낮춰 잦은 기준 변경을 피하는 보수적 분기안"
+    },
+    "variant_F_quarterly_5": {
+      "label": "quarterly_peak_decay_5pct", "mode": "peak_decay", "decay_frequency": "quarterly", "decay_pct": 5.0,
+      "rationale": "분기 5% 감쇠로 분기형 해제 속도 민감도를 확인하는 비교안"
+    },
+    "variant_F_time_decay": {
+      "label": "duration_accelerating_decay", "mode": "peak_decay", "decay_frequency": "duration",
+      "decay_interval_days": 20, "decay_pct": 1.0, "acceleration_per_step_pct": 0.5,
+      "rationale": "중단 20거래일마다 1%에서 시작해 단계당 0.5%p씩 감쇠율을 높이는 지속기간 비례안"
+    }
+  }
+}

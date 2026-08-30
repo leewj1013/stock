@@ -15,6 +15,7 @@ from .app import (
     load_env,
     naver_rows,
     parse_time,
+    sell_cooldown_days,
     stock_name,
     write_error_log,
 )
@@ -35,6 +36,9 @@ class SellAlert:
     return_pct: float
     reason: str
     holding_days: int | None = None
+    sale_type: str = "full"
+    stage: str = ""
+    quantity_fraction: float = 1.0
 
 
 def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
@@ -44,13 +48,22 @@ def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
         return [row for row in csv.DictReader(file) if row.get("ticker") and row.get("entry_price")]
 
 
-def check_position(
+def _evaluate_position(
     position: dict[str, str],
     end_day: date,
-    previous_return: float | None = None,
-    max_return: float | None = None,
-    price_rows: list[list] | None = None,
-) -> SellAlert | None:
+    previous_return: float | None,
+    max_return: float | None,
+    price_rows: list[list] | None,
+    partial_taken: bool,
+    remaining_quantity: int,
+    sell_policy: dict | None,
+) -> dict | None:
+    """Single source of truth for sell-trigger evaluation.
+
+    check_position() and position_snapshot() both need these same trigger
+    booleans; computing them once here keeps the live alert and the persisted
+    audit row from drifting apart.
+    """
     ticker = position["ticker"].strip()
     entry_price = int(float(position["entry_price"]))
     rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=90), end_day)
@@ -62,32 +75,99 @@ def check_position(
     ma20 = mean(closes)
     return_pct = (close - entry_price) / entry_price * 100
     atr20_pct = average_true_range_pct(rows)
-    stop_loss_pct = -max(abs(env_float("SELL_LOSS_PCT", 5)), atr20_pct * env_float("SELL_ATR_MULTIPLIER", 2))
+    policy = sell_policy or {}
+    fixed_stop_pct = float(policy.get("stop_loss_pct", env_float("SELL_LOSS_PCT", 5)))
+    atr_stop_multiplier = float(policy.get("stop_atr_multiplier", env_float("SELL_ATR_MULTIPLIER", 2)))
+    stop_loss_pct = -max(abs(fixed_stop_pct), atr20_pct * atr_stop_multiplier)
     reasons: list[str] = []
     stop_triggered = return_pct <= stop_loss_pct
     if stop_triggered:
         reasons.append(f"손절 기준 {stop_loss_pct:.1f}% 이탈")
-    previous_ma20 = mean([int(row[4]) for row in rows[-21:-1]]) if len(rows) >= 21 else mean(closes[:-1])
-    ma20_triggered = close < ma20 and closes[-2] < previous_ma20
+    confirm_days = max(1, int(policy.get("ma_confirm_days", 2)))
+    fixed_band_pct = max(0.0, float(policy.get("ma_band_pct", 0.0)))
+    atr_band_multiplier = max(0.0, float(policy.get("ma_atr_band_multiplier", 0.0)))
+    band_pct = max(fixed_band_pct, atr20_pct * atr_band_multiplier)
+    ma_breaks = []
+    for offset in range(confirm_days):
+        cursor = len(rows) - 1 - offset
+        if cursor < 19:
+            ma_breaks.append(False)
+            continue
+        window = [int(item[4]) for item in rows[cursor - 19:cursor + 1]]
+        session_ma20 = mean(window)
+        ma_breaks.append(int(rows[cursor][4]) < session_ma20 * (1 - band_pct / 100))
+    ma20_triggered = len(ma_breaks) == confirm_days and all(ma_breaks)
     if ma20_triggered:
-        reasons.append("20일선 2회 연속 이탈")
+        band_text = f", 완충 {band_pct:.2f}%" if band_pct else ""
+        reasons.append(f"20일선 {confirm_days}회 연속 이탈{band_text}")
+    drop_triggered = False
     if previous_return is not None:
         drop = previous_return - return_pct
         if drop >= env_float("SELL_DROP_PCT", 3) and (ma20_triggered or stop_triggered):
             reasons.append(f"직전 평가 대비 수익률 {drop:.1f}%p 악화")
+            drop_triggered = True
+    giveback_triggered = False
     if max_return is not None and max_return >= env_float("SELL_PROTECT_PROFIT_PCT", 5):
         giveback = max_return - return_pct
         if giveback >= env_float("SELL_GIVEBACK_PCT", 4) and (ma20_triggered or stop_triggered):
             reasons.append(f"고점 수익률 {max_return:.1f}% 대비 {giveback:.1f}%p 반납")
+            giveback_triggered = True
     entry_time = parse_time(position.get("entry_date", ""))
     holding_days = (end_day - entry_time.date()).days if entry_time else None
+    time_stop_triggered = False
     if holding_days is not None and holding_days >= int(env_float("SELL_TIME_STOP_DAYS", 10)) and return_pct <= env_float("SELL_TIME_STOP_MIN_RETURN_PCT", 0):
         reasons.append(f"{holding_days}일 보유 후 기대수익 미달")
-    if not reasons:
-        return None
+        time_stop_triggered = True
+    sale_type, stage, quantity_fraction = "full", "", 1.0
+    # Initial thresholds are conservative placeholders and must be tuned by
+    # backtest before any real-account integration.
+    if not reasons and partial_taken and return_pct >= env_float("TAKE_PROFIT_2_PCT", 20):
+        reasons.append(f"2차 익절 목표 +{env_float('TAKE_PROFIT_2_PCT', 20):.1f}% 도달")
+        stage = "take_profit_2"
+    elif not reasons and not partial_taken and remaining_quantity == 1 and return_pct >= env_float("TAKE_PROFIT_2_PCT", 20):
+        reasons.append(f"정수수량 제약으로 2차 익절 목표 +{env_float('TAKE_PROFIT_2_PCT', 20):.1f}%에서 1주 전량 매도")
+        stage = "take_profit_2"
+    elif not reasons and not partial_taken and remaining_quantity >= 2 and return_pct >= env_float("TAKE_PROFIT_1_PCT", 10):
+        reasons.append(f"1차 익절 목표 +{env_float('TAKE_PROFIT_1_PCT', 10):.1f}% 도달")
+        sale_type = "partial"
+        stage = "take_profit_1"
+        quantity_fraction = max(0.01, min(0.99, env_float("TAKE_PROFIT_1_SELL_RATIO", 50) / 100))
+    return {
+        "ticker": ticker, "entry_price": entry_price, "close": close, "ma20": ma20,
+        "return_pct": return_pct, "atr20_pct": atr20_pct, "stop_loss_pct": stop_loss_pct,
+        "stop_triggered": stop_triggered, "ma20_triggered": ma20_triggered,
+        "drop_triggered": drop_triggered, "giveback_triggered": giveback_triggered,
+        "holding_days": holding_days, "time_stop_triggered": time_stop_triggered,
+        "reasons": reasons, "sale_type": sale_type, "stage": stage, "quantity_fraction": quantity_fraction,
+    }
 
+
+def _alert_from_evaluation(position: dict[str, str], evaluation: dict) -> SellAlert | None:
+    if not evaluation["reasons"]:
+        return None
+    ticker = evaluation["ticker"]
     name = stock_name(ticker, position.get("name", ticker).strip() or ticker)
-    return SellAlert(ticker, name, entry_price, close, return_pct, ", ".join(reasons), holding_days)
+    return SellAlert(
+        ticker, name, evaluation["entry_price"], evaluation["close"], evaluation["return_pct"],
+        ", ".join(evaluation["reasons"]), evaluation["holding_days"],
+        evaluation["sale_type"], evaluation["stage"], evaluation["quantity_fraction"],
+    )
+
+
+def check_position(
+    position: dict[str, str],
+    end_day: date,
+    previous_return: float | None = None,
+    max_return: float | None = None,
+    price_rows: list[list] | None = None,
+    partial_taken: bool = False,
+    remaining_quantity: int = 0,
+    sell_policy: dict | None = None,
+) -> SellAlert | None:
+    evaluation = _evaluate_position(position, end_day, previous_return, max_return, price_rows, partial_taken, remaining_quantity, sell_policy)
+    if evaluation is None:
+        return None
+    return _alert_from_evaluation(position, evaluation)
 
 
 def _position_returns(path: str, maximum: bool) -> dict[str, float]:
@@ -131,10 +211,11 @@ def position_snapshot(
     end_day: date,
     previous_return: float | None = None,
     max_return: float | None = None,
+    partial_taken: bool = False,
+    remaining_quantity: int = 0,
 ) -> tuple[SellAlert | None, dict]:
     ticker = position["ticker"].strip()
     entry_price = int(float(position["entry_price"]))
-    rows = naver_rows(ticker, end_day - timedelta(days=90), end_day)
     base = {
         "position_id": position_id(position),
         "checked_at": datetime.now().isoformat(timespec="seconds"),
@@ -151,56 +232,54 @@ def position_snapshot(
         "return_drop_triggered": 0,
         "giveback_triggered": 0,
         "time_stop_triggered": 0,
+        "take_profit_triggered": 0,
+        "sale_type": "full",
+        "stage": "",
         "decision": "NO_DATA",
         "reasons": "insufficient_history",
     }
-    if len(rows) < 20 or entry_price <= 0:
+    evaluation = _evaluate_position(position, end_day, previous_return, max_return, None, partial_taken, remaining_quantity, None)
+    if evaluation is None:
         return None, base
 
-    closes = [int(row[4]) for row in rows[-20:]]
-    close = closes[-1]
-    ma20 = mean(closes)
-    return_pct = (close - entry_price) / entry_price * 100
-    atr20_pct = average_true_range_pct(rows)
-    dynamic_stop_loss_pct = -max(abs(env_float("SELL_LOSS_PCT", 5)), atr20_pct * env_float("SELL_ATR_MULTIPLIER", 2))
-    stop_triggered = return_pct <= dynamic_stop_loss_pct
-    previous_ma20 = mean([int(row[4]) for row in rows[-21:-1]]) if len(rows) >= 21 else mean(closes[:-1])
-    ma20_triggered = close < ma20 and closes[-2] < previous_ma20
-    drop_triggered = previous_return is not None and previous_return - return_pct >= env_float("SELL_DROP_PCT", 3)
-    giveback_triggered = max_return is not None and max_return >= env_float("SELL_PROTECT_PROFIT_PCT", 5) and max_return - return_pct >= env_float("SELL_GIVEBACK_PCT", 4)
-    alert = check_position(position, end_day, previous_return, max_return, rows)
-    entry_date = position.get("entry_date", "")[:10]
-    try:
-        holding_days = (end_day - datetime.fromisoformat(entry_date).date()).days
-    except ValueError:
-        holding_days = None
-    time_stop_triggered = holding_days is not None and holding_days >= int(env_float("SELL_TIME_STOP_DAYS", 10)) and return_pct <= env_float("SELL_TIME_STOP_MIN_RETURN_PCT", 0)
+    alert = _alert_from_evaluation(position, evaluation)
     return alert, {
         **base,
         "name": alert.name if alert else position.get("name", ticker),
-        "close": close,
-        "holding_days": holding_days,
-        "return_pct": return_pct,
-        "drawdown_from_peak_pct": None if max_return is None else max_return - return_pct,
-        "ma20": ma20,
-        "atr20_pct": atr20_pct,
-        "dynamic_stop_loss_pct": dynamic_stop_loss_pct,
-        "distance_ma20_pct": (close / ma20 - 1) * 100 if ma20 else None,
-        "stop_loss_triggered": int(stop_triggered),
-        "ma20_break_triggered": int(ma20_triggered),
-        "return_drop_triggered": int(drop_triggered),
-        "giveback_triggered": int(giveback_triggered),
-        "time_stop_triggered": int(time_stop_triggered),
+        "close": evaluation["close"],
+        "holding_days": evaluation["holding_days"],
+        "return_pct": evaluation["return_pct"],
+        "drawdown_from_peak_pct": None if max_return is None else max_return - evaluation["return_pct"],
+        "ma20": evaluation["ma20"],
+        "atr20_pct": evaluation["atr20_pct"],
+        "dynamic_stop_loss_pct": evaluation["stop_loss_pct"],
+        "distance_ma20_pct": (evaluation["close"] / evaluation["ma20"] - 1) * 100 if evaluation["ma20"] else None,
+        "stop_loss_triggered": int(evaluation["stop_triggered"]),
+        "ma20_break_triggered": int(evaluation["ma20_triggered"]),
+        "return_drop_triggered": int(evaluation["drop_triggered"]),
+        "giveback_triggered": int(evaluation["giveback_triggered"]),
+        "time_stop_triggered": int(evaluation["time_stop_triggered"]),
+        "take_profit_triggered": int(bool(alert and alert.stage.startswith("take_profit"))),
+        "sale_type": evaluation["sale_type"],
+        "stage": evaluation["stage"],
         "decision": "SELL" if alert else "HOLD",
-        "reasons": alert.reason if alert else "",
+        "reasons": ", ".join(evaluation["reasons"]),
     }
 
 
-def find_alerts(positions: list[dict[str, str]], end_day: date, run_id: str | None = None) -> list[SellAlert]:
+def find_alerts(
+    positions: list[dict[str, str]],
+    end_day: date,
+    run_id: str | None = None,
+    virtual_states: dict[str, dict] | None = None,
+    virtual_quantities: dict[str, int] | None = None,
+) -> list[SellAlert]:
     previous = previous_returns()
     best = max_returns()
     alerts: list[SellAlert] = []
     snapshots: list[dict] = []
+    virtual_states = virtual_states or {}
+    virtual_quantities = virtual_quantities or {}
     for position in positions:
         ticker = position["ticker"].strip()
         key = position_id(position)
@@ -222,10 +301,18 @@ def find_alerts(positions: list[dict[str, str]], end_day: date, run_id: str | No
                 })
             continue
         if run_id:
-            alert, snapshot = position_snapshot(position, end_day, previous.get(key), best.get(key))
+            state = virtual_states.get(ticker, {})
+            alert, snapshot = position_snapshot(
+                position, end_day, previous.get(key), best.get(key),
+                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)),
+            )
             snapshots.append(snapshot)
         else:
-            alert = check_position(position, end_day, previous.get(key), best.get(key))
+            state = virtual_states.get(ticker, {})
+            alert = check_position(
+                position, end_day, previous.get(key), best.get(key), None,
+                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)),
+            )
         if alert:
             alerts.append(alert)
     if run_id:
@@ -236,6 +323,10 @@ def find_alerts(positions: list[dict[str, str]], end_day: date, run_id: str | No
 
 
 def alert_summary(alert: SellAlert) -> str:
+    if alert.stage == "take_profit_1":
+        return "1차 부분익절"
+    if alert.stage == "take_profit_2":
+        return "2차 잔량익절"
     if "반납" in alert.reason:
         return "고점 대비 수익 반납"
     if alert.return_pct <= -abs(env_float("SELL_LOSS_PCT", 5)):
@@ -246,6 +337,10 @@ def alert_summary(alert: SellAlert) -> str:
 
 
 def alert_urgency(alert: SellAlert) -> str:
+    if alert.stage == "take_profit_1":
+        return "🟢 1차 부분익절"
+    if alert.stage == "take_profit_2":
+        return "🟢 2차 잔량익절"
     if "손절 기준" in alert.reason:
         return "🔴 자동 매도"
     if "반납" in alert.reason:
@@ -269,12 +364,14 @@ def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) 
             f"현재가 {alert.close:,}원 · 진입가 {alert.entry_price:,}원",
             f"수익률 {alert.return_pct:+.2f}%" + (f" · 보유 {alert.holding_days}일" if alert.holding_days is not None else ""),
             f"사유: {alert.reason}",
+            "재추천 제한: 없음(잔량 보유 중)" if alert.sale_type == "partial" else f"재추천 제한: {sell_cooldown_days(alert.reason, alert.stage):.0f}일",
         ])
         if execution:
             realized_rate = execution["realized_profit_loss"] / execution["cost_basis"] * 100 if execution["cost_basis"] else 0
-            lines.append(f"가상매도 완료: {execution['quantity']:,}주 · 실현손익 {execution['realized_profit_loss']:+,}원({realized_rate:+.2f}%)")
+            label = "부분매도" if execution.get("sale_type") == "partial" else "전량매도"
+            lines.append(f"가상 {label} 완료: {execution['quantity']:,}주 · 실현손익 {execution['realized_profit_loss']:+,}원({realized_rate:+.2f}%)")
     if virtual_result and virtual_result.get("sold"):
-        lines.extend(["", f"매도 후 현금: {virtual_result.get('cash', 0):,}원", "재추천 제한: 3일"])
+        lines.extend(["", f"매도 후 현금: {virtual_result.get('cash', 0):,}원"])
     lines.append("조건 기반 매도 검토 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
 
@@ -282,7 +379,7 @@ def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) 
 def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
     from .csv_schema import ensure_header, migrate_sell_alert_row
 
-    header = ["created_at", "ticker", "name", "entry_price", "close", "return_pct", "summary", "reason"]
+    header = ["created_at", "ticker", "name", "entry_price", "close", "return_pct", "summary", "reason", "sale_type", "stage", "quantity_fraction"]
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     ensure_header(path, header, migrate_sell_alert_row)
     exists = os.path.exists(path)
@@ -291,7 +388,7 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
         if not exists:
             writer.writerow(header)
         for alert in alerts:
-            writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason])
+            writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason, alert.sale_type, alert.stage, f"{alert.quantity_fraction:.4f}"])
 
 
 def run() -> str:
@@ -303,10 +400,17 @@ def run() -> str:
     end_day = latest_naver_trading_day()
     run_id = start_run("sell_check", end_day.isoformat())
     try:
-        alerts = find_alerts(read_positions(), end_day, run_id)
+        from .data_store import virtual_position_states, virtual_trader_state
+        virtual_state = virtual_trader_state()
+        quantities = {holding["ticker"]: int(holding["quantity"]) for holding in virtual_state["holdings"]}
+        alerts = find_alerts(read_positions(), end_day, run_id, virtual_position_states(), quantities)
         write_log(alerts)
         from .data_store import virtual_sell
-        virtual_result = virtual_sell([{"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason} for alert in alerts])
+        virtual_result = virtual_sell([
+            {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
+             "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
+            for alert in alerts
+        ])
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")

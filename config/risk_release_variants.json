@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "description": "Isolated backtest-only risk release policies. Loading this file never changes live environment variables, DB state, or virtual-account state.",
+  "common": {
+    "drawdown_trigger_pct": 10.0,
+    "hac_lag": 5,
+    "fdr_alpha": 0.05
+  },
+  "variants": {
+    "variant_A": {
+      "label": "current_boundary_release",
+      "mode": "baseline",
+      "rationale": "현재 코드 그대로: 최고수위 대비 낙폭이 -10%보다 작아질 때 해제. 비교 기준이며 운영 설정을 뜻하지 않는다.",
+      "reentry_scale": 0.0
+    },
+    "variant_B_5": {
+      "label": "low_rebound_5pct",
+      "mode": "rebound",
+      "rationale": "중단 이후 관측 저점에서 5% 반등하면 같은 낙폭 에피소드의 차단을 해제해 빠른 회복 참여 가능성을 시험한다.",
+      "rebound_pct": 5.0,
+      "reentry_scale": 1.0
+    },
+    "variant_B_10": {
+      "label": "low_rebound_10pct",
+      "mode": "rebound",
+      "rationale": "저점 대비 10% 반등을 요구해 5%안보다 거짓 반등 재진입을 줄이는 민감도 비교안이다.",
+      "rebound_pct": 10.0,
+      "reentry_scale": 1.0
+    },
+    "variant_C_20_30": {
+      "label": "cooldown_20d_reenter_30pct",
+      "mode": "cooldown",
+      "rationale": "20거래일 중단 후 정상 주문크기의 30%로 제한 재진입해 시간 기반 탈출과 방어력의 균형을 시험한다.",
+      "cooldown_days": 20,
+      "reentry_scale": 0.3
+    },
+    "variant_C_60_50": {
+      "label": "cooldown_60d_reenter_50pct",
+      "mode": "cooldown",
+      "rationale": "60거래일 중단 후 정상 주문크기의 50%로 제한 재진입하는 보수적 시간 기반 비교안이다.",
+      "cooldown_days": 60,
+      "reentry_scale": 0.5
+    },
+    "variant_D": {
+      "label": "half_trigger_hysteresis",
+      "mode": "hysteresis",
+      "rationale": "낙폭이 -5% 이내로 회복돼야 해제한다. 현재 코드의 -10% 경계 해제보다 엄격하므로 잠금 해소 여부를 확인하는 음성 대조 역할도 한다.",
+      "release_drawdown_pct": 5.0,
+      "reentry_scale": 1.0
+    },
+    "variant_E_3": {
+      "label": "reduced_slot_3pct",
+      "mode": "reduced",
+      "rationale": "낙폭 상태에서도 정상 10% 슬롯의 30%인 3% 주문을 허용해 완전 현금 잠금을 피하는 보수적 단계축소안이다.",
+      "reentry_scale": 0.3
+    },
+    "variant_E_5": {
+      "label": "reduced_slot_5pct",
+      "mode": "reduced",
+      "rationale": "낙폭 상태에서도 정상 10% 슬롯의 50%인 5% 주문을 허용해 회복력과 하락방어의 민감도를 비교한다.",
+      "reentry_scale": 0.5
+    }
+  }
+}

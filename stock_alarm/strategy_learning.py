@@ -35,7 +35,11 @@ def active_weights(path: str = DB_PATH) -> dict[str, float]:
 
 
 def adjusted_score(parts: dict[str, float], path: str = DB_PATH) -> float:
-    weights = active_weights(path)
+    return score_with_weights(parts, active_weights(path))
+
+
+def score_with_weights(parts: dict[str, float], weights: dict[str, float] | None = None) -> float:
+    weights = weights or DEFAULT_WEIGHTS
     positive = sum(float(parts.get(factor) or 0) * weights[factor] for factor in FACTORS)
     return round(max(0.0, min(100.0, positive - float(parts.get("performance_penalty") or 0))), 2)
 
@@ -123,36 +127,164 @@ def _drawdown(values: list[float]) -> float:
     return round(worst, 4)
 
 
-def learn(path: str = DB_PATH, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    rows = list(reversed(recent_recommendation_outcomes(250, path)))
-    usable = [(row, objective(row)) for row in rows]
-    usable = [(row, value) for row, value in usable if value is not None]
-    minimum = int(os.environ.get("LEARNING_MIN_SAMPLES", "100"))
-    if len(usable) < minimum:
-        return {"status": "insufficient_data", "sample_count": len(usable), "minimum": minimum}
-    validation_size = min(20, max(10, len(usable) // 5))
-    training, validation = usable[:-validation_size], usable[-validation_size:]
-    current = active_weights(path)
-    max_change = float(os.environ.get("LEARNING_MAX_DAILY_WEIGHT_CHANGE", "0.05"))
+def return_distribution_p_value(proposed: list[float], baseline: list[float]) -> float:
+    """One-sided Mann-Whitney U test for proposed returns being higher.
+
+    This dependency-free non-parametric test is intentionally conservative for
+    the paper-trading promotion gate. Ties use average ranks and tie correction.
+    """
+    if not proposed or not baseline:
+        return 1.0
+    tagged = [(float(value), 0) for value in proposed] + [(float(value), 1) for value in baseline]
+    tagged.sort(key=lambda item: item[0])
+    rank_sum = 0.0
+    tie_sizes = []
+    index = 0
+    while index < len(tagged):
+        end = index + 1
+        while end < len(tagged) and tagged[end][0] == tagged[index][0]:
+            end += 1
+        average_rank = (index + 1 + end) / 2
+        rank_sum += average_rank * sum(group == 0 for _value, group in tagged[index:end])
+        tie_sizes.append(end - index)
+        index = end
+    n1, n2 = len(proposed), len(baseline)
+    u = rank_sum - n1 * (n1 + 1) / 2
+    total = n1 + n2
+    tie_term = sum(size ** 3 - size for size in tie_sizes)
+    variance = n1 * n2 / 12 * ((total + 1) - tie_term / max(total * (total - 1), 1))
+    if variance <= 0:
+        return 1.0
+    z = (u - n1 * n2 / 2 - 0.5) / math.sqrt(variance)
+    return round(max(0.0, min(1.0, 0.5 * math.erfc(z / math.sqrt(2)))), 8)
+
+
+def _proposed_weights(training: list[tuple[dict, float]], current: dict[str, float], max_change: float) -> dict[str, float]:
     proposed = {}
     for factor in FACTORS:
         xs = [float(json.loads(row["factors_json"]).get(factor, 0)) for row, _value in training]
         ys = [float(value) for _row, value in training]
         target = max(0.75, min(1.25, 1 + _correlation(xs, ys) * 0.15))
         proposed[factor] = round(max(current[factor] - max_change, min(current[factor] + max_change, target)), 4)
-    def ranked_returns(weights):
-        scored = []
-        for row, value in validation:
-            factors = json.loads(row["factors_json"])
-            score = sum(float(factors.get(factor, 0)) * weights[factor] for factor in FACTORS)
-            scored.append((score, float(value)))
-        scored.sort(reverse=True)
-        return [value for _score, value in scored[: max(1, len(scored) // 2)]]
-    baseline_values, proposed_values = ranked_returns(current), ranked_returns(proposed)
+    return proposed
+
+
+def _ranked_returns(validation: list[tuple[dict, float]], weights: dict[str, float]) -> list[float]:
+    scored = []
+    for row, value in validation:
+        factors = json.loads(row["factors_json"])
+        score = sum(float(factors.get(factor, 0)) * weights[factor] for factor in FACTORS)
+        scored.append((score, str(row.get("pick_date") or ""), str(row.get("ticker") or ""), float(value)))
+    scored.sort(reverse=True)
+    return [value for _score, _date, _ticker, value in scored[: max(1, len(scored) // 2)]]
+
+
+def _fold_summary(index: int, baseline_values: list[float], proposed_values: list[float], alpha: float, validation_count: int | None = None) -> dict:
     baseline_return, proposed_return = mean(baseline_values), mean(proposed_values)
     baseline_dd, proposed_dd = _drawdown(baseline_values), _drawdown(proposed_values)
-    accepted = proposed_return > baseline_return and proposed_dd >= baseline_dd - 2
+    p_value = return_distribution_p_value(proposed_values, baseline_values)
+    improved = proposed_return > baseline_return
+    drawdown_ok = proposed_dd >= baseline_dd - 2
+    significant = p_value < alpha
+    wins = [value for value in proposed_values if value > 0]
+    losses = [value for value in proposed_values if value < 0]
+    profit_factor = sum(wins) / abs(sum(losses)) if losses else None
+    return {
+        "fold": index,
+        "sample_count": validation_count if validation_count is not None else len(proposed_values),
+        "selected_count": len(proposed_values),
+        "baseline_return": round(baseline_return, 4),
+        "proposed_return": round(proposed_return, 4),
+        "baseline_mdd": baseline_dd,
+        "proposed_mdd": proposed_dd,
+        "p_value": p_value,
+        "win_rate_pct": round(len(wins) / len(proposed_values) * 100, 2) if proposed_values else 0.0,
+        "profit_factor": None if profit_factor is None else round(profit_factor, 4),
+        "passed": improved and drawdown_ok and significant,
+        "checks": {"return_improved": improved, "mdd_within_2pp": drawdown_ok, "significant": significant},
+    }
+
+
+def walk_forward_validate(
+    usable: list[tuple[dict, float]],
+    current: dict[str, float] | None = None,
+    minimum: int = 300,
+    validation_size: int = 60,
+    fold_count: int = 3,
+    alpha: float = 0.05,
+    max_change: float = 0.05,
+) -> dict:
+    minimum = max(300, int(minimum))
+    validation_size = max(60, int(validation_size))
+    fold_count = max(3, int(fold_count))
+    required = max(minimum, validation_size * fold_count + 1)
+    if len(usable) < required:
+        return {
+            "status": "insufficient_data", "sample_count": len(usable), "minimum": required,
+            "folds": [], "p_value": None,
+            "decision_reason": f"유효 표본 부족: {len(usable)}/{required}건; 기존 가중치 유지",
+        }
+    current = current or dict(DEFAULT_WEIGHTS)
+    validation_start = len(usable) - validation_size * fold_count
+    folds = []
+    all_baseline, all_proposed = [], []
+    for fold_index in range(fold_count):
+        start = validation_start + fold_index * validation_size
+        stop = start + validation_size
+        training, validation = usable[:start], usable[start:stop]
+        fold_weights = _proposed_weights(training, current, max_change)
+        baseline_values = _ranked_returns(validation, current)
+        proposed_values = _ranked_returns(validation, fold_weights)
+        folds.append(_fold_summary(fold_index + 1, baseline_values, proposed_values, alpha, len(validation)))
+        all_baseline.extend(baseline_values)
+        all_proposed.extend(proposed_values)
+    proposed = _proposed_weights(usable, current, max_change)
+    baseline_values, proposed_values = all_baseline, all_proposed
+    baseline_return, proposed_return = mean(baseline_values), mean(proposed_values)
+    baseline_dd, proposed_dd = _drawdown(baseline_values), _drawdown(proposed_values)
+    p_value = return_distribution_p_value(proposed_values, baseline_values)
+    accepted = all(fold["passed"] for fold in folds) and p_value < alpha
+    failed_checks = []
+    if not all(fold["passed"] for fold in folds):
+        failed_checks.append("one_or_more_walk_forward_folds_failed")
+    if p_value >= alpha:
+        failed_checks.append("aggregate_significance_failed")
+    decision_reason = "all_walk_forward_folds_improved_and_significant" if accepted else ",".join(failed_checks)
+    return {
+        "status": "promoted" if accepted else "rejected",
+        "sample_count": len(usable), "weights": proposed, "folds": folds,
+        "p_value": p_value, "decision_reason": decision_reason,
+        "objective_return": round(proposed_return, 4), "baseline_return": round(baseline_return, 4),
+        "max_drawdown": proposed_dd, "baseline_max_drawdown": baseline_dd,
+    }
+
+
+def learn(path: str = DB_PATH, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    minimum = max(300, int(os.environ.get("LEARNING_MIN_SAMPLES", "300")))
+    validation_size = max(60, int(os.environ.get("LEARNING_VALIDATION_MIN_SAMPLES", "60")))
+    fold_count = max(3, int(os.environ.get("LEARNING_VALIDATION_FOLDS", "3")))
+    maximum = max(minimum, int(os.environ.get("LEARNING_MAX_SAMPLES", "1000")))
+    alpha = float(os.environ.get("LEARNING_SIGNIFICANCE_LEVEL", "0.05"))
+    rows = list(reversed(recent_recommendation_outcomes(maximum, path)))
+    usable = [(row, objective(row)) for row in rows]
+    usable = [(row, value) for row, value in usable if value is not None]
+    current = active_weights(path)
+    validation = walk_forward_validate(
+        usable, current, minimum, validation_size, fold_count, alpha,
+        float(os.environ.get("LEARNING_MAX_DAILY_WEIGHT_CHANGE", "0.05")),
+    )
+    if validation["status"] == "insufficient_data":
+        return validation
+    proposed = validation["weights"]
+    folds = validation["folds"]
+    p_value = validation["p_value"]
+    accepted = validation["status"] == "promoted"
+    proposed_return = validation["objective_return"]
+    baseline_return = validation["baseline_return"]
+    proposed_dd = validation["max_drawdown"]
+    baseline_dd = validation["baseline_max_drawdown"]
+    decision_reason = validation["decision_reason"]
     active = active_strategy_version(path)
     if active and active.get("effective_date"):
         active_period = [(row, value) for row, value in usable if str(row.get("pick_date") or "") >= str(active["effective_date"])]
@@ -169,8 +301,10 @@ def learn(path: str = DB_PATH, now: datetime | None = None) -> dict:
                     "baseline_return": float(active.get("baseline_return") or 0), "max_drawdown": _drawdown(realized),
                     "baseline_max_drawdown": float(active.get("baseline_max_drawdown") or 0), "status": "active",
                     "rollback_version": active.get("version_id"), "notes": "automatic performance rollback",
+                    "validation_json": json.dumps(folds, ensure_ascii=False), "p_value": p_value,
+                    "decision_reason": "active_strategy_negative_return_and_drawdown_breach",
                 }, path)
-                return {"status": "rolled_back", "version_id": version_id, "sample_count": len(usable), "weights": json.loads(rollback_weights)}
+                return {"status": "rolled_back", "version_id": version_id, "sample_count": len(usable), "weights": json.loads(rollback_weights), "folds": folds, "p_value": p_value, "decision_reason": "active_strategy_negative_return_and_drawdown_breach"}
     version_id = f"learned-{now:%Y%m%d-%H%M%S}"
     save_strategy_version({
         "version_id": version_id, "created_at": now.isoformat(timespec="seconds"),
@@ -178,21 +312,34 @@ def learn(path: str = DB_PATH, now: datetime | None = None) -> dict:
         "sample_count": len(usable), "objective_return": round(proposed_return, 4),
         "baseline_return": round(baseline_return, 4), "max_drawdown": proposed_dd,
         "baseline_max_drawdown": baseline_dd, "status": "active" if accepted else "rejected",
-        "rollback_version": active.get("version_id"), "notes": "walk-forward validation",
+        "rollback_version": active.get("version_id"), "notes": f"{fold_count}-fold walk-forward validation",
+        "validation_json": json.dumps(folds, ensure_ascii=False), "p_value": p_value,
+        "decision_reason": decision_reason,
     }, path)
-    return {"status": "promoted" if accepted else "rejected", "version_id": version_id, "sample_count": len(usable), "weights": proposed}
+    return {"status": "promoted" if accepted else "rejected", "version_id": version_id, "sample_count": len(usable), "weights": proposed, "folds": folds, "p_value": p_value, "decision_reason": decision_reason}
+
+
+def decision_message(result: dict) -> str:
+    titles = {"promoted": "전략 자동승격", "rejected": "전략 승격거절", "rolled_back": "전략 자동복귀", "insufficient_data": "전략 학습보류"}
+    lines = [f"[{titles.get(result.get('status'), '전략 학습결과')}]", f"표본: {result.get('sample_count', 0)}건"]
+    for fold in result.get("folds") or []:
+        lines.append(
+            f"구간{fold['fold']}: 기존 {fold['baseline_return']:+.2f}% → 신규 {fold['proposed_return']:+.2f}% "
+            f"· MDD {fold['proposed_mdd']:.2f}% · p={fold['p_value']:.4f} · {'통과' if fold['passed'] else '실패'}"
+        )
+    p_value = result.get("p_value")
+    lines.append(f"통합 p-value: {p_value:.4f}" if p_value is not None else "통합 p-value: N/A")
+    lines.append(f"판단: {result.get('decision_reason', '')}")
+    if result.get("status") in {"promoted", "rolled_back"}:
+        lines.append("다음 거래일부터 적용")
+    return "\n".join(lines)
 
 
 def run() -> dict:
     sync_outcomes()
     result = learn()
-    if result.get("status") in {"promoted", "rolled_back"}:
-        from .notifier import send_notification
-        title = "전략 자동승격" if result["status"] == "promoted" else "전략 자동복귀"
-        send_notification(
-            f"[{title}]\n버전: {result.get('version_id')}\n표본: {result.get('sample_count')}건\n다음 거래일부터 적용",
-            event_type="strategy_change",
-        )
+    from .notifier import send_notification
+    send_notification(decision_message(result), event_type="strategy_change")
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return result
 
