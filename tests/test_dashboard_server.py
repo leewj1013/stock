@@ -4,7 +4,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import RemoteReadOnlyHandler, allowed_origin, prices, remote_setup_page, trader_payload, valid_remote_token
+from stock_alarm.dashboard_server import RemoteReadOnlyHandler, allowed_origin, prices, profile_db_path, remote_setup_page, trader_payload, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
@@ -46,6 +46,25 @@ class DashboardServerTest(unittest.TestCase):
         payload = trader_payload()
 
         self.assertEqual("항공화물운송과물류", payload["holdings"][0]["sector"])
+
+    def test_profile_db_path_falls_back_to_aggressive_for_unknown_names(self):
+        self.assertEqual(profile_db_path("aggressive"), profile_db_path("not-a-real-profile"))
+        self.assertNotEqual(profile_db_path("aggressive"), profile_db_path("neutral"))
+
+    @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_price_quality", return_value=[])
+    @patch("stock_alarm.dashboard_server.active_strategy_version", return_value={})
+    @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
+    @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
+    @patch("stock_alarm.dashboard_server.virtual_trader_state", return_value={"cash": 0, "holdings": [], "total_equity": 0, "holdings_value": 0})
+    @patch("stock_alarm.dashboard_server.prices", return_value={})
+    def test_trader_payload_routes_neutral_profile_to_its_own_db(self, prices_mock, state, *_mocks):
+        payload = trader_payload("neutral")
+
+        self.assertEqual("neutral", payload["profile"])
+        state.assert_called_with({}, path="data/stock_alarm_neutral.db")
+        prices_mock.assert_called_with("data/stock_alarm_neutral.db")
 
 
 class RemoteReadOnlyHandlerTest(unittest.TestCase):

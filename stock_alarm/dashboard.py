@@ -880,6 +880,10 @@ def render() -> str:
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
     trader_tab = """
+<div class="trader-profile-toggle" role="tablist" aria-label="가상 트레이더 성향 선택">
+  <button type="button" class="profile-button" id="profile-aggressive" data-profile="aggressive" aria-pressed="true">적극투자형</button>
+  <button type="button" class="profile-button" id="profile-neutral" data-profile="neutral" aria-pressed="false">위험중립형</button>
+</div>
 <div class="trader-account-grid">
   <div class="trader-balance primary"><span>총자산</span><strong id="trader-total-equity">0원</strong></div>
   <div class="trader-balance"><span>주문 가능 현금</span><strong id="trader-cash">0원</strong></div>
@@ -955,6 +959,7 @@ details{{min-width:0;background:#eef2f6;border-radius:12px;margin:20px 0}} detai
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:#fafafa;position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid #d0d5dd;background:white;border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:#111;color:white;border-color:#111}}
+.trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid #d0d5dd;background:#fff;color:#475569;font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:#eef6ff;border-color:#2563eb;color:#1d4ed8}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:white;color:#111827;border:1px solid #e5e7eb;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .trader-balance.primary{{background:#111827;color:white}} .trader-balance span{{display:block;color:#64748b}} .trader-balance.primary span{{color:#cbd5e1}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid #d0d5dd;border-radius:8px}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:#111;color:white;cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:#475569}}
 .trader-risk-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 16px}} .trader-risk-grid>div{{min-width:0;background:#fff;border:1px solid #dbe3ec;border-radius:12px;padding:14px 16px}} .trader-risk-grid span,.trader-risk-grid b{{display:block}} .trader-risk-grid b>span{{display:inline;color:inherit;font-size:inherit}} .trader-risk-grid span{{color:#64748b;font-size:13px}} .trader-risk-grid b{{margin-top:5px;overflow-wrap:anywhere}} .order-status{{overflow:visible}} .order-status>.trader-status{{margin:0;background:#f8fafc;border-color:#e2e8f0}} .account-actions{{background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px #ddd}} .account-actions summary{{font-size:18px}} .account-actions .trader-controls{{margin-top:0}}
@@ -998,6 +1003,7 @@ const requestedRemoteApi = remoteMode ? (new URLSearchParams(location.search).ge
 if(requestedRemoteApi.startsWith("https://")) localStorage.setItem("stockAlarm.remoteApiUrl", requestedRemoteApi.endsWith("/") ? requestedRemoteApi.slice(0,-1) : requestedRemoteApi);
 let traderApiBase = remoteMode ? (localStorage.getItem("stockAlarm.remoteApiUrl") || "") : (location.protocol === "file:" ? "http://127.0.0.1:8765" : "");
 let remoteToken = remoteMode ? (sessionStorage.getItem("stockAlarm.remoteToken") || "") : "";
+let currentProfile = localStorage.getItem("stockAlarm.traderProfile") || "aggressive";
 let trader = {{cash:0, holdings:[]}};
 const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
 const tabLabels=[...document.querySelectorAll(".tab-label")];
@@ -1007,7 +1013,9 @@ async function traderRequest(path, options={{}}) {{
   if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
   const headers={{"Content-Type":"application/json", ...(options.headers||{{}})}};
   if(remoteMode && remoteToken) headers.Authorization=`Bearer ${{remoteToken}}`;
-  const response = await fetch(`${{traderApiBase}}${{path}}`, {{...options, headers}});
+  const url = `${{path}}${{path.includes("?") ? "&" : "?"}}profile=${{encodeURIComponent(currentProfile)}}`;
+  const requestBody = options.method === "POST" ? JSON.stringify({{...(options.body ? JSON.parse(options.body) : {{}}), profile: currentProfile}}) : options.body;
+  const response = await fetch(`${{traderApiBase}}${{url}}`, {{...options, headers, body: requestBody}});
   const body = await response.json();
   if(!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
   return body;
@@ -1128,10 +1136,21 @@ if(remoteMode) {{
     try {{ trader=await traderRequest("/api/trader"); renderTrader("로컬 DB에 읽기 전용으로 연결했습니다."); }} catch(error) {{ renderTrader(error.message); }}
   }});
 }}
-const legacyTrader = localStorage.getItem(traderKey);
-(remoteMode ? traderRequest("/api/trader") : (legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader")))
-  .then(state => {{trader=state; if(state.imported) localStorage.removeItem(traderKey); renderTrader(state.imported?"기존 브라우저 가상 계좌를 DB로 이전했습니다.":"계좌와 최신 평가 정보를 불러왔습니다.");}})
-  .catch(error => renderTrader(remoteMode ? (error.message || "원격 API 연결 정보를 입력해 주세요.") : "open_dashboard.bat으로 열어야 DB 가상 계좌를 사용할 수 있습니다."));
+const profileButtons=[...document.querySelectorAll(".profile-button")];
+function syncProfileButtons() {{ profileButtons.forEach(button=>button.setAttribute("aria-pressed", String(button.dataset.profile===currentProfile))); }}
+function loadTrader() {{
+  const legacyTrader = currentProfile==="aggressive" ? localStorage.getItem(traderKey) : null;
+  return (remoteMode ? traderRequest("/api/trader") : (legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader")))
+    .then(state => {{trader=state; if(state.imported) localStorage.removeItem(traderKey); renderTrader(state.imported?"기존 브라우저 가상 계좌를 DB로 이전했습니다.":"계좌와 최신 평가 정보를 불러왔습니다.");}})
+    .catch(error => renderTrader(remoteMode ? (error.message || "원격 API 연결 정보를 입력해 주세요.") : "open_dashboard.bat으로 열어야 DB 가상 계좌를 사용할 수 있습니다."));
+}}
+profileButtons.forEach(button=>button.addEventListener("click", () => {{
+  if(button.dataset.profile===currentProfile) return;
+  currentProfile=button.dataset.profile; localStorage.setItem("stockAlarm.traderProfile", currentProfile);
+  syncProfileButtons(); loadTrader();
+}}));
+syncProfileButtons();
+loadTrader();
 document.querySelectorAll("section").forEach((section) => {{
   const rows = [...section.querySelectorAll("tbody tr")];
   const pager = section.querySelector(".pager");

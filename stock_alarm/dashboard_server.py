@@ -8,13 +8,18 @@ import re
 import threading
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 from .sector_reference import load_sector_mapping
+from .trading_profiles import PROFILES
+
+
+def profile_db_path(name: str) -> str:
+    return PROFILES.get(name, PROFILES["aggressive"])["db_path"]
 
 
 HOST = "127.0.0.1"
@@ -46,7 +51,7 @@ def recommendations() -> list[dict[str, str]]:
     return today_recommendation_rows()
 
 
-def prices() -> dict[str, int]:
+def prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
     price_map = {
         row.get("ticker", ""): int(float(row.get("close") or 0))
         for row in recommendations()
@@ -58,7 +63,7 @@ def prices() -> dict[str, int]:
         for row in latest_position_rows()
         if row.get("ticker") and row.get("close")
     })
-    holding_tickers = [row["ticker"] for row in virtual_trader_state()["holdings"]]
+    holding_tickers = [row["ticker"] for row in virtual_trader_state(path=path)["holdings"]]
     today = date.today()
     for ticker in holding_tickers:
         try:
@@ -71,16 +76,17 @@ def prices() -> dict[str, int]:
     return price_map
 
 
-def trader_payload() -> dict:
-    state = virtual_trader_state(prices())
+def trader_payload(profile: str = "aggressive") -> dict:
+    path = profile_db_path(profile)
+    state = virtual_trader_state(prices(path), path=path)
     holding_tickers = {str(row.get("ticker") or "") for row in state["holdings"]}
     try:
         sectors = load_sector_mapping(holding_tickers)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         sectors = {}
-    risk = latest_portfolio_risk()
+    risk = latest_portfolio_risk(path)
     strategy = active_strategy_version()
-    quality = recent_price_quality(100)
+    quality = recent_price_quality(100, path)
     latest_quality = {}
     for row in quality:
         latest_quality.setdefault(row.get("ticker"), row)
@@ -94,7 +100,7 @@ def trader_payload() -> dict:
     market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
     market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
     latest_checks = {}
-    for row in recent_position_checks(1000):
+    for row in recent_position_checks(1000, path):
         latest_checks.setdefault(row.get("ticker"), row)
     for holding in state["holdings"]:
         check = latest_checks.get(holding.get("ticker"), {})
@@ -124,7 +130,7 @@ def trader_payload() -> dict:
             "ma20": check.get("ma20"),
         })
     sales = []
-    for row in recent_virtual_sales(500):
+    for row in recent_virtual_sales(500, path):
         cost_basis = int(row.get("cost_basis") or 0)
         realized = int(row.get("realized_profit_loss") or 0)
         sales.append({
@@ -137,6 +143,7 @@ def trader_payload() -> dict:
     total_realized = sum(int(row.get("realized_profit_loss") or 0) for row in sales)
     return {
         **state,
+        "profile": profile,
         "price_updated_at": datetime.now().isoformat(timespec="seconds"),
         "price_source": "네이버 금융 · 검증 실패 종목은 진입가 임시표시",
         "risk": risk,
@@ -193,9 +200,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/api/trader":
-            self._json(200, trader_payload())
+            profile = parse_qs(parsed.query).get("profile", ["aggressive"])[0]
+            self._json(200, trader_payload(profile if profile in PROFILES else "aggressive"))
             return
         if path in {"/", "/dashboard"}:
             payload = render().encode("utf-8")
@@ -222,17 +231,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
+            profile = body.get("profile") if body.get("profile") in PROFILES else "aggressive"
+            db_path = profile_db_path(profile)
             if path == "/api/trader/deposit":
-                virtual_deposit(int(body.get("amount", 0)))
-                self._json(200, trader_payload())
+                virtual_deposit(int(body.get("amount", 0)), path=db_path)
+                self._json(200, trader_payload(profile))
                 return
             if path == "/api/trader/buy":
-                result = virtual_buy(recommendations())
-                self._json(200, {**trader_payload(), **{key: result[key] for key in ("spent", "bought", "executions")}})
+                result = virtual_buy(recommendations(), path=db_path)
+                self._json(200, {**trader_payload(profile), **{key: result[key] for key in ("spent", "bought", "executions")}})
                 return
             if path == "/api/trader/import":
-                imported = import_legacy_virtual_trader(body)
-                self._json(200, {**trader_payload(), "imported": imported})
+                imported = import_legacy_virtual_trader(body, path=db_path)
+                self._json(200, {**trader_payload(profile), "imported": imported})
                 return
             self.send_error(404)
         except (ValueError, TypeError, json.JSONDecodeError) as error:
@@ -281,14 +292,15 @@ class RemoteReadOnlyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        if path != "/api/trader":
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/trader":
             self.send_error(404)
             return
         if not allowed_origin(self.headers.get("Origin", "")) or not valid_remote_token(self.headers.get("Authorization", "")):
             self._json(401, {"error": "원격 대시보드 인증이 필요합니다."})
             return
-        self._json(200, trader_payload())
+        profile = parse_qs(parsed.query).get("profile", ["aggressive"])[0]
+        self._json(200, trader_payload(profile if profile in PROFILES else "aggressive"))
 
     def do_POST(self) -> None:  # noqa: N802
         self._json(403, {"error": "원격에서는 조회만 가능합니다."})
