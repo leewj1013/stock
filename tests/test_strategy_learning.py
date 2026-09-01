@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from stock_alarm.data_store import upsert_recommendation_outcomes
-from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, decision_message, learn, objective, return_distribution_p_value, run
+from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes
 
 
 class StrategyLearningTest(unittest.TestCase):
@@ -19,6 +19,25 @@ class StrategyLearningTest(unittest.TestCase):
         # so TELEGRAM_BOT_TOKEN/CHAT_ID only exist if load_env() reads .env itself.
         run()
         load_env.assert_called_once()
+
+    @patch("stock_alarm.app.naver_rows", return_value=[])
+    @patch("stock_alarm.strategy_learning.query_rows", return_value=[])
+    def test_sync_outcomes_caps_benchmark_lookup_to_today(self, _query_rows, naver_rows):
+        # naver_rows caches its result forever, so a still-future end date would
+        # freeze the benchmark lookup on a partial window -- same bug as the one
+        # fixed in backtest.naver_close_after.
+        today = datetime.now().date()
+        pick_date = (today - timedelta(days=1)).isoformat()
+        with tempfile.TemporaryDirectory() as directory:
+            performance_path = os.path.join(directory, "performance.csv")
+            with open(performance_path, "w", newline="", encoding="utf-8") as file:
+                file.write("pick_date,ticker,name,return_1d_pct,return_3d_pct,return_5d_pct,return_10d_pct,return_20d_pct\n")
+                file.write(f"{pick_date},005930,Samsung,1.0,,,,\n")
+
+            sync_outcomes(performance_path=performance_path, path=os.path.join(directory, "test.db"))
+
+        called_end = naver_rows.call_args.args[2]
+        self.assertEqual(today, called_end)
 
     def test_objective_prefers_excess_return(self):
         row = {"return_1d_pct": 5, "excess_1d_pct": 2}

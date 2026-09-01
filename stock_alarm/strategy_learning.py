@@ -67,7 +67,7 @@ def sync_outcomes(performance_path: str = "logs/recommendation_performance.csv",
             from .app import naver_rows
             ticker = os.environ.get("LEARNING_BENCHMARK_TICKER", "069500")
             signal_day = date.fromisoformat(pick_date)
-            prices = naver_rows(ticker, signal_day, signal_day + timedelta(days=days * 3 + 10))
+            prices = naver_rows(ticker, signal_day, min(signal_day + timedelta(days=days * 3 + 10), date.today()))
             future = [row for row in prices if datetime.strptime(str(row[0]), "%Y%m%d").date() > signal_day]
             if len(future) <= days or int(future[0][1]) <= 0:
                 benchmark_cache[key] = None
