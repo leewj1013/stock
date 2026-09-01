@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from datetime import date
+from datetime import date, timedelta
 
 from stock_alarm.recommendation_performance import (
     EXTERNAL_COLUMNS,
@@ -13,6 +13,7 @@ from stock_alarm.recommendation_performance import (
     performance_rows,
     next_execution,
     pick_trading_day,
+    price_excursions,
     read_recommendations,
     score_adjustment_suggestion,
     score_bucket_summary,
@@ -69,6 +70,20 @@ class RecommendationPerformanceTest(unittest.TestCase):
     @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[[20260724, 90, 0, 0, 100, 1], [20260727, 105, 0, 0, 110, 1]])
     def test_next_execution_uses_next_session_open(self, _rows):
         self.assertEqual((date(2026, 7, 27), 105), next_execution("005930", date(2026, 7, 24)))
+
+    @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[])
+    def test_next_execution_caps_end_day_to_today(self, naver_rows):
+        today = date.today()
+        next_execution("005930", today - timedelta(days=1))
+
+        self.assertEqual(today, naver_rows.call_args.args[2])
+
+    @patch("stock_alarm.recommendation_performance.naver_rows", return_value=[])
+    def test_price_excursions_caps_end_day_to_today(self, naver_rows):
+        today = date.today()
+        price_excursions("005930", today - timedelta(days=5), 100, 20)
+
+        self.assertEqual(today, naver_rows.call_args.args[2])
 
     def test_lines(self):
         text = "\n".join(lines([["2026-07-25", "005930", "Samsung", "80", "100", "10.00", "", ""]]))

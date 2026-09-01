@@ -82,7 +82,7 @@ def pick_trading_day(ticker: str, created_day: date, entry_close: int) -> date:
 
 
 def next_execution(ticker: str, pick_day: date) -> tuple[date, int] | None:
-    rows = naver_rows(ticker, pick_day, pick_day + timedelta(days=10))
+    rows = naver_rows(ticker, pick_day, min(pick_day + timedelta(days=10), date.today()))
     for row in rows:
         trading_day = datetime.strptime(str(row[0]), "%Y%m%d").date()
         opening_price = int(row[1])
@@ -92,7 +92,11 @@ def next_execution(ticker: str, pick_day: date) -> tuple[date, int] | None:
 
 
 def price_excursions(ticker: str, pick_day: date, entry: int, trading_days: int, cost_pct: float = 0) -> tuple[str, str]:
-    rows = naver_rows(ticker, pick_day, pick_day + timedelta(days=trading_days * 3))
+    # Capped to today so the naver_rows cache (uncapped/permanent here) can't
+    # lock in a partial window from before trading_days had actually elapsed --
+    # see the matching comment on backtest.naver_close_after.
+    end_day = min(pick_day + timedelta(days=trading_days * 3), date.today())
+    rows = naver_rows(ticker, pick_day, end_day)
     future = rows[1 : trading_days + 1]
     if not future or entry <= 0:
         return "", ""

@@ -18,14 +18,20 @@ def close_after(ticker: str, start_day: date, hold_days: int) -> int | None:
 
 
 def naver_close_after(ticker: str, start_day: date, hold_days: int) -> int | None:
-    rows = naver_rows(ticker, start_day, start_day + timedelta(days=hold_days * 3))
+    # Capping to today (instead of always querying out to start_day+hold_days*3)
+    # keeps the cache key moving day by day while the window is still filling
+    # in, instead of the naver_rows cache (max_cache_age_seconds=None here)
+    # permanently locking in whatever partial history existed the first time
+    # this exact range was queried, before hold_days had actually elapsed.
+    end_day = min(start_day + timedelta(days=hold_days * 3), date.today())
+    rows = naver_rows(ticker, start_day, end_day)
     if len(rows) <= hold_days:
         return None
     return int(rows[hold_days][4])
 
 
 def naver_next_open(ticker: str, signal_day: date) -> tuple[date, int] | None:
-    rows = naver_rows(ticker, signal_day, signal_day + timedelta(days=10))
+    rows = naver_rows(ticker, signal_day, min(signal_day + timedelta(days=10), date.today()))
     for row in rows:
         trading_day = datetime.strptime(str(row[0]), "%Y%m%d").date()
         if trading_day > signal_day and int(row[1]) > 0:
