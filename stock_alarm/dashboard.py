@@ -524,9 +524,12 @@ def actionable_issue_rows() -> list[dict[str, str]]:
         if ticker and row.get("status") == "invalid":
             rows.append({"source": "가격 데이터", "item": ticker, "status": display_value(row.get("reason") or "invalid")})
 
-    risk = latest_portfolio_risk()
-    if risk.get("status") == "halted":
-        rows.append({"source": "가상매매", "item": "신규매수 중단", "status": display_value(risk.get("reason") or "위험 한도 도달")})
+    from .trading_profiles import PROFILES
+    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
+    for name, profile in PROFILES.items():
+        risk = latest_portfolio_risk(profile["db_path"])
+        if risk.get("status") == "halted":
+            rows.append({"source": "가상매매", "item": f"{labels.get(name, name)} 신규매수 중단", "status": display_value(risk.get("reason") or "위험 한도 도달")})
     return rows
 
 

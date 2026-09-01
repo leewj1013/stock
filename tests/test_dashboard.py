@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -175,6 +175,24 @@ class DashboardTest(unittest.TestCase):
     @patch("stock_alarm.dashboard.actionable_issue_rows", return_value=[{"source": "텔레그램", "item": "알림 전송 실패", "status": "12회 반복"}])
     def test_today_issue_count(self, _issues):
         self.assertEqual(1, today_issue_count())
+
+    @patch("stock_alarm.dashboard.latest_portfolio_risk")
+    @patch("stock_alarm.dashboard.recent_price_quality", return_value=[])
+    @patch("stock_alarm.dashboard.today_run_rows", return_value=[])
+    @patch("stock_alarm.dashboard.today_delivery_failure_count", return_value=0)
+    def test_actionable_issue_rows_flags_either_profiles_halt(self, _deliveries, _runs, _quality, risk):
+        # A halt on the comparison-only neutral profile is still worth
+        # surfacing -- only the real (aggressive) account halting silently
+        # would be a much bigger problem to miss.
+        def fake_risk(path):
+            return {"status": "halted", "reason": "exposure_limit"} if path == "data/stock_alarm_neutral.db" else {"status": "active"}
+
+        risk.side_effect = fake_risk
+
+        rows = actionable_issue_rows()
+
+        self.assertEqual(1, len(rows))
+        self.assertIn("위험중립형", rows[0]["item"])
 
     @patch("stock_alarm.dashboard.run_log_statuses", return_value=["recommendations=ok", "positions_report=missing"])
     def test_today_run_rows(self, _statuses):

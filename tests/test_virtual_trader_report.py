@@ -97,6 +97,20 @@ class VirtualTraderReportTest(unittest.TestCase):
         self.assertEqual(207000, reference_provider("086280"))
         toss.assert_called_with("086280")
 
+    @patch("stock_alarm.virtual_trader_report.checked_prices", return_value=({}, []))
+    @patch("stock_alarm.virtual_trader_report.datetime")
+    @patch("stock_alarm.virtual_trader_report.toss_reference_price", return_value=207000)
+    @patch("stock_alarm.virtual_trader_report.virtual_trader_state", return_value={"holdings": []})
+    def test_current_prices_records_quality_checks_under_the_requested_profiles_db(self, _state, _toss, datetime_mock, checked_prices):
+        # A secondary profile's price-quality checks must land in its own DB,
+        # not silently fall back to the default (aggressive) one.
+        datetime_mock.now.return_value = real_datetime(2026, 9, 1, 10, 0)
+        datetime_mock.strptime = real_datetime.strptime
+
+        current_prices(path="data/stock_alarm_neutral.db")
+
+        self.assertEqual("data/stock_alarm_neutral.db", checked_prices.call_args.kwargs["path"])
+
     @patch("pykrx.stock.get_market_ohlcv_by_date")
     @patch("stock_alarm.virtual_trader_report.checked_prices", return_value=({}, []))
     @patch("stock_alarm.virtual_trader_report.datetime")

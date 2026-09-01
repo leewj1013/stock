@@ -89,6 +89,7 @@ def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
         tickers,
         lambda ticker: naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60),
         today,
+        path=path,
         reference_provider=reference_close,
         reference_name="toss",
     )
