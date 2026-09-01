@@ -1042,7 +1042,7 @@ function renderSales() {{
   }};
   draw();
 }}
-const donutColors=["#2563eb","#0f766e","#d97706","#7c3aed","#dc2626","#64748b"];
+const donutColors=["#4c6ef5","#12b886","#f08c00","#e64980","#7048e8","#868e96"];
 function renderDonut(ringId,legendId,items,emptyText) {{
   const ring=document.getElementById(ringId), legend=document.getElementById(legendId);
   const clean=items.filter(item=>Number(item.value)>0), total=clean.reduce((sum,item)=>sum+Number(item.value),0);
