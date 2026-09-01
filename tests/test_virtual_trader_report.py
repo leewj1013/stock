@@ -1,8 +1,9 @@
 import os
 import unittest
+from datetime import datetime as real_datetime
 from unittest.mock import patch
 
-from stock_alarm.virtual_trader_report import risk_reason_lines, run, toss_reference_price
+from stock_alarm.virtual_trader_report import current_prices, risk_reason_lines, run, toss_reference_price
 
 
 class VirtualTraderReportTest(unittest.TestCase):
@@ -65,6 +66,38 @@ class VirtualTraderReportTest(unittest.TestCase):
     @patch("stock_alarm.toss_client.TossClient.access_token", return_value="token")
     def test_toss_reference_price_swallows_errors(self, _token, _prices):
         self.assertIsNone(toss_reference_price("005930"))
+
+    @patch("stock_alarm.virtual_trader_report.checked_prices", return_value=({}, []))
+    @patch("stock_alarm.virtual_trader_report.datetime")
+    @patch("stock_alarm.virtual_trader_report.toss_reference_price", return_value=207000)
+    @patch("stock_alarm.virtual_trader_report.virtual_trader_state", return_value={"holdings": [{"ticker": "086280"}]})
+    def test_reference_close_uses_toss_during_regular_session(self, _state, toss, datetime_mock, checked_prices):
+        datetime_mock.now.return_value = real_datetime(2026, 9, 1, 15, 0)
+        datetime_mock.strptime = real_datetime.strptime
+
+        current_prices()
+
+        reference_provider = checked_prices.call_args.kwargs["reference_provider"]
+        self.assertEqual(207000, reference_provider("086280"))
+        toss.assert_called_with("086280")
+
+    @patch("pykrx.stock.get_market_ohlcv_by_date")
+    @patch("stock_alarm.virtual_trader_report.checked_prices", return_value=({}, []))
+    @patch("stock_alarm.virtual_trader_report.datetime")
+    @patch("stock_alarm.virtual_trader_report.toss_reference_price", return_value=207000)
+    @patch("stock_alarm.virtual_trader_report.virtual_trader_state", return_value={"holdings": [{"ticker": "086280"}]})
+    def test_reference_close_skips_toss_once_after_hours_session_starts(self, _state, toss, datetime_mock, checked_prices, _pykrx):
+        # 16:00 is when KRX's 시간외단일가 session opens; Toss's live price can
+        # legitimately diverge from the regular session's close from then on,
+        # so it must stop being used as a "should match close" reference.
+        datetime_mock.now.return_value = real_datetime(2026, 9, 1, 16, 0)
+        datetime_mock.strptime = real_datetime.strptime
+
+        current_prices()
+
+        reference_provider = checked_prices.call_args.kwargs["reference_provider"]
+        reference_provider("086280")
+        toss.assert_not_called()
 
 
 if __name__ == "__main__":

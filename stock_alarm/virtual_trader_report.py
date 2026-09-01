@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from .app import load_env, naver_rows, write_error_log
 from .data_quality import checked_prices
@@ -75,7 +75,16 @@ def current_prices() -> dict[str, int]:
         except Exception:
             return None
     def reference_close(ticker: str) -> int | None:
-        return toss_reference_price(ticker) or pykrx_reference_close(ticker)
+        # KRX's after-hours single-price session (시간외단일가, 16:00~18:00) can
+        # legitimately move the traded price well past the regular session's
+        # close, so Toss's live price stops being a valid "should match close"
+        # reference once that session starts -- comparing them past 16:00
+        # would quarantine every holding on a real, not-a-data-error mismatch.
+        if datetime.now().time() < time(16, 0):
+            toss_price = toss_reference_price(ticker)
+            if toss_price is not None:
+                return toss_price
+        return pykrx_reference_close(ticker)
     prices, _checks = checked_prices(
         tickers,
         lambda ticker: naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60),
