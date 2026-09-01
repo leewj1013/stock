@@ -1104,25 +1104,26 @@ def sector_limited_allocations(
     return limited
 
 
-def auto_buy_virtual_trader(picks: list[Pick]) -> dict | None:
+def auto_buy_virtual_trader(picks: list[Pick], path: str = "data/stock_alarm.db", sector_cap_override: float | None = None) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
     from .data_store import virtual_buy, virtual_trader_state
     from .portfolio_risk import new_buys_allowed
-    state = virtual_trader_state()
+    state = virtual_trader_state(path=path)
     if state.get("cash", 0) <= 0:
         return None
-    allowed, _reason = new_buys_allowed()
+    allowed, _reason = new_buys_allowed(path=path)
     if not allowed:
         return None
     allocations = allocation_percentages(picks)
     allocations = correlation_limited_allocations(picks, allocations)
-    if env_float("SECTOR_GROUP_MAX_PCT", 100) < 100:
+    sector_cap = env_float("SECTOR_GROUP_MAX_PCT", 100) if sector_cap_override is None else sector_cap_override
+    if sector_cap < 100:
         existing = [Pick(row["ticker"], row["name"], int(row["current_price"]), 0, 0, 0) for row in state.get("holdings", [])]
         equity = float(state.get("total_equity") or 0)
         existing_allocations = [float(row["valuation"]) / equity * 100 if equity else 0.0 for row in state.get("holdings", [])]
         combined = existing + picks
-        limited = sector_limited_allocations(combined, existing_allocations + allocations, locked_tickers={pick.ticker for pick in existing})
+        limited = sector_limited_allocations(combined, existing_allocations + allocations, locked_tickers={pick.ticker for pick in existing}, group_cap_override=sector_cap)
         allocations = limited[len(existing):]
     breadth = naver_market_up_ratio(date.today())
     exposure_limit = market_exposure_limit_pct(breadth)
@@ -1132,7 +1133,7 @@ def auto_buy_virtual_trader(picks: list[Pick]) -> dict | None:
         for pick, allocation in zip(picks, allocations)
     ]
     try:
-        return virtual_buy(candidates)
+        return virtual_buy(candidates, path=path)
     except ValueError:
         return None
 
@@ -1191,6 +1192,14 @@ def run() -> None:
         track_positions(picks)
         write_log(picks)
         virtual_result = auto_buy_virtual_trader(picks)
+        # Secondary virtual-trader profiles buy the same picks with different
+        # sizing/exit rules -- they don't get their own recommend() call or
+        # tracked-position log entry, only their own DB and buy allocation.
+        from .trading_profiles import PROFILES
+        for name, profile in PROFILES.items():
+            if name == "aggressive":
+                continue
+            auto_buy_virtual_trader(picks, path=profile["db_path"], sector_cap_override=profile["sector_cap_pct"])
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")

@@ -213,6 +213,7 @@ def position_snapshot(
     max_return: float | None = None,
     partial_taken: bool = False,
     remaining_quantity: int = 0,
+    sell_policy: dict | None = None,
 ) -> tuple[SellAlert | None, dict]:
     ticker = position["ticker"].strip()
     entry_price = int(float(position["entry_price"]))
@@ -238,7 +239,7 @@ def position_snapshot(
         "decision": "NO_DATA",
         "reasons": "insufficient_history",
     }
-    evaluation = _evaluate_position(position, end_day, previous_return, max_return, None, partial_taken, remaining_quantity, None)
+    evaluation = _evaluate_position(position, end_day, previous_return, max_return, None, partial_taken, remaining_quantity, sell_policy)
     if evaluation is None:
         return None, base
 
@@ -273,6 +274,8 @@ def find_alerts(
     run_id: str | None = None,
     virtual_states: dict[str, dict] | None = None,
     virtual_quantities: dict[str, int] | None = None,
+    sell_policy: dict | None = None,
+    alerted_log_path: str = SELL_ALERTS_LOG,
 ) -> list[SellAlert]:
     previous = previous_returns()
     best = max_returns()
@@ -283,7 +286,7 @@ def find_alerts(
     for position in positions:
         ticker = position["ticker"].strip()
         key = position_id(position)
-        if position_was_alerted(position):
+        if position_was_alerted(position, path=alerted_log_path):
             if run_id:
                 snapshots.append({
                     "position_id": key,
@@ -304,14 +307,14 @@ def find_alerts(
             state = virtual_states.get(ticker, {})
             alert, snapshot = position_snapshot(
                 position, end_day, previous.get(key), best.get(key),
-                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)),
+                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)), sell_policy,
             )
             snapshots.append(snapshot)
         else:
             state = virtual_states.get(ticker, {})
             alert = check_position(
                 position, end_day, previous.get(key), best.get(key), None,
-                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)),
+                state.get("status") == "partial", int(virtual_quantities.get(ticker, 0)), sell_policy,
             )
         if alert:
             alerts.append(alert)
@@ -400,17 +403,33 @@ def run() -> str:
     end_day = latest_naver_trading_day()
     run_id = start_run("sell_check", end_day.isoformat())
     try:
-        from .data_store import virtual_position_states, virtual_trader_state
-        virtual_state = virtual_trader_state()
-        quantities = {holding["ticker"]: int(holding["quantity"]) for holding in virtual_state["holdings"]}
-        alerts = find_alerts(read_positions(), end_day, run_id, virtual_position_states(), quantities)
-        write_log(alerts)
-        from .data_store import virtual_sell
-        virtual_result = virtual_sell([
-            {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
-             "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
-            for alert in alerts
-        ])
+        from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
+        from .trading_profiles import PROFILES
+        positions = read_positions()
+        alerts, virtual_result = [], None
+        for name, profile in PROFILES.items():
+            # Secondary profiles hold the same recommended tickers under a
+            # different DB and exit policy, so they get their own alerted-log
+            # file (independent stop-loss timing) but skip the shared
+            # position-check audit trail (run_id=None) since that trail
+            # belongs to the primary/aggressive tracking pipeline.
+            is_primary = name == "aggressive"
+            state = virtual_trader_state(path=profile["db_path"])
+            quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
+            profile_alerts = find_alerts(
+                positions, end_day, run_id if is_primary else None,
+                virtual_position_states(path=profile["db_path"]), quantities,
+                profile["sell_policy"], profile["sell_alerts_log"],
+            )
+            if profile_alerts:
+                write_log(profile_alerts, path=profile["sell_alerts_log"])
+            result = virtual_sell([
+                {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
+                 "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
+                for alert in profile_alerts
+            ], path=profile["db_path"])
+            if is_primary:
+                alerts, virtual_result = profile_alerts, result
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")

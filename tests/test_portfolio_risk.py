@@ -38,6 +38,27 @@ class PortfolioRiskTest(unittest.TestCase):
             self.assertEqual("halted", result["status"])
             self.assertIn("exposure_limit", result["reason"])
 
+    def test_exposure_limit_override_uses_tighter_profile_cap(self):
+        # 60% exposure passes the 70% env default but must halt a profile
+        # (e.g. risk-neutral) configured with a tighter 50% cap.
+        with unittest.mock.patch.dict(os.environ, {"RISK_MAX_EXPOSURE_PCT": "70"}):
+            default_result = evaluate_risk_state(
+                {"total_equity": 100_000, "holdings_value": 60_000}, 100_000, 100_000, 100_000,
+            )
+            overridden_result = evaluate_risk_state(
+                {"total_equity": 100_000, "holdings_value": 60_000}, 100_000, 100_000, 100_000,
+                exposure_limit_pct=50,
+            )
+        self.assertNotIn("exposure_limit", default_result["reason"])
+        self.assertIn("exposure_limit", overridden_result["reason"])
+
+    def test_snapshot_passes_exposure_limit_override_through(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "test.db")
+            result = snapshot({"total_equity": 100_000, "holdings_value": 60_000}, path, datetime(2026, 8, 27, 9, 0), exposure_limit_pct=50)
+            self.assertEqual("halted", result["status"])
+            self.assertIn("exposure_limit", result["reason"])
+
     def test_risk_state_reports_resume_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "test.db")

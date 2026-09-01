@@ -17,6 +17,7 @@ def evaluate_risk_state(
     high_water: int | float,
     previous_status: str = "",
     created_at: datetime | None = None,
+    exposure_limit_pct: float | None = None,
 ) -> dict:
     """Evaluate the live portfolio halt rules without persistence.
 
@@ -41,7 +42,8 @@ def evaluate_risk_state(
     if drawdown <= -_limit("RISK_MAX_DRAWDOWN_PCT", 10):
         reasons.append("drawdown_limit")
     exposure = float(state.get("holdings_value") or 0) / equity * 100 if equity else 0.0
-    if exposure > _limit("RISK_MAX_EXPOSURE_PCT", 70):
+    exposure_limit = _limit("RISK_MAX_EXPOSURE_PCT", 70) if exposure_limit_pct is None else abs(exposure_limit_pct)
+    if exposure > exposure_limit:
         reasons.append("exposure_limit")
     status = "halted" if reasons else "active"
     row = {
@@ -60,7 +62,7 @@ def evaluate_risk_state(
     return row
 
 
-def snapshot(state: dict, path: str = DB_PATH, now: datetime | None = None) -> dict:
+def snapshot(state: dict, path: str = DB_PATH, now: datetime | None = None, exposure_limit_pct: float | None = None) -> dict:
     """Record risk state without liquidating holdings.
 
     A halted state intentionally blocks only new buys. Existing positions remain
@@ -78,7 +80,7 @@ def snapshot(state: dict, path: str = DB_PATH, now: datetime | None = None) -> d
     weekly_start = int(week_rows[0]["equity"]) if week_rows else int(before_week[0]["equity"]) if before_week else equity
     row = evaluate_risk_state(
         state, daily_start, weekly_start, int(prior.get("high_water") or equity),
-        str(prior.get("status") or ""), now,
+        str(prior.get("status") or ""), now, exposure_limit_pct,
     )
     record_portfolio_risk(row, path)
     return row

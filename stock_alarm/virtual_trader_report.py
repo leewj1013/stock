@@ -62,9 +62,9 @@ def toss_reference_price(ticker: str) -> int | None:
         return None
 
 
-def current_prices() -> dict[str, int]:
+def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
     today = date.today()
-    tickers = [holding["ticker"] for holding in virtual_trader_state()["holdings"]]
+    tickers = [holding["ticker"] for holding in virtual_trader_state(path=path)["holdings"]]
     def pykrx_reference_close(ticker: str) -> int | None:
         if datetime.now().time() < datetime.strptime("15:40", "%H:%M").time():
             return None
@@ -97,36 +97,44 @@ def current_prices() -> dict[str, int]:
 
 def run() -> dict:
     load_env()
-    prices = current_prices()
-    required = {holding["ticker"] for holding in virtual_trader_state()["holdings"]}
-    missing = sorted(required - set(prices))
-    if missing:
-        result = {"status": "price_unavailable", "missing": missing}
-        print(f"virtual_trader skipped missing_prices={','.join(missing)}")
-        return result
-    result = record_virtual_valuation(prices)
-    risk = risk_snapshot(virtual_trader_state(prices))
-    if risk.get("transition") == "halted":
-        from .notifier import send_notification
-        reasons = "\n".join(risk_reason_lines(risk))
-        send_notification(
-            "[가상트레이더 위험중단]\n신규매수를 중단합니다.\n"
-            f"중단 사유\n{reasons}\n"
-            "보유종목은 유지되며 분할익절과 개별 매도조건은 계속 감시 중입니다.",
-            event_type="portfolio_risk_halt",
+    from .trading_profiles import PROFILES
+    primary_result: dict = {}
+    for name, profile in PROFILES.items():
+        path = profile["db_path"]
+        prices = current_prices(path=path)
+        required = {holding["ticker"] for holding in virtual_trader_state(path=path)["holdings"]}
+        missing = sorted(required - set(prices))
+        if missing:
+            result = {"status": "price_unavailable", "missing": missing}
+            print(f"virtual_trader[{name}] skipped missing_prices={','.join(missing)}")
+            if name == "aggressive":
+                primary_result = result
+            continue
+        result = record_virtual_valuation(prices, path=path)
+        risk = risk_snapshot(virtual_trader_state(prices, path=path), path=path, exposure_limit_pct=profile["exposure_limit_pct"])
+        if profile["notify"] and risk.get("transition") == "halted":
+            from .notifier import send_notification
+            reasons = "\n".join(risk_reason_lines(risk))
+            send_notification(
+                "[가상트레이더 위험중단]\n신규매수를 중단합니다.\n"
+                f"중단 사유\n{reasons}\n"
+                "보유종목은 유지되며 분할익절과 개별 매도조건은 계속 감시 중입니다.",
+                event_type="portfolio_risk_halt",
+            )
+        elif profile["notify"] and risk.get("transition") == "resumed":
+            from .notifier import send_notification
+            send_notification(
+                "[가상트레이더 위험중단 해제]\n신규매수를 다시 허용합니다.\n"
+                "보유종목은 유지되며 분할익절과 개별 매도조건은 계속 감시 중입니다.",
+                event_type="portfolio_risk_resume",
+            )
+        print(
+            f"virtual_trader[{name}] equity={result['equity']:,} return={result['return_pct']:.2f}% "
+            f"change={result['return_change_pct']:+.2f}%p"
         )
-    elif risk.get("transition") == "resumed":
-        from .notifier import send_notification
-        send_notification(
-            "[가상트레이더 위험중단 해제]\n신규매수를 다시 허용합니다.\n"
-            "보유종목은 유지되며 분할익절과 개별 매도조건은 계속 감시 중입니다.",
-            event_type="portfolio_risk_resume",
-        )
-    print(
-        f"virtual_trader equity={result['equity']:,} return={result['return_pct']:.2f}% "
-        f"change={result['return_change_pct']:+.2f}%p"
-    )
-    return {**result, "risk": risk}
+        if name == "aggressive":
+            primary_result = {**result, "risk": risk}
+    return primary_result
 
 
 def main() -> None:

@@ -40,6 +40,22 @@ class VirtualTraderReportTest(unittest.TestCase):
         self.assertNotIn("weekly_loss_limit", message)
 
     @patch("stock_alarm.notifier.send_notification")
+    @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "halted", "reason": "daily_loss_limit", "daily_return_pct": -2.35})
+    @patch("stock_alarm.virtual_trader_report.record_virtual_valuation", return_value={"equity": 100_000, "return_pct": -2, "return_change_pct": -2})
+    @patch("stock_alarm.virtual_trader_report.virtual_trader_state")
+    @patch("stock_alarm.virtual_trader_report.current_prices", return_value={})
+    def test_secondary_profile_halt_does_not_notify_twice(self, _prices, state, _record, risk_snapshot, send):
+        # Both the aggressive and neutral profiles run through the same halt
+        # check, but only the aggressive (notify=True) profile should send a
+        # Telegram message -- the neutral profile is comparison-only.
+        state.return_value = self._state()
+        run()
+        send.assert_called_once()
+        self.assertEqual(2, risk_snapshot.call_count)
+        paths = {call.kwargs.get("path") for call in risk_snapshot.call_args_list}
+        self.assertEqual({"data/stock_alarm.db", "data/stock_alarm_neutral.db"}, paths)
+
+    @patch("stock_alarm.notifier.send_notification")
     @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "resumed", "reason": ""})
     @patch("stock_alarm.virtual_trader_report.record_virtual_valuation", return_value={"equity": 100_000, "return_pct": 0, "return_change_pct": 0})
     @patch("stock_alarm.virtual_trader_report.virtual_trader_state")

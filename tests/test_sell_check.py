@@ -178,6 +178,9 @@ class SellCheckTest(unittest.TestCase):
             rows = list(csv.DictReader(file))
         self.assertEqual("손실 -6.0%", rows[0]["summary"])
 
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"holdings": []})
     @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
     @patch("stock_alarm.data_store.finish_run")
     @patch("stock_alarm.data_store.start_run", return_value="test-run")
@@ -185,8 +188,29 @@ class SellCheckTest(unittest.TestCase):
     @patch("stock_alarm.sell_check.find_alerts", return_value=[])
     @patch("stock_alarm.sell_check.read_positions", return_value=[])
     @patch("stock_alarm.sell_check.write_log")
-    def test_run_skips_empty_alert_by_default(self, _write, _positions, _alerts, _trading, _start, _finish, _day):
+    def test_run_skips_empty_alert_by_default(self, _write, _positions, _alerts, _trading, _start, _finish, _day, _state, _position_states, virtual_sell):
         self.assertEqual("no_alerts", run())
+        # Both the aggressive and neutral profile call virtual_sell against
+        # their own DB, even with an empty alert list.
+        paths = {call.kwargs["path"] for call in virtual_sell.call_args_list}
+        self.assertEqual({"data/stock_alarm.db", "data/stock_alarm_neutral.db"}, paths)
+
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"holdings": []})
+    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.sell_check.read_positions", return_value=[])
+    @patch("stock_alarm.sell_check.write_log")
+    def test_run_gives_neutral_profile_its_own_sell_policy_and_alert_log(self, _write, _positions, _trading, _start, _finish, _day, _state, _position_states, _sell):
+        with patch("stock_alarm.sell_check.find_alerts", return_value=[]) as find_alerts_mock:
+            run()
+        # find_alerts(positions, end_day, run_id, virtual_states, quantities, sell_policy, alerted_log_path)
+        calls = {call.args[6]: call.args[5] for call in find_alerts_mock.call_args_list}
+        self.assertIsNone(calls["logs/sell_alerts.csv"])
+        self.assertEqual({"stop_loss_pct": 3.0, "take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0}, calls["logs/sell_alerts_neutral.csv"])
 
     @patch("stock_alarm.sell_check.is_market_alert_time", return_value=False)
     def test_run_skips_when_market_closed(self, _trading):

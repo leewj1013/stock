@@ -1,10 +1,13 @@
 .env
 data/positions.csv
 data/stock_alarm.db
+data/stock_alarm_neutral.db
 data/backups/
 data/registry-backup/
 data/stock_alarm.db-shm
 data/stock_alarm.db-wal
+data/stock_alarm_neutral.db-shm
+data/stock_alarm_neutral.db-wal
 data/us_market_summary.json
 data/backtest/
 data/backtest_expanded/
