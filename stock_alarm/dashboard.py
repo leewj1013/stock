@@ -156,7 +156,6 @@ LABELS = {
     "disclosure_score": "공시 점수",
     "performance_penalty": "성과 감점",
     "summary": "요약",
-    "profile": "성향",
     "count": "건수",
     "entry_count": "추천 횟수",
     "return_pct": "수익률",
@@ -239,7 +238,10 @@ LABELS = {
     "valuation": "평가금액",
     "profit_loss": "평가손익",
     "notification_status": "알림 상태",
-    "virtual_order_status": "가상매수",
+    "aggressive_order_status": "적극투자형",
+    "neutral_order_status": "위험중립형",
+    "aggressive_status": "적극투자형",
+    "neutral_status": "위험중립형",
     "delivery failures": "오늘 알림 실패",
     "Price quality": "가격 데이터 품질",
     "Strategy versions": "전략 버전 이력",
@@ -386,9 +388,13 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
         for ticker in delivery.get("tickers", "").split("|"):
             if ticker.strip():
                 delivery_statuses[ticker.strip()] = status
-    bought = {
-        row.get("ticker", "") for row in recent_virtual_trades(1000)
-        if str(row.get("created_at", "")).startswith(today)
+    from .trading_profiles import PROFILES
+    bought_by_profile = {
+        name: {
+            row.get("ticker", "") for row in recent_virtual_trades(1000, path=profile["db_path"])
+            if str(row.get("created_at", "")).startswith(today)
+        }
+        for name, profile in PROFILES.items()
     }
     rows = []
     daily_rows = daily_ticker_rows(tail_csv("logs/recommendations.csv", 10000), today)
@@ -399,7 +405,8 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
             "virtual_target_pct": f"{min(30.0, max(10.0, float(row.get('allocation_pct') or 10))):.2f}",
             "allocation_rule": "현재 총자산 10% 고정" if abs(float(row.get("allocation_pct") or 0) - 10) < 0.01 else "이전 규칙 산출값",
             "notification_status": delivery_statuses.get(ticker, "미전송"),
-            "virtual_order_status": "체결" if ticker in bought else "미체결",
+            "aggressive_order_status": "체결" if ticker in bought_by_profile["aggressive"] else "미체결",
+            "neutral_order_status": "체결" if ticker in bought_by_profile["neutral"] else "미체결",
             "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker)),
         })
     return rows[:limit] if limit is not None else rows
@@ -409,8 +416,7 @@ def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
     from .trading_profiles import PROFILES
     today = datetime.now().date().isoformat()
     deliveries = tail_csv("logs/deliveries.csv", 10000)
-    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
-    rows = []
+    by_ticker: dict[str, dict[str, str]] = {}
     for name, profile in PROFILES.items():
         raw = tail_csv(profile["sell_alerts_log"], 10000)
         # Telegram delivery reconciliation only makes sense for a profile that
@@ -418,7 +424,16 @@ def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
         # own alerts never get a delivery receipt, so reconciling would drop
         # every one of its rows.
         profile_rows = reconciled_daily_alert_rows(raw, deliveries, today, "sell") if profile["notify"] else daily_ticker_rows(raw, today)
-        rows.extend({**row, "profile": labels.get(name, name)} for row in profile_rows)
+        for row in profile_rows:
+            ticker = row.get("ticker", "")
+            entry = by_ticker.setdefault(ticker, {"name": row.get("name", ticker), "created_at": ""})
+            entry[f"{name}_status"] = row.get("summary") or row.get("reason") or "매도 조건 충족"
+            entry["created_at"] = max(entry["created_at"], row.get("created_at", ""))
+    rows = []
+    for entry in by_ticker.values():
+        for name in PROFILES:
+            entry.setdefault(f"{name}_status", "-")
+        rows.append(entry)
     rows.sort(key=lambda row: row.get("created_at", ""), reverse=True)
     return rows[:limit] if limit else rows
 
@@ -891,8 +906,8 @@ def render() -> str:
   <div><span>오늘 추천</span><b>{len(recommendation_rows)}종목</b></div>
   <div><span>최근 가격 갱신</span><b id="home-price-updated">확인 중</b></div>
 </div></section>
-{user_table("Today recommendations", recommendation_rows, ["name", "close", "virtual_target_pct", "virtual_order_status"], "오늘 신규 추천 신호가 없습니다.")}
-{user_table("Today sell alerts", sell_rows, ["name", "profile", "return_pct", "summary"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
+{user_table("Today recommendations", recommendation_rows, ["name", "close", "virtual_target_pct", "aggressive_order_status", "neutral_order_status"], "오늘 신규 추천 신호가 없습니다.")}
+{user_table("Today sell alerts", sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
 {details("추천 성과 추적 보기", table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "decision"]))}
 """
     tracking_cards = "".join(

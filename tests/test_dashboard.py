@@ -115,9 +115,10 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("data-page-size='15'", html)
         self.assertIn("data-row='15'", html)
 
+    @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
     @patch("stock_alarm.dashboard.datetime")
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_today_recommendation_rows(self, tail_csv, datetime):
+    def test_today_recommendation_rows(self, tail_csv, datetime, _trades):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
         def fake_tail(path, _count):
             if path.endswith("recommendation_performance.csv"):
@@ -130,9 +131,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("A", row["ticker"])
         self.assertEqual("뉴스 보너스", row["reason"])
 
+    @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
     @patch("stock_alarm.dashboard.datetime")
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_today_recommendation_rows_accumulates_all_batches_for_the_day(self, tail_csv, datetime):
+    def test_today_recommendation_rows_accumulates_all_batches_for_the_day(self, tail_csv, datetime, _trades):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-27"
 
         def fake_tail(path, _count):
@@ -148,6 +150,27 @@ class DashboardTest(unittest.TestCase):
         tail_csv.side_effect = fake_tail
 
         self.assertEqual(["OLD1", "OLD2", "NEW1", "NEW2"], [row["ticker"] for row in today_recommendation_rows()])
+
+    @patch("stock_alarm.dashboard.datetime")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_recommendation_rows_shows_each_profiles_own_order_status(self, tail_csv, datetime):
+        datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
+
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return []
+            return [{"created_at": "2026-07-25T09:00:00", "ticker": "A"}]
+
+        tail_csv.side_effect = fake_tail
+
+        def fake_trades(_limit, path="data/stock_alarm.db"):
+            return [{"ticker": "A", "created_at": "2026-07-25T09:05:00"}] if path == "data/stock_alarm.db" else []
+
+        with patch("stock_alarm.dashboard.recent_virtual_trades", side_effect=fake_trades):
+            row = today_recommendation_rows()[0]
+
+        self.assertEqual("체결", row["aggressive_order_status"])
+        self.assertEqual("미체결", row["neutral_order_status"])
 
     @patch("stock_alarm.dashboard.actionable_issue_rows", return_value=[{"source": "텔레그램", "item": "알림 전송 실패", "status": "12회 반복"}])
     def test_today_issue_count(self, _issues):
@@ -238,21 +261,36 @@ class DashboardTest(unittest.TestCase):
         )
 
     @patch("stock_alarm.dashboard.tail_csv")
-    def test_today_sell_alert_rows_tags_each_row_with_its_profile(self, tail_csv):
+    def test_today_sell_alert_rows_merges_profiles_into_one_row_per_ticker(self, tail_csv):
         today = datetime.now().date().isoformat()
         # notify=False (neutral) skips delivery reconciliation entirely, so it
         # needs no matching row in logs/deliveries.csv to show up here.
         rows_by_path = {
-            "logs/sell_alerts.csv": [{"ticker": "005930", "created_at": f"{today}T09:00:00", "summary": "손절"}],
-            "logs/sell_alerts_neutral.csv": [{"ticker": "005930", "created_at": f"{today}T09:05:00", "summary": "손절"}],
+            "logs/sell_alerts.csv": [{"ticker": "005930", "created_at": f"{today}T09:00:00", "summary": "손절 -5.0% 이탈"}],
+            "logs/sell_alerts_neutral.csv": [{"ticker": "005930", "created_at": f"{today}T09:05:00", "summary": "손절 -3.0% 이탈"}],
             "logs/deliveries.csv": [],
         }
         tail_csv.side_effect = lambda path, count: rows_by_path.get(path, [])
 
         rows = today_sell_alert_rows()
 
-        self.assertEqual(2, len(rows))
-        self.assertEqual({"적극투자형", "위험중립형"}, {row["profile"] for row in rows})
+        self.assertEqual(1, len(rows))
+        self.assertEqual("손절 -5.0% 이탈", rows[0]["aggressive_status"])
+        self.assertEqual("손절 -3.0% 이탈", rows[0]["neutral_status"])
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_sell_alert_rows_marks_untriggered_profile(self, tail_csv):
+        today = datetime.now().date().isoformat()
+        rows_by_path = {
+            "logs/sell_alerts.csv": [{"ticker": "005930", "created_at": f"{today}T09:00:00", "summary": "손절"}],
+            "logs/sell_alerts_neutral.csv": [],
+            "logs/deliveries.csv": [],
+        }
+        tail_csv.side_effect = lambda path, count: rows_by_path.get(path, [])
+
+        rows = today_sell_alert_rows()
+
+        self.assertEqual("-", rows[0]["neutral_status"])
 
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.issue_rows", return_value=[])
