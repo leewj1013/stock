@@ -885,7 +885,7 @@ def render() -> str:
   <button type="button" class="profile-button" id="profile-neutral" data-profile="neutral" aria-pressed="false">위험중립형</button>
 </div>
 <div class="trader-account-grid">
-  <div class="trader-balance primary"><span>총자산</span><strong id="trader-total-equity">0원</strong></div>
+  <div class="trader-balance primary"><span>총자산 · <b id="trader-profile-label">적극투자형</b></span><strong id="trader-total-equity">0원</strong></div>
   <div class="trader-balance"><span>주문 가능 현금</span><strong id="trader-cash">0원</strong></div>
   <div class="trader-balance"><span>주식 평가액</span><strong id="trader-holdings-value">0원</strong></div>
   <div class="trader-balance"><span>보유종목 총수익률</span><strong id="trader-holdings-return">0.00%</strong></div>
@@ -1137,7 +1137,11 @@ if(remoteMode) {{
   }});
 }}
 const profileButtons=[...document.querySelectorAll(".profile-button")];
-function syncProfileButtons() {{ profileButtons.forEach(button=>button.setAttribute("aria-pressed", String(button.dataset.profile===currentProfile))); }}
+const profileLabels={{aggressive:"적극투자형",neutral:"위험중립형"}};
+function syncProfileButtons() {{
+  profileButtons.forEach(button=>button.setAttribute("aria-pressed", String(button.dataset.profile===currentProfile)));
+  document.getElementById("trader-profile-label").textContent = profileLabels[currentProfile] || currentProfile;
+}}
 function loadTrader() {{
   const legacyTrader = currentProfile==="aggressive" ? localStorage.getItem(traderKey) : null;
   return (remoteMode ? traderRequest("/api/trader") : (legacyTrader ? traderRequest("/api/trader/import",{{method:"POST",body:legacyTrader}}) : traderRequest("/api/trader")))

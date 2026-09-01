@@ -394,46 +394,54 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
             writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason, alert.sale_type, alert.stage, f"{alert.quantity_fraction:.4f}"])
 
 
+def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict]:
+    from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
+    state = virtual_trader_state(path=profile["db_path"])
+    quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
+    alerts = find_alerts(
+        positions, end_day, run_id,
+        virtual_position_states(path=profile["db_path"]), quantities,
+        profile["sell_policy"], profile["sell_alerts_log"],
+    )
+    if alerts:
+        write_log(alerts, path=profile["sell_alerts_log"])
+    result = virtual_sell([
+        {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
+         "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
+        for alert in alerts
+    ], path=profile["db_path"])
+    return alerts, result
+
+
 def run() -> str:
     load_env()
     if not is_market_alert_time():
         return "market_closed"
     from .data_store import finish_run, start_run
+    from .trading_profiles import PROFILES
 
     end_day = latest_naver_trading_day()
     run_id = start_run("sell_check", end_day.isoformat())
+    positions = read_positions()
     try:
-        from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
-        from .trading_profiles import PROFILES
-        positions = read_positions()
-        alerts, virtual_result = [], None
-        for name, profile in PROFILES.items():
-            # Secondary profiles hold the same recommended tickers under a
-            # different DB and exit policy, so they get their own alerted-log
-            # file (independent stop-loss timing) but skip the shared
-            # position-check audit trail (run_id=None) since that trail
-            # belongs to the primary/aggressive tracking pipeline.
-            is_primary = name == "aggressive"
-            state = virtual_trader_state(path=profile["db_path"])
-            quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
-            profile_alerts = find_alerts(
-                positions, end_day, run_id if is_primary else None,
-                virtual_position_states(path=profile["db_path"]), quantities,
-                profile["sell_policy"], profile["sell_alerts_log"],
-            )
-            if profile_alerts:
-                write_log(profile_alerts, path=profile["sell_alerts_log"])
-            result = virtual_sell([
-                {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
-                 "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
-                for alert in profile_alerts
-            ], path=profile["db_path"])
-            if is_primary:
-                alerts, virtual_result = profile_alerts, result
+        alerts, virtual_result = _run_profile_sell_check(positions, end_day, run_id, PROFILES["aggressive"])
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")
         raise
+
+    # Secondary profiles are comparison-only: they share the aggressive
+    # account's run_id/audit trail only when it's their turn to log
+    # (run_id=None below), so a failure here can't mark the primary sell
+    # run as failed or block its already-completed alerts/execution.
+    for name, profile in PROFILES.items():
+        if name == "aggressive":
+            continue
+        try:
+            _run_profile_sell_check(positions, end_day, None, profile)
+        except Exception as error:
+            write_error_log(error)
+
     if not alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
         return "no_alerts"
     from .notifier import send_notification
