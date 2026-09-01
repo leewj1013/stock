@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.virtual_trader_report import run, toss_reference_price
+from stock_alarm.virtual_trader_report import risk_reason_lines, run, toss_reference_price
 
 
 class VirtualTraderReportTest(unittest.TestCase):
@@ -10,7 +10,7 @@ class VirtualTraderReportTest(unittest.TestCase):
         return {"holdings": [], "total_equity": 100_000, "holdings_value": 0}
 
     @patch("stock_alarm.notifier.send_notification")
-    @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "halted", "reason": "daily_loss_limit"})
+    @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "halted", "reason": "daily_loss_limit", "daily_return_pct": -2.35})
     @patch("stock_alarm.virtual_trader_report.record_virtual_valuation", return_value={"equity": 100_000, "return_pct": -2, "return_change_pct": -2})
     @patch("stock_alarm.virtual_trader_report.virtual_trader_state")
     @patch("stock_alarm.virtual_trader_report.current_prices", return_value={})
@@ -20,6 +20,23 @@ class VirtualTraderReportTest(unittest.TestCase):
         message = send.call_args.args[0]
         self.assertIn("보유종목은 유지", message)
         self.assertIn("분할익절과 개별 매도조건은 계속 감시", message)
+        self.assertIn("당일 계좌 손실 한도 도달", message)
+        self.assertIn("당일 손익률 -2.35%", message)
+        self.assertNotIn("daily_loss_limit", message)
+
+    def test_risk_reason_lines_translate_multiple_internal_codes(self):
+        lines = risk_reason_lines({
+            "reason": "weekly_loss_limit,drawdown_limit,exposure_limit",
+            "weekly_return_pct": -5.4,
+            "drawdown_pct": -10.2,
+            "exposure_pct": 72.5,
+        })
+
+        message = "\n".join(lines)
+        self.assertIn("주간 계좌 손실 한도 도달", message)
+        self.assertIn("계좌 최고점 대비 최대낙폭 한도 도달", message)
+        self.assertIn("보유종목 투자비중 한도 초과", message)
+        self.assertNotIn("weekly_loss_limit", message)
 
     @patch("stock_alarm.notifier.send_notification")
     @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "resumed", "reason": ""})

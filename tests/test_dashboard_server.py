@@ -4,7 +4,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import RemoteReadOnlyHandler, allowed_origin, prices, remote_setup_page, valid_remote_token
+from stock_alarm.dashboard_server import RemoteReadOnlyHandler, allowed_origin, prices, remote_setup_page, trader_payload, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
@@ -28,6 +28,24 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.latest_position_rows", return_value=[{"ticker": "086280", "close": "206000"}])
     def test_prices_refreshes_virtual_holding_instead_of_using_stale_report(self, _positions, _recommendations, _state, _naver):
         self.assertEqual(204500, prices()["086280"])
+
+    @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_price_quality", return_value=[])
+    @patch("stock_alarm.dashboard_server.active_strategy_version", return_value={})
+    @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
+    @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={"086280": "항공화물운송과물류"})
+    @patch("stock_alarm.dashboard_server.virtual_trader_state")
+    @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
+    def test_trader_payload_adds_sector_to_holdings(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales):
+        state.return_value = {
+            "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
+            "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
+        }
+
+        payload = trader_payload()
+
+        self.assertEqual("항공화물운송과물류", payload["holdings"][0]["sector"])
 
 
 class RemoteReadOnlyHandlerTest(unittest.TestCase):

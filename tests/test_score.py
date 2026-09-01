@@ -35,9 +35,20 @@ class ScoreTest(unittest.TestCase):
         self.assertGreater(adjusted[0].pick.score, adjusted[1].pick.score)
         self.assertEqual(1.0, adjusted[0].values["market_proxy_return_pct"])
 
+    @patch("stock_alarm.market_breadth.cached_whole_market_average_change_pct", return_value=None)
     @patch("stock_alarm.app.naver_rows", return_value=[[20260806, 0, 0, 0, 100, 1], [20260807, 0, 0, 0, 102, 1]])
-    def test_market_benchmark_uses_kospi(self, _rows):
+    def test_market_benchmark_falls_back_to_kospi_ticker_when_whole_market_unavailable(self, _rows, _whole_market):
         self.assertEqual(("KOSPI", 2.0), market_benchmark_return(date(2026, 8, 7)))
+
+    @patch("stock_alarm.market_breadth.cached_whole_market_average_change_pct", return_value=1.23)
+    def test_market_benchmark_prefers_whole_market_average(self, _whole_market):
+        self.assertEqual(("WHOLE_MARKET", 1.23), market_benchmark_return(date(2026, 8, 7)))
+
+    @patch("stock_alarm.market_breadth.cached_whole_market_average_change_pct", return_value=1.23)
+    @patch("stock_alarm.app.naver_rows", return_value=[[20260806, 0, 0, 0, 100, 1], [20260807, 0, 0, 0, 102, 1]])
+    @patch.dict("os.environ", {"MARKET_BENCHMARK_TICKER": "233740"})
+    def test_market_benchmark_respects_explicit_ticker_override(self, _rows, _whole_market):
+        self.assertEqual(("233740", 2.0), market_benchmark_return(date(2026, 8, 7)))
 
     def test_write_log_includes_score_parts(self):
         with tempfile.TemporaryDirectory() as directory:

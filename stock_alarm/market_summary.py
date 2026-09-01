@@ -80,9 +80,27 @@ def summary(rows: list[dict[str, str]]) -> dict[str, str]:
     return {"count": str(len(rows)), "up_count": str(up_count), "down_count": str(down_count), "up_ratio_pct": f"{up_count / len(rows) * 100:.1f}" if rows else "0.0", "avg_change_pct": f"{mean(changes):.2f}" if changes else "0.00"}
 
 
-def market_regime(domestic: dict[str, str], us_rows: list[dict[str, str]]) -> dict[str, str]:
-    domestic_average = float(domestic["avg_change_pct"])
-    domestic_breadth = float(domestic["up_ratio_pct"])
+def whole_market_summary() -> dict[str, str] | None:
+    """KOSPI+KOSDAQ-wide breadth (KRX official API when available, else a
+    Naver-scrape fallback) -- distinct from the watchlist-only summary()
+    above, so the brief can show whether the user's watchlist is tracking
+    or diverging from the broader market."""
+    from .market_breadth import cached_whole_market_average_change_pct, cached_whole_market_up_ratio
+
+    up_ratio = cached_whole_market_up_ratio()
+    avg_change = cached_whole_market_average_change_pct()
+    if up_ratio is None or avg_change is None:
+        return None
+    return {"up_ratio_pct": f"{up_ratio * 100:.1f}", "avg_change_pct": f"{avg_change:.2f}"}
+
+
+def market_regime(domestic: dict[str, str], us_rows: list[dict[str, str]], whole_market: dict[str, str] | None = None) -> dict[str, str]:
+    # Prefer the whole-market figures when available: the watchlist is
+    # curated toward large/mid caps and can read stronger or weaker than the
+    # broader KOSPI+KOSDAQ mood.
+    basis = whole_market or domestic
+    domestic_average = float(basis["avg_change_pct"])
+    domestic_breadth = float(basis["up_ratio_pct"])
     us_average = mean(float(row["change_pct"]) for row in us_rows) if us_rows else 0
     score = 50 + domestic_average * 8 + (domestic_breadth - 50) * 0.3 + us_average * 10
     score = max(0, min(100, score))
@@ -93,11 +111,18 @@ def market_regime(domestic: dict[str, str], us_rows: list[dict[str, str]]) -> di
     return {"label": "🔴 방어", "buy_limit": "10%", "guidance": "신규 매수를 최소화하고 손절선과 현금 비중을 우선", "score": f"{score:.0f}"}
 
 
-def message(rows: list[dict[str, str]] | None = None, us_rows: list[dict[str, str]] | None = None) -> str:
+def message(
+    rows: list[dict[str, str]] | None = None,
+    us_rows: list[dict[str, str]] | None = None,
+    whole_market: dict[str, str] | None = None,
+    whole_market_leaders: list[dict] | None = None,
+) -> str:
     rows = rows if rows is not None else market_rows()
     us_rows = us_rows if us_rows is not None else us_market_rows()
+    whole_market = whole_market if whole_market is not None else whole_market_summary()
+    whole_market_leaders = whole_market_leaders if whole_market_leaders is not None else krx_top_trading_value_leaders()
     info = summary(rows)
-    regime = market_regime(info, us_rows)
+    regime = market_regime(info, us_rows, whole_market)
     leaders = sorted(rows, key=lambda row: int(row.get("trading_value") or 0), reverse=True)[:3]
     lines = [
         "[08:30 오늘의 매매 브리핑]",
@@ -114,11 +139,25 @@ def message(rows: list[dict[str, str]] | None = None, us_rows: list[dict[str, st
     else:
         lines.append("- 미국 증시 데이터 수집 대기")
     lines.extend(["", "■ 국내 관심종목 흐름", f"상승/하락: {info['up_count']}개 / {info['down_count']}개", f"상승 비율: {info['up_ratio_pct']}%", f"평균 등락률: {float(info['avg_change_pct']):+.2f}%"])
+    if whole_market:
+        lines.extend(["", "■ 국내 전체 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
     if leaders:
-        lines.extend(["", "■ 거래대금 주도 종목"])
+        lines.extend(["", "■ 거래대금 주도 종목(관심종목)"])
         lines.extend(f"- {row['name']}({row['ticker']}): {float(row['change_pct']):+.2f}%" for row in leaders)
+    if whole_market_leaders:
+        lines.extend(["", "■ 거래대금 주도 종목(전체 시장)"])
+        lines.extend(f"- {row['name']}({row['ticker']}): {row['change_pct']:+.2f}%" for row in whole_market_leaders)
     lines.extend(["", "■ 한 줄 결론", regime["guidance"], "미국장은 최근 마감가, 국내는 직전 거래일 종가 기준입니다."])
     return "\n".join(lines)
+
+
+def krx_top_trading_value_leaders(top_n: int = 3) -> list[dict]:
+    from .market_breadth import krx_top_trading_value_rows
+
+    try:
+        return krx_top_trading_value_rows(top_n)
+    except Exception:
+        return []
 
 
 def run() -> str:

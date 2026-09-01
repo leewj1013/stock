@@ -70,9 +70,19 @@ DEFAULT_STOCKS = {
 WATCHLIST_PATH = "data/watchlist.csv"
 POSITIONS_PATH = "data/positions.csv"
 SELL_ALERTS_PATH = "logs/sell_alerts.csv"
+# Every scheduled entry point runs "python -m stock_alarm.<module>", which only
+# needs the package to be importable -- it does NOT guarantee the process's
+# working directory is the repo root. A relative ".env" default silently finds
+# nothing (os.path.exists returns False, load_env() no-ops without error) the
+# moment something invokes a module from elsewhere, so TELEGRAM_BOT_TOKEN and
+# friends end up unset with no exception logged anywhere. Anchor to this file's
+# location instead so env loading works regardless of caller's cwd.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 
-def load_env(path: str = ".env") -> None:
+def load_env(path: str | None = None) -> None:
+    path = path or DEFAULT_ENV_PATH
     os.makedirs(".cache/matplotlib", exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", os.path.abspath(".cache/matplotlib"))
     if not os.path.exists(path):
@@ -86,7 +96,8 @@ def load_env(path: str = ".env") -> None:
             os.environ.setdefault(key.strip(), value.strip())
 
 
-def save_env_value(key: str, value: str, path: str = ".env") -> None:
+def save_env_value(key: str, value: str, path: str | None = None) -> None:
+    path = path or DEFAULT_ENV_PATH
     lines = []
     found = False
     if os.path.exists(path):
@@ -537,7 +548,19 @@ def passes_market_filter(end_day: date) -> bool:
 
 
 def market_benchmark_return(end_day: date) -> tuple[str, float | None]:
+    """The relative-strength baseline: a single index ticker only reflects its
+    (often large-cap-heavy) constituents, while the whole-market mean %-change
+    covers every listed stock. Only fall back to the ticker when no custom
+    MARKET_BENCHMARK_TICKER override is set and the whole-market figure is
+    unavailable, so an explicit override is still honored as-is.
+    """
     symbol = os.environ.get("MARKET_BENCHMARK_TICKER", "KOSPI")
+    if symbol == "KOSPI":
+        from .market_breadth import cached_whole_market_average_change_pct
+
+        whole_market = cached_whole_market_average_change_pct()
+        if whole_market is not None:
+            return "WHOLE_MARKET", whole_market
     try:
         rows = naver_rows(symbol, end_day - timedelta(days=10), end_day)
         if len(rows) >= 2 and float(rows[-2][4]):
@@ -606,15 +629,35 @@ def configured_stocks() -> dict[str, str]:
     return DEFAULT_STOCKS
 
 
+def recommend_universe(min_trading_value: int) -> dict[str, str]:
+    """The watchlist, optionally widened with today's top-trading-value stocks
+    market-wide. Opt-in via DYNAMIC_SCREENING_TOP_N (default 0/off) since it
+    changes which tickers ever get a chance at a recommendation -- every
+    candidate here, static or dynamic, still has to clear the same
+    liquidity/technical/quality filters in evaluate_naver_candidate().
+    """
+    stocks = dict(configured_stocks())
+    top_n = int(env_float("DYNAMIC_SCREENING_TOP_N", 0))
+    if top_n > 0:
+        from .market_breadth import krx_top_trading_value_candidates
+        try:
+            for ticker, name in krx_top_trading_value_candidates(top_n, min_trading_value).items():
+                stocks.setdefault(ticker, name)
+        except Exception:
+            pass
+    return stocks
+
+
 def recommend_naver(end_day: date, top_n: int, min_trading_value: int, volume_multiplier: float, run_id: str | None = None) -> list[Pick]:
+    universe = recommend_universe(min_trading_value)
     if not passes_market_filter(end_day):
         if run_id:
             from .data_store import write_candidates
-            write_candidates(run_id, ({"ticker": ticker, "name": name, "evaluated_at": datetime.now().isoformat(timespec="seconds"), "passed": 0, "selected": 0, "rejection_reasons": "market_filter"} for ticker, name in configured_stocks().items()))
+            write_candidates(run_id, ({"ticker": ticker, "name": name, "evaluated_at": datetime.now().isoformat(timespec="seconds"), "passed": 0, "selected": 0, "rejection_reasons": "market_filter"} for ticker, name in universe.items()))
         return []
     picks = []
     evaluations = []
-    for ticker, name in configured_stocks().items():
+    for ticker, name in universe.items():
         if run_id:
             evaluation = evaluate_naver_candidate(ticker, name, end_day, min_trading_value, volume_multiplier, record_quality=True)
             evaluations.append(evaluation)

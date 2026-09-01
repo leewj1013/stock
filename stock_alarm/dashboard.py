@@ -16,6 +16,7 @@ from .data_store import (
 from .health import lines as health_lines
 from .positions_check import active_position_tickers
 from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv, tail_text
+from .sell_check import position_was_alerted
 
 
 OUT_PATH = "reports/dashboard.html"
@@ -291,7 +292,7 @@ DISPLAY_VALUES = {
     "skipped_duplicate": "중복으로 생략",
     "HOLD": "보유",
     "SELL": "매도 검토",
-    "ALREADY_ALERTED": "이미 알림",
+    "ALREADY_ALERTED": "매도 알림 완료",
     "sell_alert_after_entry": "이 종목은 이미 매도 검토 알림을 보냄",
     "recommendation": "추천 점검",
     "completed": "완료",
@@ -559,6 +560,11 @@ def latest_position_rows(limit: int | None = None) -> list[dict[str, str]]:
         ticker = row.get("ticker", "")
         if not ticker or ticker in seen or ticker not in active:
             continue
+        # A ticker can be recommended again after a prior sell alert. Filter by
+        # the individual entry date so the old, already-alerted entry is not
+        # shown as an active recommendation for the newer entry.
+        if position_was_alerted(row):
+            continue
         seen.add(ticker)
         rows.append(row)
         if limit is not None and len(rows) >= limit:
@@ -568,12 +574,21 @@ def latest_position_rows(limit: int | None = None) -> list[dict[str, str]]:
 
 def position_summary_rows(limit: int | None = None) -> list[dict[str, str]]:
     """Combine the position report with the latest DB-backed sell evaluation."""
-    checks = {}
+    checks: dict[tuple[str, str], dict] = {}
+    ticker_checks: dict[str, dict] = {}
     for row in recent_position_checks(1000):
-        checks.setdefault(row.get("ticker", ""), row)
+        ticker = str(row.get("ticker") or "")
+        position_id = str(row.get("position_id") or "")
+        if position_id:
+            checks.setdefault((ticker, position_id), row)
+        ticker_checks.setdefault(ticker, row)
     rows = []
     for position in latest_position_rows(limit):
-        check = checks.get(position.get("ticker", ""), {})
+        ticker = str(position.get("ticker") or "")
+        position_id = str(position.get("position_id") or "")
+        check = checks.get((ticker, position_id), ticker_checks.get(ticker, {}))
+        if check.get("decision") == "ALREADY_ALERTED":
+            continue
         rows.append({
             **position,
             "holding_days": check.get("holding_days", ""),
@@ -872,6 +887,10 @@ def render() -> str:
   <div class="trader-balance"><span>보유종목 총수익률</span><strong id="trader-holdings-return">0.00%</strong></div>
 </div>
 <div class="trader-breakdown"><span>계좌 총수익률 <b id="trader-total-return">0.00%</b></span><span>총손익 <b id="trader-total-profit">0원</b></span></div>
+<div class="trader-chart-grid">
+  <section class="donut-card" aria-labelledby="asset-chart-title"><h2 id="asset-chart-title">가상계좌 자산 구성</h2><div class="donut-layout"><div class="donut-ring" id="asset-donut" role="img" aria-label="자산 구성 데이터 대기"><div class="donut-hole"><span>총자산</span><b id="asset-donut-total">0원</b></div></div><div class="donut-legend" id="asset-donut-legend"></div></div></section>
+  <section class="donut-card" aria-labelledby="sector-chart-title"><h2 id="sector-chart-title">보유종목 업종 비중</h2><div class="donut-layout"><div class="donut-ring" id="sector-donut" role="img" aria-label="업종 비중 데이터 대기"><div class="donut-hole"><span>보유 업종</span><b id="sector-donut-count">0개</b></div></div><div class="donut-legend" id="sector-donut-legend"></div></div></section>
+</div>
 <section class="order-status"><h2>현재 주문 상태</h2>
 <div class="trader-risk-grid">
   <div><span>자동매매</span><b id="trader-auto-status">확인 중</b></div>
@@ -918,8 +937,8 @@ def render() -> str:
 <meta charset="utf-8">
 <title>{e(display_label("stockAlarm Dashboard"))}</title>
 <style>
-*{{box-sizing:border-box}} html{{overflow-x:hidden}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7f9;color:#111;line-height:1.5;overflow-x:hidden}} body>h1,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
-h1{{margin-bottom:4px}} h2{{line-height:1.3}} .muted{{color:#666;overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
+*{{box-sizing:border-box}} html{{overflow-x:hidden}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:#f6f7f9;color:#111;line-height:1.5;overflow-x:hidden}} .dashboard-header,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
+.dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:#666}} h2{{line-height:1.3}} .muted{{color:#666;overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:white;border-radius:12px;padding:16px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
 .home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:white;border:1px solid #d0d5dd;white-space:nowrap}} .system-pill.ok{{background:#ecfdf3;border-color:#abefc6}} .system-pill.bad{{background:#fef3f2;border-color:#fecdca}}
 .home-cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0 24px}} .summary-card{{min-width:0;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .summary-card.primary{{background:#111827;color:white}} .summary-card b,.summary-card strong,.summary-card small{{display:block}} .summary-card b{{color:#64748b}} .summary-card.primary b,.summary-card.primary small{{color:#cbd5e1}} .summary-card strong{{font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .summary-card small{{color:#64748b}}
@@ -927,7 +946,7 @@ h1{{margin-bottom:4px}} h2{{line-height:1.3}} .muted{{color:#666;overflow-wrap:a
 .tracking-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}} .tracking-card{{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:17px 18px;box-shadow:0 1px 4px #ddd}} .tracking-card span,.tracking-card b{{display:block}} .tracking-card span{{color:#64748b;font-size:13px}} .tracking-card b{{font-size:22px;margin-top:7px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:white;color:#111827;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd;border:1px solid #e5e7eb}} .highlight b{{display:block;color:#475569}} .highlight span{{display:block;color:#111827;font-size:24px;font-weight:800;margin-top:8px}}
-.tabs{{margin-top:22px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}} .tab-label{{display:inline-flex;align-items:center;background:#e9edf3;border-radius:999px;padding:10px 16px;cursor:pointer;font-weight:600}}
+.tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}} .tab-label{{display:inline-flex;align-items:center;background:#e9edf3;border-radius:999px;padding:10px 16px;cursor:pointer;font-weight:600}}
 .tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:#111;color:white}}
 #tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
@@ -940,16 +959,20 @@ table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:#475569}}
 .trader-risk-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 16px}} .trader-risk-grid>div{{min-width:0;background:#fff;border:1px solid #dbe3ec;border-radius:12px;padding:14px 16px}} .trader-risk-grid span,.trader-risk-grid b{{display:block}} .trader-risk-grid b>span{{display:inline;color:inherit;font-size:inherit}} .trader-risk-grid span{{color:#64748b;font-size:13px}} .trader-risk-grid b{{margin-top:5px;overflow-wrap:anywhere}} .order-status{{overflow:visible}} .order-status>.trader-status{{margin:0;background:#f8fafc;border-color:#e2e8f0}} .account-actions{{background:#fff;border:1px solid #e2e8f0;box-shadow:0 1px 4px #ddd}} .account-actions summary{{font-size:18px}} .account-actions .trader-controls{{margin-top:0}}
 .sale-summary-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0 20px}} .sale-summary-grid>div{{min-width:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px}} .sale-summary-grid span,.sale-summary-grid b{{display:block}} .sale-summary-grid span{{color:#64748b;font-size:13px}} .sale-summary-grid b{{font-size:20px;margin-top:6px;overflow-wrap:anywhere}} .table-scroll{{overflow-x:auto}}
+.trader-chart-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-chart-grid .donut-card{{margin:0;overflow:visible}} .donut-layout{{display:grid;grid-template-columns:minmax(190px,240px) minmax(0,1fr);align-items:center;gap:24px}} .donut-ring{{width:220px;aspect-ratio:1;border-radius:50%;display:grid;place-items:center;background:#e2e8f0;margin:auto;transition:background .2s ease}} .donut-hole{{width:58%;aspect-ratio:1;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:#fff;box-shadow:0 0 0 1px rgba(226,232,240,.75)}} .donut-hole span{{font-size:13px;color:#64748b}} .donut-hole b{{font-size:18px;margin-top:5px;max-width:110px;overflow-wrap:anywhere}} .donut-legend{{display:grid;gap:10px;min-width:0}} .donut-legend-row{{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:center;gap:9px;font-size:14px}} .donut-swatch{{width:12px;height:12px;border-radius:4px}} .donut-label{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}} .donut-value{{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}} .donut-empty{{color:#64748b}}
 button:focus-visible,input:focus-visible,.tab-label:focus-visible{{outline:3px solid #2563eb;outline-offset:2px}}
 li{{margin:4px 0}}
+@media(max-width:1100px){{.donut-layout{{grid-template-columns:1fr}}}}
 @media(max-width:1000px){{.home-cards,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:800px){{body{{margin:14px}} .tab-label{{padding:9px 12px}} .home-heading{{align-items:flex-start}} section{{padding:16px}} th,td{{padding:9px 10px}}}}
 @media(max-width:480px){{.home-cards,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:1fr}} .home-heading{{display:block}} .system-pill{{display:inline-block;margin-top:10px}} .summary-card strong{{font-size:24px}} .trader-breakdown{{justify-content:flex-start;flex-direction:column;gap:6px}} .trader-form>*{{width:100%}}}}
 </style>
 </head>
 <body>
+<header class="dashboard-header">
 <h1>{e(display_label("stockAlarm Dashboard"))}</h1>
-<div class="muted">{e(display_label("generated"))} {e(datetime.now().isoformat(timespec="seconds"))}</div>
+<div class="dashboard-meta">{e(display_label("generated"))} {e(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</div>
+</header>
 <div class="legacy-order">{e(display_label("Issues"))} {e(display_label("Today run details"))} {e(display_label("Today recommendations"))} {e(display_label("Recommendation shape"))} {e(display_label("Score breakdown"))} {e(display_label("Why recommended"))} {e(display_label("Sell alert summary"))} {e(display_label("Recent sell alerts"))} {e(display_label("Recommendation stats"))}</div>
 <div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
@@ -1011,6 +1034,38 @@ function renderSales() {{
   }};
   draw();
 }}
+const donutColors=["#2563eb","#0f766e","#d97706","#7c3aed","#dc2626","#64748b"];
+function renderDonut(ringId,legendId,items,emptyText) {{
+  const ring=document.getElementById(ringId), legend=document.getElementById(legendId);
+  const clean=items.filter(item=>Number(item.value)>0), total=clean.reduce((sum,item)=>sum+Number(item.value),0);
+  legend.textContent="";
+  if(!(total>0)) {{ ring.style.background="#e2e8f0"; ring.setAttribute("aria-label",emptyText); const empty=document.createElement("div");empty.className="donut-empty";empty.textContent=emptyText;legend.appendChild(empty);return; }}
+  let cursor=0; const stops=[]; const labels=[];
+  clean.forEach((item,index)=>{{
+    const color=item.color||donutColors[index%donutColors.length], pct=Number(item.value)/total*100, end=cursor+pct;
+    stops.push(`${{color}} ${{cursor.toFixed(3)}}% ${{end.toFixed(3)}}%`); cursor=end;
+    const row=document.createElement("div");row.className="donut-legend-row";
+    const swatch=document.createElement("span");swatch.className="donut-swatch";swatch.style.background=color;
+    const label=document.createElement("span");label.className="donut-label";label.textContent=item.label;
+    const value=document.createElement("span");value.className="donut-value";value.textContent=`${{won(item.value)}} · ${{pct.toFixed(1)}}%`;
+    row.append(swatch,label,value);legend.appendChild(row);labels.push(`${{item.label}} ${{pct.toFixed(1)}}%`);
+  }});
+  ring.style.background=`conic-gradient(${{stops.join(",")}})`; ring.setAttribute("aria-label",labels.join(", "));
+}}
+function renderPortfolioCharts() {{
+  const cash=Number(trader.cash||0), holdingsValue=Number(trader.holdings_value||0);
+  document.getElementById("asset-donut-total").textContent=won(cash+holdingsValue);
+  renderDonut("asset-donut","asset-donut-legend",[
+    {{label:"주문 가능 현금",value:cash,color:"#2563eb"}},
+    {{label:"보유주식 평가액",value:holdingsValue,color:"#0f766e"}},
+  ],"입금 또는 보유자산이 없습니다.");
+  const grouped={{}};
+  (trader.holdings||[]).forEach(item=>{{const sector=item.sector||"미분류";grouped[sector]=(grouped[sector]||0)+Number(item.valuation||0);}});
+  const sectors=Object.entries(grouped).map(([label,value])=>({{label,value}})).sort((a,b)=>b.value-a.value);
+  const shown=sectors.slice(0,5); if(sectors.length>5)shown.push({{label:"기타",value:sectors.slice(5).reduce((sum,item)=>sum+item.value,0)}});
+  document.getElementById("sector-donut-count").textContent=`${{sectors.length}}개`;
+  renderDonut("sector-donut","sector-donut-legend",shown,"보유종목이 없습니다.");
+}}
 function renderTrader(message="") {{
   document.getElementById("trader-total-equity").textContent = won(trader.total_equity || trader.cash || 0);
   document.getElementById("trader-cash").textContent = won(trader.cash || 0);
@@ -1021,6 +1076,7 @@ function renderTrader(message="") {{
   document.getElementById("home-total-equity").textContent=won(trader.total_equity||trader.cash||0);
   const homeReturn=document.getElementById("home-total-return"); homeReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; homeReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
   document.getElementById("home-total-profit").textContent=`총손익 ${{won(trader.total_profit_loss||0)}}`;
+  renderPortfolioCharts();
   document.getElementById("home-orders").textContent=`매수 ${{trader.today_buys||0}} · 매도 ${{trader.today_sells||0}}`;
   document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
   document.getElementById("home-auto-status").textContent = trader.auto_trading ? "정상 작동" : "중단";
@@ -1123,5 +1179,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

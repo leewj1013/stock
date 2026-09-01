@@ -7,6 +7,7 @@ import os
 from datetime import date, datetime, timedelta
 from statistics import mean
 
+from .app import load_env
 from .data_store import (
     DB_PATH,
     STRATEGY_VERSION,
@@ -336,6 +337,7 @@ def decision_message(result: dict) -> str:
 
 
 def run() -> dict:
+    load_env()
     sync_outcomes()
     result = learn()
     from .notifier import send_notification

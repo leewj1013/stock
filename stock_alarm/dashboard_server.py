@@ -14,6 +14,7 @@ from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
+from .sector_reference import load_sector_mapping
 
 
 HOST = "127.0.0.1"
@@ -72,6 +73,11 @@ def prices() -> dict[str, int]:
 
 def trader_payload() -> dict:
     state = virtual_trader_state(prices())
+    holding_tickers = {str(row.get("ticker") or "") for row in state["holdings"]}
+    try:
+        sectors = load_sector_mapping(holding_tickers)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        sectors = {}
     risk = latest_portfolio_risk()
     strategy = active_strategy_version()
     quality = recent_price_quality(100)
@@ -82,7 +88,7 @@ def trader_payload() -> dict:
     breadth = None
     try:
         with open(MARKET_BREADTH_CACHE_PATH, encoding="utf-8") as file:
-            breadth = float(json.load(file).get("ratio"))
+            breadth = float(json.load(file).get("up_ratio"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
     market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
@@ -110,6 +116,7 @@ def trader_payload() -> dict:
         else:
             watch_state = "정상 보유"
         holding.update({
+            "sector": sectors.get(str(holding.get("ticker") or ""), "미분류"),
             "allocation_pct": round(float(holding.get("valuation") or 0) / max(float(state.get("total_equity") or 0), 1) * 100, 2),
             "holding_days": check.get("holding_days") if check.get("holding_days") is not None else fallback_holding_days,
             "watch_state": watch_state,

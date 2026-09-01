@@ -87,11 +87,37 @@ class ScriptTest(unittest.TestCase):
             batch = file.read()
         with open("scripts/open_dashboard.ps1", encoding="utf-8-sig") as file:
             script = file.read()
+        with open("scripts/ensure_dashboard_server.ps1", encoding="utf-8-sig") as file:
+            ensure_script = file.read()
 
         self.assertIn("scripts\\open_dashboard.ps1", batch)
-        self.assertIn("stock_alarm.dashboard_server", script)
+        self.assertIn("ensure_dashboard_server.ps1", script)
+        self.assertIn("stock_alarm.dashboard_server", ensure_script)
         self.assertIn("http://127.0.0.1:$port/", script)
         self.assertIn("Start-Process", script)
+
+    def test_ensure_dashboard_server_script_checks_port_before_launching(self):
+        with open("scripts/ensure_dashboard_server.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("Get-NetTCPConnection", script)
+        self.assertIn("stock_alarm.dashboard_server", script)
+        self.assertIn("-WindowStyle Hidden", script)
+
+    def test_start_remote_dashboard_reuses_ensure_script(self):
+        with open("scripts/start_remote_dashboard.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("ensure_dashboard_server.ps1", script)
+        self.assertIn("DASHBOARD_REMOTE_PORT", script)
+
+    def test_register_task_registers_dashboard_server_at_logon(self):
+        with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("stockAlarmDashboardServer", script)
+        self.assertIn("ensure_dashboard_server.ps1", script)
+        self.assertIn("New-ScheduledTaskTrigger -AtLogOn", script)
 
     def test_issue_alert_macro(self):
         with open("issue_alert.bat", encoding="utf-8-sig") as file:

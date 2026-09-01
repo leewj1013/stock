@@ -205,6 +205,20 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual(["B"], [row["ticker"] for row in rows])
 
+    @patch("stock_alarm.dashboard.position_was_alerted")
+    @patch("stock_alarm.dashboard.active_position_tickers", return_value={"A"})
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_latest_position_rows_hides_alerted_entry_but_keeps_later_reentry(self, tail_csv, _active, was_alerted):
+        tail_csv.return_value = [
+            {"created_at": "2026-08-31T10:00:00", "ticker": "A", "entry_date": "2026-08-30", "position_id": "new"},
+            {"created_at": "2026-08-31T10:00:00", "ticker": "A", "entry_date": "2026-08-20", "position_id": "old"},
+        ]
+        was_alerted.side_effect = lambda row: row["position_id"] == "old"
+
+        rows = latest_position_rows()
+
+        self.assertEqual(["new"], [row["position_id"] for row in rows])
+
     def test_reason_summary(self):
         self.assertEqual("기본 조건 충족", reason_summary({"volume_ratio": "1.5"}, {}, 0))
 
@@ -231,6 +245,9 @@ class DashboardTest(unittest.TestCase):
         html = render()
 
         self.assertIn("국내주식 알림 대시보드", html)
+        self.assertIn('class="dashboard-header"', html)
+        self.assertIn('class="dashboard-meta"', html)
+        self.assertRegex(html, r"생성 시각 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
         self.assertIn("오늘의 투자 현황", html)
         self.assertIn("가상계좌 총자산", html)
         self.assertIn("보유종목 총수익률", html)
@@ -250,6 +267,10 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("시장 모드", html)
         self.assertIn("매도 내역", html)
         self.assertIn("누적 실현손익", html)
+        self.assertIn("가상계좌 자산 구성", html)
+        self.assertIn("보유종목 업종 비중", html)
+        self.assertIn("conic-gradient", html)
+        self.assertIn("renderPortfolioCharts()", html)
         self.assertIn("item.sale_label", html)
         self.assertIn("Math.floor(page/5)*5", html)
         self.assertNotIn("메시지 ID</th>", html)

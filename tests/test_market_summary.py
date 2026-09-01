@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.market_summary import alpha_vantage_daily, market_regime, market_rows, message, run, summary
+from stock_alarm.market_summary import alpha_vantage_daily, krx_top_trading_value_leaders, market_regime, market_rows, message, run, summary, whole_market_summary
 
 
 class MarketSummaryTest(unittest.TestCase):
@@ -11,18 +11,57 @@ class MarketSummaryTest(unittest.TestCase):
         self.assertEqual({"count": "3", "up_count": "1", "down_count": "1", "up_ratio_pct": "33.3", "avg_change_pct": "-0.33"}, summary(rows))
 
     def test_message(self):
-        text = message([{"ticker": "A", "name": "Alpha", "change_pct": "1.23", "trading_value": "100"}, {"ticker": "B", "name": "Beta", "change_pct": "-2.34", "trading_value": "200"}], [{"symbol": "SPY", "name": "S&P 500", "change_pct": "1.10"}])
+        text = message(
+            [{"ticker": "A", "name": "Alpha", "change_pct": "1.23", "trading_value": "100"}, {"ticker": "B", "name": "Beta", "change_pct": "-2.34", "trading_value": "200"}],
+            [{"symbol": "SPY", "name": "S&P 500", "change_pct": "1.10"}],
+            whole_market={},
+            whole_market_leaders=[],
+        )
         self.assertIn("[08:30 오늘의 매매 브리핑]", text)
         self.assertIn("미국 증시 마감", text)
         self.assertIn("S&P 500(SPY): +1.10%", text)
         self.assertIn("상승/하락: 1개 / 1개", text)
-        self.assertIn("거래대금 주도 종목", text)
+        self.assertIn("거래대금 주도 종목(관심종목)", text)
         self.assertIn("권장 신규 매수 한도", text)
+
+    def test_message_includes_whole_market_section_and_leaders_when_available(self):
+        text = message(
+            [{"ticker": "A", "name": "Alpha", "change_pct": "1.23", "trading_value": "100"}],
+            [],
+            whole_market={"up_ratio_pct": "62.0", "avg_change_pct": "0.45"},
+            whole_market_leaders=[{"ticker": "005930", "name": "삼성전자", "change_pct": -1.2}],
+        )
+        self.assertIn("국내 전체 시장(코스피·코스닥)", text)
+        self.assertIn("상승 비율: 62.0%", text)
+        self.assertIn("거래대금 주도 종목(전체 시장)", text)
+        self.assertIn("삼성전자(005930): -1.20%", text)
 
     def test_market_regime_combines_domestic_and_us_market(self):
         result = market_regime({"avg_change_pct": "2.0", "up_ratio_pct": "80.0"}, [{"change_pct": "1.5"}])
         self.assertEqual("🟢 공격", result["label"])
         self.assertEqual("70%", result["buy_limit"])
+
+    def test_market_regime_prefers_whole_market_over_watchlist_when_given(self):
+        result = market_regime(
+            {"avg_change_pct": "5.0", "up_ratio_pct": "90.0"},
+            [{"change_pct": "0"}],
+            whole_market={"avg_change_pct": "-2.0", "up_ratio_pct": "20.0"},
+        )
+        self.assertEqual("🔴 방어", result["label"])
+
+    @patch("stock_alarm.market_breadth.cached_whole_market_average_change_pct", return_value=1.2)
+    @patch("stock_alarm.market_breadth.cached_whole_market_up_ratio", return_value=0.6)
+    def test_whole_market_summary_formats_ratio_as_percent(self, _ratio, _avg):
+        self.assertEqual({"up_ratio_pct": "60.0", "avg_change_pct": "1.20"}, whole_market_summary())
+
+    @patch("stock_alarm.market_breadth.cached_whole_market_average_change_pct", return_value=None)
+    @patch("stock_alarm.market_breadth.cached_whole_market_up_ratio", return_value=None)
+    def test_whole_market_summary_returns_none_when_unavailable(self, _ratio, _avg):
+        self.assertIsNone(whole_market_summary())
+
+    @patch("stock_alarm.market_breadth.krx_top_trading_value_rows", side_effect=RuntimeError("network"))
+    def test_krx_top_trading_value_leaders_swallows_errors(self, _rows):
+        self.assertEqual([], krx_top_trading_value_leaders())
 
     @patch("stock_alarm.market_summary.urllib.request.urlopen")
     def test_alpha_vantage_daily_uses_latest_two_sessions(self, urlopen):

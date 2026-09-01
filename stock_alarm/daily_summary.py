@@ -55,7 +55,17 @@ def _trade_lines(buys: list[dict], sales: list[dict]) -> list[str]:
     return lines
 
 
+def market_comparison_line(daily_return_pct: float | None, whole_market: dict[str, str] | None) -> str | None:
+    if daily_return_pct is None or not whole_market:
+        return None
+    gap = daily_return_pct - float(whole_market["avg_change_pct"])
+    return f"계좌 대비 시장: {gap:+.2f}%p (시장 평균 {float(whole_market['avg_change_pct']):+.2f}%)"
+
+
 def message() -> str:
+    from .market_summary import whole_market_summary
+
+    whole_market = whole_market_summary()
     recommendations = latest_recommendations()
     sell_alerts = latest_sell_alerts()
     buys = _today(recent_virtual_trades(500))
@@ -69,6 +79,7 @@ def message() -> str:
     today_start = datetime.now().date().isoformat()
     previous = previous_virtual_valuation(today_start)
     deposited_today = virtual_deposits_since(today_start)
+    daily_return: float | None = None
     if previous:
         daily_profit = int(state["total_equity"]) - int(previous["equity"]) - deposited_today
         base = int(previous["equity"]) + deposited_today
@@ -85,6 +96,13 @@ def message() -> str:
         "■ 오늘 결과",
         f"추천 {len(recommendations)}종목 · 가상매수 {len(buys)}종목 · 가상매도 {len(sales)}종목",
         f"매도 검토 {len(sell_alerts)}종목",
+    ]
+    if whole_market:
+        lines.extend(["", "■ 오늘 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
+        comparison = market_comparison_line(daily_return, whole_market)
+        if comparison:
+            lines.append(comparison)
+    lines.extend([
         "",
         "■ 가상계좌",
         f"총자산 {_won(state['total_equity'])}",
@@ -95,7 +113,7 @@ def message() -> str:
         "■ 보유종목",
         f"전체 수익률 {float(state['holdings_return_pct']):+.2f}%",
         f"상승 {up} · 하락 {down} · 보합 {flat}",
-    ]
+    ])
     if best:
         lines.append(f"최고 {best.get('name') or best['ticker']} {float(best['return_pct']):+.2f}%")
         lines.append(f"최저 {worst.get('name') or worst['ticker']} {float(worst['return_pct']):+.2f}%")

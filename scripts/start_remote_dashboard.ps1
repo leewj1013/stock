@@ -6,13 +6,8 @@ if (-not (Test-Path -LiteralPath $cloudflared)) {
     throw "cloudflared is missing: $cloudflared"
 }
 
-$port = if ($env:DASHBOARD_PORT) { $env:DASHBOARD_PORT } else { "8765" }
 $remotePort = if ($env:DASHBOARD_REMOTE_PORT) { $env:DASHBOARD_REMOTE_PORT } else { "8766" }
-$listener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
-if (-not $listener) {
-    Start-Process -FilePath ".\.venv\Scripts\python.exe" -ArgumentList "-m", "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
-    Start-Sleep -Seconds 2
-}
+& "$PSScriptRoot\ensure_dashboard_server.ps1"
 
 # Only the read-only remote port is ever handed to the tunnel. The full
 # dashboard/admin port ($port) never leaves this machine.

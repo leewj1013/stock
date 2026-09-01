@@ -6,10 +6,20 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from stock_alarm.data_store import upsert_recommendation_outcomes
-from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, decision_message, learn, objective, return_distribution_p_value
+from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, decision_message, learn, objective, return_distribution_p_value, run
 
 
 class StrategyLearningTest(unittest.TestCase):
+    @patch("stock_alarm.notifier.send_notification")
+    @patch("stock_alarm.strategy_learning.learn", return_value={"status": "insufficient_data", "sample_count": 0})
+    @patch("stock_alarm.strategy_learning.sync_outcomes")
+    @patch("stock_alarm.strategy_learning.load_env")
+    def test_run_loads_env_before_sending_the_notification(self, load_env, _sync, _learn, _send):
+        # run() is invoked as its own `python -m` subprocess in the daily batch,
+        # so TELEGRAM_BOT_TOKEN/CHAT_ID only exist if load_env() reads .env itself.
+        run()
+        load_env.assert_called_once()
+
     def test_objective_prefers_excess_return(self):
         row = {"return_1d_pct": 5, "excess_1d_pct": 2}
         self.assertEqual(2, objective(row))

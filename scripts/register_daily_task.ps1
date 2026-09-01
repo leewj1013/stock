@@ -6,6 +6,8 @@ $openAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hidde
 $dailyAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$scriptPath`" daily"
 $maintenancePath = Join-Path $projectRoot "scripts\run_db_maintenance.ps1"
 $maintenanceAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$maintenancePath`""
+$ensureDashboardPath = Join-Path $projectRoot "scripts\ensure_dashboard_server.ps1"
+$dashboardServerAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$ensureDashboardPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -76,3 +78,4 @@ Register-ScheduledTask -TaskName "stockAlarmIntradayEvery5Minutes" -Xml $intrada
 Register-ScheduledTask -TaskName "stockAlarmSellEvery5Minutes" -Xml $sellXml -Force | Out-Null
 Register-ScheduledTask -TaskName "stockAlarmDaily" -Action $dailyAction -Trigger (New-ScheduledTaskTrigger -Daily -At 16:00) -Settings $taskSettings -Description "Run stockAlarm after Korean market close" -Force
 Register-ScheduledTask -TaskName "stockAlarmMaintenance" -Action $maintenanceAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 18:00) -Settings $taskSettings -Description "Verify and back up the stockAlarm database" -Force
+Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Action $dashboardServerAction -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Settings $taskSettings -User $env:USERNAME -RunLevel Limited -Description "Start the local dashboard API server at logon (covers reboot)" -Force

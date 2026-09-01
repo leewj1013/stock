@@ -9,6 +9,45 @@ from .data_store import record_virtual_valuation, virtual_trader_state
 from .portfolio_risk import snapshot as risk_snapshot
 
 
+RISK_REASON_LABELS = {
+    "daily_loss_limit": "당일 계좌 손실 한도 도달",
+    "weekly_loss_limit": "주간 계좌 손실 한도 도달",
+    "drawdown_limit": "계좌 최고점 대비 최대낙폭 한도 도달",
+    "exposure_limit": "보유종목 투자비중 한도 초과",
+    "portfolio_risk_limit": "포트폴리오 위험 한도 도달",
+}
+
+
+def risk_reason_lines(risk: dict) -> list[str]:
+    """Translate internal risk codes into actionable Korean Telegram text."""
+    values = {
+        "daily_loss_limit": ("daily_return_pct", "RISK_DAILY_LOSS_PCT", 2.0, "당일 손익률"),
+        "weekly_loss_limit": ("weekly_return_pct", "RISK_WEEKLY_LOSS_PCT", 5.0, "주간 손익률"),
+        "drawdown_limit": ("drawdown_pct", "RISK_MAX_DRAWDOWN_PCT", 10.0, "최고점 대비 낙폭"),
+        "exposure_limit": ("exposure_pct", "RISK_MAX_EXPOSURE_PCT", 70.0, "현재 보유비중"),
+    }
+    codes = [code.strip() for code in str(risk.get("reason") or "").split(",") if code.strip()]
+    lines = []
+    for code in codes:
+        label = RISK_REASON_LABELS.get(code, "기타 포트폴리오 위험 조건")
+        if code not in values:
+            lines.append(f"- {label}")
+            continue
+        value_key, env_key, default, value_label = values[code]
+        try:
+            current = float(risk.get(value_key))
+            limit = abs(float(os.environ.get(env_key, str(default))))
+        except (TypeError, ValueError):
+            lines.append(f"- {label}")
+            continue
+        comparison = "초과 기준" if code == "exposure_limit" else "중단 기준"
+        if code == "exposure_limit":
+            lines.append(f"- {label}: {value_label} {current:.2f}% ({comparison} {limit:.2f}%)")
+        else:
+            lines.append(f"- {label}: {value_label} {current:+.2f}% ({comparison} {-limit:.2f}%)")
+    return lines or ["- 포트폴리오 위험 한도 도달"]
+
+
 def toss_reference_price(ticker: str) -> int | None:
     """Live last-traded price from Toss, used as an intraday cross-check for
     Naver's close. Unlike the pykrx fallback below, this works all session
@@ -60,9 +99,10 @@ def run() -> dict:
     risk = risk_snapshot(virtual_trader_state(prices))
     if risk.get("transition") == "halted":
         from .notifier import send_notification
+        reasons = "\n".join(risk_reason_lines(risk))
         send_notification(
             "[가상트레이더 위험중단]\n신규매수를 중단합니다.\n"
-            f"사유: {risk.get('reason')}\n"
+            f"중단 사유\n{reasons}\n"
             "보유종목은 유지되며 분할익절과 개별 매도조건은 계속 감시 중입니다.",
             event_type="portfolio_risk_halt",
         )

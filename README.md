@@ -151,7 +151,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\open_remote_da
 - 신규 진입일 상승률이 `MAX_ENTRY_DAY_CHANGE_PCT` 이하
 - 20일선 이격률이 절대 상한과 ATR 기반 상한 안쪽
 - 최근 평균 장중 변동폭이 `MAX_AVG_RANGE_PCT` 이하
-- KOSPI·KOSDAQ 시가총액 상위 종목 등락비율(전체 시장 스크랩 실패 시 관심종목 기준으로 폴백)이 `MIN_MARKET_UP_RATIO` 이상
+- KOSPI·KOSDAQ 전체 종목 등락비율(한국거래소 공식 Open API 기준, `KRX_API_KEY` 없거나 실패 시 네이버 시가총액 상위 페이지 스크랩으로, 그마저 실패하면 관심종목 기준으로 폴백)이 `MIN_MARKET_UP_RATIO` 이상
 - 추천 점수가 `MIN_RECOMMEND_SCORE` 이상
 - 이미 추천되어 추적 중인 종목은 매도 알림이 올 때까지 중복 추천 제외
 - 매도 알림 이후 다시 추천된 종목은 다시 추적 대상으로 보고 중복 추천 제외
@@ -166,6 +166,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\open_remote_da
 ```
 
 뉴스, 공시, 재무정보, 시장 대비 상대강도, 과거 추천 성과 감점과 학습 가중치를 함께 반영합니다.
+
+시장 대비 상대강도의 기준선은 `MARKET_BENCHMARK_TICKER`를 따로 지정하지 않은 경우 KOSPI 지수 하나가 아니라 KOSPI·KOSDAQ **전체 종목의 평균 등락률**(`KRX_API_KEY` 있으면 공식 Open API, 없으면 네이버 스크랩)을 씁니다. 대형주 위주인 단일 지수보다 시장 전체 분위기를 더 폭넓게 반영하기 위함입니다.
+
+`DYNAMIC_SCREENING_TOP_N`(기본 0/꺼짐)을 0보다 크게 설정하면, 그날 KOSPI·KOSDAQ 전체에서 거래대금 상위 N개 종목(우선주 제외)을 `data/watchlist.csv`에 추가로 합쳐서 평가합니다. 새로 추가된 종목도 위의 모든 필수조건을 동일하게 통과해야 실제 추천으로 이어지며, 관심종목에 이미 있는 이름은 덮어쓰지 않습니다. `KRX_API_KEY`가 없으면 조용히 꺼진 채로 동작합니다.
 
 ## 매도 검토 기준
 

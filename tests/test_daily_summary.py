@@ -2,10 +2,11 @@ import unittest
 from datetime import datetime as real_datetime
 from unittest.mock import patch
 
-from stock_alarm.daily_summary import latest_recommendations, message, run
+from stock_alarm.daily_summary import latest_recommendations, market_comparison_line, message, run
 
 
 class DailySummaryTest(unittest.TestCase):
+    @patch("stock_alarm.market_summary.whole_market_summary", return_value=None)
     @patch("stock_alarm.daily_summary.virtual_deposits_since", return_value=0)
     @patch("stock_alarm.daily_summary.previous_virtual_valuation", return_value={"equity": 9900000})
     @patch("stock_alarm.daily_summary.virtual_trader_state")
@@ -14,7 +15,7 @@ class DailySummaryTest(unittest.TestCase):
     @patch("stock_alarm.daily_summary.recent_virtual_trades")
     @patch("stock_alarm.daily_summary.datetime")
     @patch("stock_alarm.daily_summary.tail_csv")
-    def test_message(self, tail_csv, datetime, trades, _sales, _prices, state, _previous, _deposits):
+    def test_message(self, tail_csv, datetime, trades, _sales, _prices, state, _previous, _deposits, _whole_market):
         datetime.now.return_value = real_datetime(2026, 7, 31, 16, 0)
         trades.return_value = [{"created_at": "2026-07-31T09:10:00", "ticker": "A", "name": "Alpha", "quantity": 2, "allocation_pct": 20}]
         state.return_value = {
@@ -35,6 +36,39 @@ class DailySummaryTest(unittest.TestCase):
         self.assertIn("현금 8,000,000원 · 주식 2,000,000원", text)
         self.assertIn("최고 Alpha +2.50%", text)
         self.assertIn("매수: Alpha 2주 · 비중 20%", text)
+
+    def test_market_comparison_line_shows_gap_versus_whole_market_average(self):
+        line = market_comparison_line(1.5, {"up_ratio_pct": "40.0", "avg_change_pct": "-0.5"})
+
+        self.assertEqual("계좌 대비 시장: +2.00%p (시장 평균 -0.50%)", line)
+
+    def test_market_comparison_line_none_when_daily_return_unavailable(self):
+        self.assertIsNone(market_comparison_line(None, {"up_ratio_pct": "40.0", "avg_change_pct": "-0.5"}))
+
+    def test_market_comparison_line_none_when_whole_market_unavailable(self):
+        self.assertIsNone(market_comparison_line(1.5, None))
+
+    @patch("stock_alarm.market_summary.whole_market_summary", return_value={"up_ratio_pct": "62.0", "avg_change_pct": "0.30"})
+    @patch("stock_alarm.daily_summary.virtual_deposits_since", return_value=0)
+    @patch("stock_alarm.daily_summary.previous_virtual_valuation", return_value={"equity": 9900000})
+    @patch("stock_alarm.daily_summary.virtual_trader_state")
+    @patch("stock_alarm.daily_summary.current_prices", return_value={"A": 11000})
+    @patch("stock_alarm.daily_summary.recent_virtual_sales", return_value=[])
+    @patch("stock_alarm.daily_summary.recent_virtual_trades", return_value=[])
+    @patch("stock_alarm.daily_summary.datetime")
+    @patch("stock_alarm.daily_summary.tail_csv", return_value=[])
+    def test_message_includes_whole_market_section_when_available(self, _tail, datetime, _trades, _sales, _prices, state, _previous, _deposits, _whole_market):
+        datetime.now.return_value = real_datetime(2026, 7, 31, 16, 0)
+        state.return_value = {
+            "total_equity": 10_000_000, "total_return_pct": 1.25, "cash": 8_000_000,
+            "holdings_value": 2_000_000, "holdings_return_pct": 2.5, "holdings": [],
+        }
+
+        text = message()
+
+        self.assertIn("■ 오늘 시장(코스피·코스닥)", text)
+        self.assertIn("상승 비율: 62.0%", text)
+        self.assertIn("계좌 대비 시장:", text)
 
     @patch("stock_alarm.daily_summary.tail_csv")
     @patch("stock_alarm.daily_summary.datetime")
