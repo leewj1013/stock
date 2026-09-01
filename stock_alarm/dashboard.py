@@ -1064,8 +1064,8 @@ function renderPortfolioCharts() {{
   const cash=Number(trader.cash||0), holdingsValue=Number(trader.holdings_value||0);
   document.getElementById("asset-donut-total").textContent=won(cash+holdingsValue);
   renderDonut("asset-donut","asset-donut-legend",[
-    {{label:"주문 가능 현금",value:cash,color:"#2563eb"}},
-    {{label:"보유주식 평가액",value:holdingsValue,color:"#0f766e"}},
+    {{label:"주문 가능 현금",value:cash,color:"#4c6ef5"}},
+    {{label:"보유주식 평가액",value:holdingsValue,color:"#12b886"}},
   ],"입금 또는 보유자산이 없습니다.");
   const grouped={{}};
   (trader.holdings||[]).forEach(item=>{{const sector=item.sector||"미분류";grouped[sector]=(grouped[sector]||0)+Number(item.valuation||0);}});
