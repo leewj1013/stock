@@ -156,6 +156,7 @@ LABELS = {
     "disclosure_score": "공시 점수",
     "performance_penalty": "성과 감점",
     "summary": "요약",
+    "profile": "성향",
     "count": "건수",
     "entry_count": "추천 횟수",
     "return_pct": "수익률",
@@ -405,10 +406,20 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
 
 
 def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
+    from .trading_profiles import PROFILES
     today = datetime.now().date().isoformat()
-    rows = reconciled_daily_alert_rows(
-        tail_csv("logs/sell_alerts.csv", 10000), tail_csv("logs/deliveries.csv", 10000), today, "sell"
-    )
+    deliveries = tail_csv("logs/deliveries.csv", 10000)
+    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
+    rows = []
+    for name, profile in PROFILES.items():
+        raw = tail_csv(profile["sell_alerts_log"], 10000)
+        # Telegram delivery reconciliation only makes sense for a profile that
+        # actually sends notifications -- a silent (notify=False) profile's
+        # own alerts never get a delivery receipt, so reconciling would drop
+        # every one of its rows.
+        profile_rows = reconciled_daily_alert_rows(raw, deliveries, today, "sell") if profile["notify"] else daily_ticker_rows(raw, today)
+        rows.extend({**row, "profile": labels.get(name, name)} for row in profile_rows)
+    rows.sort(key=lambda row: row.get("created_at", ""), reverse=True)
     return rows[:limit] if limit else rows
 
 
@@ -854,20 +865,34 @@ def render() -> str:
     ).replace("</", "<\\/")
     stock_tab = f"""
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'확인할 문제 ' + str(issue_count) + '건' if issue_count else '시스템 정상'}</span></div>
-<div class="home-cards">
-  <div class="summary-card primary"><b>가상계좌 총자산</b><strong id="home-total-equity">불러오는 중</strong><small>현금 + 보유주식 평가액</small></div>
-  <div class="summary-card"><b>계좌 총수익률</b><strong id="home-total-return">-</strong><small id="home-total-profit">입금원금 대비</small></div>
-  <div class="summary-card"><b>오늘 추천</b><strong>{len(recommendation_rows)}종목</strong><small>추천 알고리즘 선정</small></div>
-  <div class="summary-card"><b>오늘 가상주문</b><strong id="home-orders">-</strong><small>매수·매도 체결</small></div>
-</div>
+<section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
+  <div class="profile-compare-card primary"><span class="profile-compare-label">적극투자형</span>
+    <strong id="compare-aggressive-equity">불러오는 중</strong>
+    <div class="profile-compare-stats">
+      <span>수익률 <b id="compare-aggressive-return">-</b></span>
+      <span>오늘 손익 <b id="compare-aggressive-daily">-</b></span>
+      <span>위험관리 <b id="compare-aggressive-risk">-</b></span>
+      <span>오늘 매수·매도 <b id="compare-aggressive-orders">-</b></span>
+    </div>
+  </div>
+  <div class="profile-compare-card"><span class="profile-compare-label">위험중립형</span>
+    <strong id="compare-neutral-equity">불러오는 중</strong>
+    <div class="profile-compare-stats">
+      <span>수익률 <b id="compare-neutral-return">-</b></span>
+      <span>오늘 손익 <b id="compare-neutral-daily">-</b></span>
+      <span>위험관리 <b id="compare-neutral-risk">-</b></span>
+      <span>오늘 매수·매도 <b id="compare-neutral-orders">-</b></span>
+    </div>
+  </div>
+</div></section>
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
   <div><span>자동매매</span><b id="home-auto-status">확인 중</b></div>
   <div><span>시장 모드</span><b id="home-market-mode">확인 중</b></div>
-  <div><span>오늘 계좌 손익</span><b id="home-daily-profit">-</b></div>
+  <div><span>오늘 추천</span><b>{len(recommendation_rows)}종목</b></div>
   <div><span>최근 가격 갱신</span><b id="home-price-updated">확인 중</b></div>
 </div></section>
 {user_table("Today recommendations", recommendation_rows, ["name", "close", "virtual_target_pct", "virtual_order_status"], "오늘 신규 추천 신호가 없습니다.")}
-{user_table("Today sell alerts", sell_rows, ["name", "return_pct", "summary"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
+{user_table("Today sell alerts", sell_rows, ["name", "profile", "return_pct", "summary"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
 {details("추천 성과 추적 보기", table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "decision"]))}
 """
     tracking_cards = "".join(
@@ -945,7 +970,7 @@ def render() -> str:
 .dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:#666}} h2{{line-height:1.3}} .muted{{color:#666;overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:white;border-radius:12px;padding:16px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
 .home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:white;border:1px solid #d0d5dd;white-space:nowrap}} .system-pill.ok{{background:#ecfdf3;border-color:#abefc6}} .system-pill.bad{{background:#fef3f2;border-color:#fecdca}}
-.home-cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0 24px}} .summary-card{{min-width:0;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .summary-card.primary{{background:#111827;color:white}} .summary-card b,.summary-card strong,.summary-card small{{display:block}} .summary-card b{{color:#64748b}} .summary-card.primary b,.summary-card.primary small{{color:#cbd5e1}} .summary-card strong{{font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .summary-card small{{color:#64748b}}
+.profile-compare-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0 24px}} .profile-compare-card{{min-width:0;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .profile-compare-card.primary{{background:#111827;color:white}} .profile-compare-label{{display:block;color:#64748b;font-size:13px}} .profile-compare-card.primary .profile-compare-label{{color:#cbd5e1}} .profile-compare-card strong{{display:block;font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .profile-compare-stats{{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;color:#64748b}} .profile-compare-card.primary .profile-compare-stats{{color:#cbd5e1}} .profile-compare-stats b{{font-weight:700}}
 .operation-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#e2e8f0;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}} .operation-grid>div{{background:#fff;padding:16px 18px;min-width:0}} .operation-grid span,.operation-grid b{{display:block}} .operation-grid span{{font-size:13px;color:#64748b}} .operation-grid b{{margin-top:6px;font-size:17px;overflow-wrap:anywhere}} .empty-state{{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc}} .empty-state b{{color:#334155}} .empty-state span{{color:#64748b}} .progress-heading{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}} .progress-track{{height:12px;background:#e2e8f0;border-radius:999px;overflow:hidden}} .progress-track span{{display:block;height:100%;background:#2563eb;border-radius:inherit}} .learning-status p{{margin-bottom:0}}
 .tracking-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}} .tracking-card{{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:17px 18px;box-shadow:0 1px 4px #ddd}} .tracking-card span,.tracking-card b{{display:block}} .tracking-card span{{color:#64748b;font-size:13px}} .tracking-card b{{font-size:22px;margin-top:7px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
@@ -968,9 +993,9 @@ table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom
 button:focus-visible,input:focus-visible,.tab-label:focus-visible{{outline:3px solid #2563eb;outline-offset:2px}}
 li{{margin:4px 0}}
 @media(max-width:1100px){{.donut-layout{{grid-template-columns:1fr}}}}
-@media(max-width:1000px){{.home-cards,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:1000px){{.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:800px){{body{{margin:14px}} .tab-label{{padding:9px 12px}} .home-heading{{align-items:flex-start}} section{{padding:16px}} th,td{{padding:9px 10px}}}}
-@media(max-width:480px){{.home-cards,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:1fr}} .home-heading{{display:block}} .system-pill{{display:inline-block;margin-top:10px}} .summary-card strong{{font-size:24px}} .trader-breakdown{{justify-content:flex-start;flex-direction:column;gap:6px}} .trader-form>*{{width:100%}}}}
+@media(max-width:480px){{.profile-compare-grid,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:1fr}} .home-heading{{display:block}} .system-pill{{display:inline-block;margin-top:10px}} .profile-compare-card strong{{font-size:24px}} .trader-breakdown{{justify-content:flex-start;flex-direction:column;gap:6px}} .trader-form>*{{width:100%}}}}
 </style>
 </head>
 <body>
@@ -1009,16 +1034,34 @@ const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
 const tabLabels=[...document.querySelectorAll(".tab-label")];
 function syncTabs() {{ tabLabels.forEach(label=>label.setAttribute("aria-selected",document.getElementById(label.htmlFor).checked?"true":"false")); }}
 tabLabels.forEach((label,index)=>{{label.addEventListener("keydown",event=>{{if(event.key==="Enter"||event.key===" "){{event.preventDefault();label.click();}}if(event.key==="ArrowRight"||event.key==="ArrowLeft"){{event.preventDefault();const next=(index+(event.key==="ArrowRight"?1:-1)+tabLabels.length)%tabLabels.length;tabLabels[next].focus();tabLabels[next].click();}}}});label.addEventListener("click",()=>setTimeout(syncTabs));}}); syncTabs();
-async function traderRequest(path, options={{}}) {{
+async function traderRequest(path, options={{}}, profileOverride=null) {{
   if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
+  const profile = profileOverride || currentProfile;
   const headers={{"Content-Type":"application/json", ...(options.headers||{{}})}};
   if(remoteMode && remoteToken) headers.Authorization=`Bearer ${{remoteToken}}`;
-  const url = `${{path}}${{path.includes("?") ? "&" : "?"}}profile=${{encodeURIComponent(currentProfile)}}`;
-  const requestBody = options.method === "POST" ? JSON.stringify({{...(options.body ? JSON.parse(options.body) : {{}}), profile: currentProfile}}) : options.body;
+  const url = `${{path}}${{path.includes("?") ? "&" : "?"}}profile=${{encodeURIComponent(profile)}}`;
+  const requestBody = options.method === "POST" ? JSON.stringify({{...(options.body ? JSON.parse(options.body) : {{}}), profile}}) : options.body;
   const response = await fetch(`${{traderApiBase}}${{url}}`, {{...options, headers, body: requestBody}});
   const body = await response.json();
   if(!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
   return body;
+}}
+function renderCompare(name, state) {{
+  const prefix = `compare-${{name}}`;
+  if(!state) {{ document.getElementById(`${{prefix}}-equity`).textContent = "확인 불가"; return; }}
+  document.getElementById(`${{prefix}}-equity`).textContent = won(state.total_equity || state.cash || 0);
+  const returnEl=document.getElementById(`${{prefix}}-return`); returnEl.textContent=`${{Number(state.total_return_pct||0).toFixed(2)}}%`; returnEl.className=state.total_return_pct>0?"pos":state.total_return_pct<0?"neg":"zero";
+  const risk=state.risk || {{}};
+  const riskLabels={{active:"정상",reduced:"축소",halted:"중단"}};
+  document.getElementById(`${{prefix}}-risk`).textContent = riskLabels[risk.status] || risk.status || "확인 중";
+  const dailyProfit=Number(risk.equity||state.total_equity||0)-Number(risk.daily_start_equity||risk.equity||state.total_equity||0);
+  const dailyEl=document.getElementById(`${{prefix}}-daily`); dailyEl.textContent=`${{dailyProfit>=0?"+":""}}${{won(dailyProfit)}}`; dailyEl.className=dailyProfit>0?"pos":dailyProfit<0?"neg":"zero";
+  document.getElementById(`${{prefix}}-orders`).textContent=`매수 ${{state.today_buys||0}} · 매도 ${{state.today_sells||0}}`;
+}}
+async function loadComparison() {{
+  for(const name of Object.keys(profileLabels)) {{
+    try {{ renderCompare(name, await traderRequest("/api/trader", {{}}, name)); }} catch(error) {{ renderCompare(name, null); }}
+  }}
 }}
 function renderSales() {{
   const summary=trader.sale_summary || {{}};
@@ -1081,11 +1124,7 @@ function renderTrader(message="") {{
   const holdingsReturn=document.getElementById("trader-holdings-return"); holdingsReturn.textContent=`${{Number(trader.holdings_return_pct||0).toFixed(2)}}%`; holdingsReturn.className=trader.holdings_return_pct>0?"pos":trader.holdings_return_pct<0?"neg":"zero";
   const totalReturn=document.getElementById("trader-total-return"); totalReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; totalReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
   const totalProfit=document.getElementById("trader-total-profit"); totalProfit.textContent=won(trader.total_profit_loss || 0); totalProfit.className=(trader.total_profit_loss>0?"pos":trader.total_profit_loss<0?"neg":"zero");
-  document.getElementById("home-total-equity").textContent=won(trader.total_equity||trader.cash||0);
-  const homeReturn=document.getElementById("home-total-return"); homeReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; homeReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
-  document.getElementById("home-total-profit").textContent=`총손익 ${{won(trader.total_profit_loss||0)}}`;
   renderPortfolioCharts();
-  document.getElementById("home-orders").textContent=`매수 ${{trader.today_buys||0}} · 매도 ${{trader.today_sells||0}}`;
   document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
   document.getElementById("home-auto-status").textContent = trader.auto_trading ? "정상 작동" : "중단";
   document.getElementById("trader-strategy").textContent = trader.strategy_version || "기본 전략";
@@ -1099,7 +1138,6 @@ function renderTrader(message="") {{
   document.getElementById("trader-daily-return").textContent = `${{Number(risk.daily_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-weekly-return").textContent = `${{Number(risk.weekly_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-drawdown").textContent = `${{Number(risk.drawdown_pct || 0).toFixed(2)}}%`;
-  const dailyProfit=Number(risk.equity||trader.total_equity||0)-Number(risk.daily_start_equity||risk.equity||trader.total_equity||0); const homeDaily=document.getElementById("home-daily-profit"); homeDaily.textContent=`${{dailyProfit>=0?"수익 ":"손실 "}}${{won(Math.abs(dailyProfit))}} (${{Number(risk.daily_return_pct||0).toFixed(2)}}%)`; homeDaily.className=dailyProfit>0?"pos":dailyProfit<0?"neg":"zero";
   document.getElementById("home-price-updated").textContent=(trader.price_updated_at||"확인 중").replace("T"," ");
   const unavailable=trader.price_unavailable_tickers || [];
   document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · ${{trader.price_updated_at || ""}}`;
@@ -1115,9 +1153,9 @@ function renderTrader(message="") {{
   document.getElementById("buy-button").disabled = remoteMode || !(trader.cash > 0 && traderCandidates.length) || risk.status === "halted";
   if(message) document.getElementById("trader-message").textContent=message;
 }}
-document.getElementById("deposit-button").addEventListener("click", async () => {{ const input=document.getElementById("deposit-amount"), amount=Math.floor(Number(input.value)); if(!(amount>0)) return renderTrader("1원 이상의 입금금액을 입력해 주세요."); try {{ trader=await traderRequest("/api/trader/deposit",{{method:"POST",body:JSON.stringify({{amount}})}}); input.value=""; renderTrader(`${{won(amount)}}을 DB 계좌에 입금했습니다.`); }} catch(error) {{ renderTrader(error.message); }} }});
+document.getElementById("deposit-button").addEventListener("click", async () => {{ const input=document.getElementById("deposit-amount"), amount=Math.floor(Number(input.value)); if(!(amount>0)) return renderTrader("1원 이상의 입금금액을 입력해 주세요."); try {{ trader=await traderRequest("/api/trader/deposit",{{method:"POST",body:JSON.stringify({{amount}})}}); input.value=""; renderTrader(`${{won(amount)}}을 DB 계좌에 입금했습니다.`); loadComparison(); }} catch(error) {{ renderTrader(error.message); }} }});
 document.getElementById("buy-button").addEventListener("click", async () => {{
-  try {{ trader=await traderRequest("/api/trader/buy",{{method:"POST",body:"{{}}"}}); renderTrader(`${{trader.bought}}개 종목을 ${{won(trader.spent)}}에 가상 매수했습니다.`); }} catch(error) {{ renderTrader(error.message); }}
+  try {{ trader=await traderRequest("/api/trader/buy",{{method:"POST",body:"{{}}"}}); renderTrader(`${{trader.bought}}개 종목을 ${{won(trader.spent)}}에 가상 매수했습니다.`); loadComparison(); }} catch(error) {{ renderTrader(error.message); }}
 }});
 const remoteConnection=document.getElementById("remote-connection");
 if(remoteMode) {{
@@ -1151,10 +1189,11 @@ function loadTrader() {{
 profileButtons.forEach(button=>button.addEventListener("click", () => {{
   if(button.dataset.profile===currentProfile) return;
   currentProfile=button.dataset.profile; localStorage.setItem("stockAlarm.traderProfile", currentProfile);
-  syncProfileButtons(); loadTrader();
+  syncProfileButtons(); loadTrader(); loadComparison();
 }}));
 syncProfileButtons();
 loadTrader();
+loadComparison();
 document.querySelectorAll("section").forEach((section) => {{
   const rows = [...section.querySelectorAll("tbody tr")];
   const pager = section.querySelector(".pager");

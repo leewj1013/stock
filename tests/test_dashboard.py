@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.dashboard import cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, write
+from datetime import datetime
+
+from stock_alarm.dashboard import cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -235,6 +237,23 @@ class DashboardTest(unittest.TestCase):
             settings_rows(),
         )
 
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_today_sell_alert_rows_tags_each_row_with_its_profile(self, tail_csv):
+        today = datetime.now().date().isoformat()
+        # notify=False (neutral) skips delivery reconciliation entirely, so it
+        # needs no matching row in logs/deliveries.csv to show up here.
+        rows_by_path = {
+            "logs/sell_alerts.csv": [{"ticker": "005930", "created_at": f"{today}T09:00:00", "summary": "손절"}],
+            "logs/sell_alerts_neutral.csv": [{"ticker": "005930", "created_at": f"{today}T09:05:00", "summary": "손절"}],
+            "logs/deliveries.csv": [],
+        }
+        tail_csv.side_effect = lambda path, count: rows_by_path.get(path, [])
+
+        rows = today_sell_alert_rows()
+
+        self.assertEqual(2, len(rows))
+        self.assertEqual({"적극투자형", "위험중립형"}, {row["profile"] for row in rows})
+
     @patch("stock_alarm.dashboard.daily_check_lines", return_value=["daily ok"])
     @patch("stock_alarm.dashboard.issue_rows", return_value=[])
     @patch("stock_alarm.dashboard.settings_rows", return_value=[])
@@ -249,7 +268,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn('class="dashboard-meta"', html)
         self.assertRegex(html, r"생성 시각 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
         self.assertIn("오늘의 투자 현황", html)
-        self.assertIn("가상계좌 총자산", html)
+        self.assertIn("가상계좌 성향 비교", html)
         self.assertIn("보유종목 총수익률", html)
         self.assertIn("시스템 관리", html)
         self.assertIn("문제", html)
