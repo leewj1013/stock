@@ -15,11 +15,15 @@ def integrity_check(path: str = DB_PATH) -> str:
 
 
 def backup_database(path: str = DB_PATH, backup_dir: str = "data/backups", keep: int = 8) -> str:
+    # Named after the source file's own stem (stock_alarm / stock_alarm_neutral
+    # / ...) so each profile's backups are pruned independently and never
+    # collide with another profile's retention count.
+    prefix = Path(path).stem
     Path(backup_dir).mkdir(parents=True, exist_ok=True)
-    target = Path(backup_dir) / f"stock_alarm-{datetime.now():%Y%m%d-%H%M%S}.db"
+    target = Path(backup_dir) / f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}.db"
     with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(target)) as destination:
         source.backup(destination)
-    backups = sorted(Path(backup_dir).glob("stock_alarm-*.db"), reverse=True)
+    backups = sorted(Path(backup_dir).glob(f"{prefix}-*.db"), reverse=True)
     for old in backups[max(1, keep):]:
         old.unlink()
     return str(target)
@@ -49,8 +53,23 @@ def run(path: str = DB_PATH) -> dict[str, object]:
     return {"integrity": status, "backup": backup, "pruned": pruned}
 
 
+def run_all_profiles() -> dict[str, dict[str, object]]:
+    """Back up and maintain every virtual-trader profile's own DB, not just
+    the default one -- a profile added after this ran once (e.g. the
+    risk-neutral account) would otherwise never get backed up at all."""
+    from .trading_profiles import PROFILES
+
+    results = {}
+    for name, profile in PROFILES.items():
+        db_path = profile["db_path"]
+        if not os.path.exists(db_path):
+            continue
+        results[name] = run(db_path)
+    return results
+
+
 def main() -> None:
-    print(run())
+    print(run_all_profiles())
 
 
 if __name__ == "__main__":
