@@ -27,6 +27,8 @@ PC를 재부팅했거나 자동 실행 상태를 다시 맞추고 싶으면 `sta
 | `stockAlarmIntradayEvery5Minutes` | 평일 08:50~15:40, 5분마다 | `intraday` | 추천 후보 확인, 가상 트레이더 수익률 변화 기록 |
 | `stockAlarmSellEvery5Minutes` | 평일 08:50~15:40, 5분마다 | `sell` | 독립 매도 조건 점검, 보유 수익률 갱신 |
 | `stockAlarmDaily` | 매일 16:00 | `daily` | 마감 종가 재수집, 추천 성과, 일일요약, 상태점검, 대시보드, 이슈 알림 |
+| `stockAlarmMaintenance` | 매주 일요일 18:00 | - | DB 무결성 검사, 오래된 스냅샷 정리, 프로필별(적극투자형/위험중립형) 백업 |
+| `stockAlarmDashboardServer` | 로그온 시 | - | 로컬 대시보드 API 서버(`stock_alarm.dashboard_server`) 기동 |
 
 `open`은 개장 전(08:30)에 돌기 때문에 그날 캔들 발행 여부로는 휴장일을 판단할 수 없어, `stock_alarm/run_gate.py`의 `KR_MARKET_HOLIDAYS` 정적 목록으로 평일 휴장일을 걸러냅니다. 이 목록은 매년 갱신이 필요하며, 최신 목록은 한국거래소 공시채널(kind.krx.co.kr)의 연간 휴장일 공지를 참고하세요. `intraday`/`sell`/`daily`는 장중·마감 이후에 돌아서 실제 캔들 발행 여부(`is_trading_day()`)로 판단하므로 이 목록과 무관합니다.
 
@@ -118,27 +120,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\open_remote_da
 
 운영용 고정 주소는 Cloudflare 계정에 활성 도메인을 연결하고 Named Tunnel과 Access 정책을 설정해야 합니다. 임시 주소는 터널을 재시작하면 변경됩니다.
 
-대시보드 주요 내용:
+대시보드는 4개 탭으로 구성됩니다.
 
-- 상단 요약 카드
-  - 총 평균 수익률
-  - 1일 평균 수익률
-  - 1일 승률
-  - 보유 최저 수익률
-- 오늘 추천 종목
-- 보유 종목
-- 최근 매도 검토
-- 추천 점수 구성
-- 추천 성과
-- 추천 통계
-- 설정/진단 탭
-  - 실행 상태
-  - 현재 설정
-  - 최근 발송
-  - 성과 감점
-  - 추천 성과 상위/하위
+- **홈**: 오늘의 투자 현황, 가상계좌 성향 비교(적극투자형/위험중립형 총자산·수익률·위험관리 상태를 나란히 표시), 현재 운영 상태, 오늘 추천 종목, 오늘 매도 검토 종목(성향별 컬럼 포함)
+- **추천 추적**: 가상매수 여부와 무관하게 모든 추천 신호의 진입가·현재가·매도 알림·매도 사유·가상매수 여부를 추적
+- **가상 트레이더**: 상단 토글로 적극투자형/위험중립형 계좌를 전환하며 각 계좌의 잔고·보유종목·위험관리 상태·매도 내역·입금/수동주문을 확인
+- **시스템 관리**: 데이터 학습 준비 현황, 이슈 목록, 실행 상태, 현재 설정, 알고리즘 검증 결과(전략별 성과·매도 사유별 결과)
 
 리스트형 테이블은 한 페이지에 최대 15개 행만 표시하고, 16개 이상이면 페이지 버튼이 표시됩니다.
+
+### 위험중립형 가상계좌
+
+적극투자형(실계좌 기준, 텔레그램 알림 대상)과 별도로, 같은 추천 종목을 더 낮은
+섹터 한도·노출 한도·타이트한 손절/익절 기준으로 매수하는 위험중립형 가상계좌를
+비교용으로 함께 운영합니다. 설정은 `stock_alarm/trading_profiles.py`에서
+관리하며, 위험중립형은 텔레그램 알림을 보내지 않고 대시보드에서만 확인합니다.
+DB는 `data/stock_alarm_neutral.db`로 완전히 분리되어 있습니다.
 
 ## 추천 기준
 
@@ -467,7 +464,7 @@ logs/backtest_summary.csv
 logs/tuning.csv
 ```
 
-### 3년 이상 전략 검증 파이프라인
+### 전략 검증 파이프라인
 
 강화된 Walk-forward 승격 조건과 분할익절 전후 성과를 검증할 때 사용합니다. 이 경로는 `data/stock_alarm.db`와 가상계좌를 수정하지 않으며, 전용 파일 경로만 사용합니다.
 
@@ -477,21 +474,6 @@ logs/tuning.csv
 
 # 2. 추천·매도·분할익절·Walk-forward 검증 실행
 .\.venv\Scripts\python -m stock_alarm.validation_backtest
-
-# 3. 필수조건 통과 전체 사례의 7개 요인 예측력 분석
-.\.venv\Scripts\python -m stock_alarm.factor_analysis
-
-# 4. 요인분석 기반 가중치 변형안 포트폴리오 비교
-.\.venv\Scripts\python -m stock_alarm.weight_variant_backtest
-
-# 5. 요인·가중치 결과의 Newey-West 및 BH-FDR 재검증
-.\.venv\Scripts\python -m stock_alarm.robustness_analysis
-
-# 6. 시총 상위 300개·2018년 이후 확장 표본 수집 및 power 재검증
-.\.venv\Scripts\python -m stock_alarm.expanded_factor_analysis
-
-# 이미 수집한 확장 OHLCV만 재사용
-.\.venv\Scripts\python -m stock_alarm.expanded_factor_analysis --reuse-data
 ```
 
 입력 데이터와 결과 위치:
@@ -507,101 +489,21 @@ reports/backtest/performance_summary.csv      국면별·전체 성과
 reports/backtest/walk_forward_folds.csv       구간별 성과와 p-value
 reports/backtest/parameters.json              재현용 실행 설정
 reports/backtest/REPORT.md                    최종 요약 리포트
-reports/backtest/factor_samples.csv           시점별 원자 요인과 1·3·5·10·20일 수익률
-reports/backtest/factor_correlations.csv      전체·국면별 일별 IC와 p-value
-reports/backtest/factor_quantiles.csv         일별 횡단면 분위 수익률
-reports/backtest/factor_correlation_matrix.csv 요인 간 스피어만 상관행렬
-reports/backtest/factor_verdicts.csv           가중치와 예측력 비교·검토 제안
-reports/backtest/factor_parameters.json        요인 분석 재현 설정
-reports/backtest/FACTOR_REPORT.md              요인 분석 최종 리포트
-reports/backtest/weight_variant_trades.csv     변형안별 분할익절 포함 거래
-reports/backtest/weight_variant_performance.csv 전체·국면별 성과
-reports/backtest/weight_variant_comparison.csv baseline 대비 차이와 p-value
-reports/backtest/weight_variant_parameters.json 재현 설정과 실험 config 스냅샷
-reports/backtest/WEIGHT_VARIANT_REPORT.md       가중치 비교 최종 리포트
-reports/backtest/factor_hac_fdr.csv             160개 요인 검정의 HAC·FDR 결과
-reports/backtest/variant_hac_fdr.csv            12개 variant 비교의 HAC·FDR 결과
-reports/backtest/factor_verdict_corrections.csv 보정 전후 요인 판정
-reports/backtest/robustness_parameters.json     HAC lag·FDR 범위 재현 설정
-reports/backtest/STATISTICAL_ROBUSTNESS_REPORT.md 통계 강건성 최종 부록
-reports/backtest/EXPANDED_SAMPLE_REPORT.md        확장 전후·power 최종 리포트
-reports/backtest/expanded/factor_hac_fdr.csv     확장 표본 160개 HAC·FDR 결과
-reports/backtest/expanded/before_after_factor_comparison.csv
-reports/backtest/expanded/power_analysis.csv     목표 검정력과 필요 IC 거래일
-reports/backtest/expanded/data_quality.csv       확장 데이터 제외 사유
 ```
 
 국면은 KOSPI 종가의 120일 이동평균과 60일 수익률로 결정합니다. 현재 watchlist를 과거 전체 기간에 적용하므로 생존편향이 있고, 과거 시점 뉴스·공시·재무 스냅샷은 미래정보 누출을 막기 위해 점수에서 제외합니다. p-value 통과도 과최적화 방지를 보장하지 않으므로 실계좌 전환 전 완전 미사용 기간 검증이 추가로 필요합니다.
 
-요인 분석은 같은 날짜의 여러 종목을 독립 표본으로 과대평가하지 않도록 일별 횡단면 스피어만 IC를 주 판정값으로 사용합니다. 뉴스·공시·재무는 과거 공개시점 스냅샷이 현재 데이터에 없으므로 현재 API 값을 소급 적용하지 않으며, 리포트에서 `검증 불가(시점 데이터 없음)`로 구분합니다. 분석은 격리 OHLCV를 읽고 `reports/backtest`에만 쓰며 라이브 DB, 가상계좌, 실제 전략 가중치를 변경하지 않습니다.
-
-가중치 변형안은 `config/backtest_weight_variants.json`에서만 관리합니다. `variant_2`는 추세를 제거하고 30점을 거래량·거래대금에 40:30으로 재분배하며, `variant_3`는 기술 점수를 거래량 70·거래대금 20·추세 10·상대강도 ±2.5로 축소·집중합니다. `variant_4`는 요인분석의 3·5일 평균 IC 절대값 비율로 기술 점수 용량 105점을 배분하는 참고안입니다. 모든 안에서 뉴스·공시·재무 배수는 baseline과 동일하며, 실행해도 운영 가중치는 변경되지 않습니다.
-
-통계 강건성 부록은 겹치는 h일 선행수익률에 `lag=h-1` Newey-West 표준오차를 적용합니다. 요인 검정은 원수익률·초과수익률 전체 160개와 핵심 초과수익률 80개에 Benjamini-Hochberg FDR을 기록하고, variant는 baseline 대비 3개 안 × 4국면의 12개 비교를 보정합니다. 이 명령도 기존 CSV만 읽고 `reports/backtest`에만 쓰며 라이브 DB와 운영 가중치를 변경하지 않습니다.
-
-확장 표본 실험은 네이버 시가총액 표의 KOSPI/KOSDAQ 후보를 합쳐 상위 300개를 선택하고 액면가 0인 ETF·ETN을 제외합니다. 2018년 이후 일봉에 기존 품질검사와 필수 매수조건을 그대로 적용하며, 목록은 `data/backtest_expanded/experimental_watchlist.csv`에만 저장됩니다. 현재 시점 구성종목을 과거에 적용하는 생존편향과 미래 시총 선택 편향이 있으므로 운영 성과가 아니라 검정력 진단으로만 해석해야 합니다. 운영 `data/watchlist.csv`, DB, 가상계좌는 수정하지 않습니다.
-
-### 단순 기준전략 비교
+### 기준전략 비교
 
 현재 stockAlarm 전체 진입·매도 로직이 KOSPI 매수후보유, watchlist 동일가중
 매수후보유, 랜덤 종목선택, 단순 거래량 모멘텀보다 나은지를 같은 비용과
 평가기간으로 비교합니다. 랜덤 전략은 기본 100회이며 시드를 기록합니다.
 회전매매 전략은 라이브와 같은 `evaluate_risk_state` 위험중단 판정과
 `correlation_limited_allocations` 고상관 연결그룹 40% 신규진입 제한을 사용합니다.
-섹터 한도는 네이버 업종별 시세에서 생성한 `.cache/sector_mapping.json`을 사용하며,
-고상관 제한 뒤에 적용되어 두 제약 중 더 작은 주문비중이 최종값이 됩니다. 기존
-보유종목은 강제매도하지 않고 섹터 여력만 소비합니다. `SECTOR_GROUP_MAX_PCT=100`이
-기본값이어서 운영에서는 비활성이고, 명시적으로 100 미만을 설정할 때만 작동합니다.
-
-```powershell
-# 현재 watchlist 업종 캐시 갱신
-.\.venv\Scripts\python -m stock_alarm.sector_reference --refresh
-
-# 섹터 40%/30%/20% 격리 비교 + Newey-West/BH-FDR
-.\.venv\Scripts\python -m stock_alarm.sector_limit_backtest
-```
-
-섹터 실험 설정은 `config/sector_limit_variants.json`, 결과는
-`reports/backtest/SECTOR_LIMIT_REPORT.md`와 `reports/backtest/sector_limit/`에
-저장됩니다. 현재 시점 업종 분류를 과거에 고정 적용하므로 업종 변경을 복원하지
-못하는 point-in-time 분류 편향(생존편향과 유사)이 있으며 운영 설정은 자동 변경하지
-않습니다.
 
 ```powershell
 .\.venv\Scripts\python -m stock_alarm.benchmark_comparison
 ```
-
-시장 상승비율별 매수한도(공격 70%/중립 40%/방어 10%) 연결 전후와 MA20 휩쏘·손절 지연 variant를 격리 검증하려면 다음을 실행합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.market_filter_whipsaw_analysis
-```
-
-기존 결과는 `reports/backtest/market_filter_whipsaw/before/`에 보존됩니다. 결과 리포트는 `reports/backtest/MARKET_FILTER_WHIPSAW_REPORT.md`, 상세 CSV는 `reports/backtest/market_filter_whipsaw/`에 생성되며 운영 설정·DB는 변경하지 않습니다.
-
-시장필터 연결 후에도 기존 `drawdown_limit` 894거래일 잠금이 재현되는지만 현재 라이브 위험평가기를 그대로 사용해 재검증하려면 다음을 실행합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.market_filter_risk_revalidation
-```
-
-리포트는 `reports/backtest/MARKET_FILTER_RISK_REVALIDATION_REPORT.md`, 일별 위험상태와 트리거 이벤트는 `reports/backtest/market_filter_risk_revalidation/`에 저장됩니다. 이 명령은 운영 설정·DB·가상계좌를 변경하지 않습니다.
-
-시장필터 연결 후 포지션 목표비중과 고상관 그룹 제한의 순수 효과를 분리 진단하려면 다음을 실행합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.position_constraint_diagnosis
-```
-
-시장 70%/40%/10% 한도와 매도·위험 로직은 고정한 채 목표비중 10%/30%/50%/무상한 및 상관그룹 40%/60%/해제 시나리오만 비교합니다. 리포트는 `reports/backtest/POSITION_CONSTRAINT_DIAGNOSIS_REPORT.md`에 저장되며 운영 설정은 변경하지 않습니다.
-
-확정 baseline(시장필터 연결, 종목당 고정 10%, 고상관 그룹 40%)으로 5개 전략과 랜덤 100회, Newey-West 및 BH-FDR을 정식 재검증하려면 다음을 실행합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.benchmark_baseline_revalidation
-```
-
-이미 생성된 정식 벤치마크 CSV로 전후 비교 리포트만 다시 만들 때는 `--reuse-results`를 사용합니다. 최종 리포트는 `reports/backtest/BENCHMARK_BASELINE_REVALIDATION_REPORT.md`에 저장됩니다.
 
 결과는 `reports/backtest/BENCHMARK_COMPARISON_REPORT.md`에 저장되고, 원자료는
 `reports/backtest/benchmark_comparison/`에 저장됩니다. 분석은 격리 OHLCV만
@@ -609,107 +511,27 @@ reports/backtest/expanded/data_quality.csv       확장 데이터 제외 사유
 과거에 적용하는 생존편향과 뉴스·공시·재무 point-in-time 자료 부재를 감안해
 해석해야 합니다.
 
-### KOSPI 대비 수익률 격차 원인 분해
-
-직전 기준전략 비교에서 생성한 동일 조건을 재현해 현금 대기, 매도 후 반등,
-거래비용, 종목선정, 포지션 비중 효과를 분리 진단합니다. 일별 현금·보유비중과
-부분/전량 매도 이벤트 원장을 별도로 만들며 운영 로직은 변경하지 않습니다.
+섹터 한도(`SECTOR_GROUP_MAX_PCT`, 기본 100으로 비활성)를 실험하려면 먼저
+관심종목 업종 캐시를 갱신합니다.
 
 ```powershell
-.\.venv\Scripts\python -m stock_alarm.gap_decomposition
+.\.venv\Scripts\python -m stock_alarm.sector_reference --refresh
 ```
 
-최종 리포트는 `reports/backtest/GAP_DECOMPOSITION_REPORT.md`, 정확 합산
-워터폴은 `reports/backtest/GAP_DECOMPOSITION_WATERFALL.png`, 상세 CSV는
-`reports/backtest/gap_decomposition/`에 저장됩니다. 비중 무상한 및 매도 후
-추적 결과는 반사실적 진단이며 실제 실행 가능성이나 리스크 관리 성공을 보장하지
-않습니다.
-
-### 위험중단·고상관 제한 연결 전후 재검증
-
-기존 미연결 결과를 최초 1회 보존하고, 공통 라이브 제약을 적용한 벤치마크와
-격차분해를 모두 재실행한 뒤 전후 비교표와 방어모드 연속 구간을 생성합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.constraint_revalidation
-```
-
-최종 리포트는 `reports/backtest/CONSTRAINT_REVALIDATION_REPORT.md`, Claude에
-그대로 복사할 전체 텍스트는 `reports/backtest/CONSTRAINT_REVALIDATION_CLAUDE.txt`,
-전후 CSV와 보존된 기존 결과는 `reports/backtest/constraint_revalidation/`에
-저장됩니다. 라이브 DB·가상계좌·운영 config·실주문 API는 수정하지 않습니다.
-
-### 위험중단 해제정책 대안 백테스트
-
-장기 낙폭 중단이 현금 잠금으로 이어지는 문제를 반등형, 시간 쿨다운형,
-낙폭 히스테리시스형, 축소 슬롯 재진입형과 비교합니다. 실험값은
-`config/risk_release_variants.json`에만 있으며 운영 환경변수에는 적용되지 않습니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.risk_release_backtest
-```
-
-최종 리포트는 `reports/backtest/RISK_RELEASE_VARIANT_REPORT.md`, 전체·국면별
-성과와 HAC/FDR 결과, 트레이드오프 산점도 데이터, 일별 상태 및 전환 로그는
-`reports/backtest/risk_release_variants/`에 저장됩니다. 실행은 격리 OHLCV만
-읽고 운영 config·라이브 DB·가상계좌·실주문 API를 수정하지 않습니다.
-
-### 감쇠형 최고수위 및 합성 낙폭 검증
-
-낙폭 중단 중 월별·분기별·지속기간별로 유효 최고수위를 낮추는 정책을 기존
-A/C/E 정책과 비교합니다. KOSPI 일수익률의 20거래일 블록 부트스트랩으로
-기본 300개 합성 낙폭 경로도 생성해 탈출률·수익·하락방어를 paired 검정합니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.peak_decay_backtest
-```
-
-실험 설정은 `config/peak_decay_variants.json`, 최종 리포트는
-`reports/backtest/PEAK_DECAY_REPORT.md`, 트레이드오프 그림은
-`reports/backtest/PEAK_DECAY_TRADEOFF.png`, 실제·합성 상세 CSV는
-`reports/backtest/peak_decay/`에 저장됩니다. 합성 경로는 실제 종목 간 상관과
-꼬리위험을 완전히 재현하지 못하며 운영 설정은 자동 변경되지 않습니다.
-
-### 2022년 낙폭 원인 진단
-
-기존 벤치마크의 일별 계좌 상태·거래 이벤트·요인 표본만 읽어 최고점부터
-실제 -10% 낙폭 발동일까지 손실 종목, 매도사유, 진입점수, 시장국면 및
-시장 breadth를 분해합니다. 백테스트를 다시 실행하지 않습니다.
-
-```powershell
-.\.venv\Scripts\python -m stock_alarm.drawdown_cause_analysis
-```
-
-최종 리포트는 `reports/backtest/DRAWDOWN_CAUSE_ANALYSIS_REPORT.md`, 상세 CSV는
-`reports/backtest/drawdown_cause/`, 계좌·KOSPI 타임라인과 손실기여 차트는
-`reports/backtest/DRAWDOWN_CAUSE_TIMELINE.png`에 저장됩니다. 운영 설정·DB·
-가상계좌·실주문 API는 수정하지 않습니다.
-
-### Point-in-Time 뉴스·공시·재무 요인 검증
+### Point-in-Time 뉴스·공시·재무 데이터 수집
 
 외부요인 원본은 라이브 DB와 분리된 `data/backtest/point_in_time.sqlite3`에
 공개시각과 백테스트 가용시각을 함께 저장합니다. 같은 명령을 다시 실행하면
 기본키 기준으로 캐시를 갱신하므로 중복 적재하지 않습니다.
 
 ```powershell
-# 출처별 수집(실패 출처만 따로 재시도 가능)
 .\.venv\Scripts\python -m stock_alarm.point_in_time_collect --start 2022-06-30 --sources news,disclosure,financial
-
-# 기존 저장소를 이용한 7요인 IC + Newey-West + BH-FDR 검증
-.\.venv\Scripts\python -m stock_alarm.pit_factor_validation --start 2022-06-30
-
-# 수집 후 검증을 한 번에 실행
-.\.venv\Scripts\python -m stock_alarm.pit_factor_validation --start 2022-06-30 --collect
 ```
 
-최종 리포트는 `reports/backtest/POINT_IN_TIME_FACTOR_REPORT.md`, 상세 IC·분위수·
-HAC/FDR CSV는 `reports/backtest/`, 종목별 커버리지와 실패 내역은
-`reports/backtest/point_in_time/`에 저장됩니다. 네이버 검색 API는 날짜 범위 검색을
-지원하지 않고 최신 1,000건까지만 조회되므로 오래된 뉴스는 미수집일 수 있습니다.
-OpenDART 목록의 날짜 전용 공시는 다음 영업일부터, PyKRX 일별 재무 스냅샷도
-수정 이력 불확실성을 고려해 다음 영업일부터 사용합니다. 낮은 커버리지의 비유의
-결과는 신호 부재로 단정하지 않습니다. 이 경로는 운영 설정·DB·가상계좌·실주문
-API를 수정하지 않습니다.
+네이버 검색 API는 날짜 범위 검색을 지원하지 않고 최신 1,000건까지만 조회되므로
+오래된 뉴스는 미수집일 수 있습니다. OpenDART 목록의 날짜 전용 공시는 다음
+영업일부터, PyKRX 일별 재무 스냅샷도 수정 이력 불확실성을 고려해 다음 영업일부터
+사용합니다. 이 경로는 운영 설정·DB·가상계좌·실주문 API를 수정하지 않습니다.
 
 ## 전략 운영 메모
 
