@@ -758,7 +758,7 @@ def rejection_summary(path: str = DB_PATH) -> list[dict[str, Any]]:
 def recent_position_checks(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
     return query_rows(
         """
-        SELECT checked_at, ticker, name, entry_price, close, ma20, holding_days, return_pct,
+        SELECT checked_at, position_id, ticker, name, entry_price, close, ma20, holding_days, return_pct,
                max_return_pct, drawdown_from_peak_pct, distance_ma20_pct, atr20_pct,
                dynamic_stop_loss_pct, time_stop_triggered, decision, reasons
         FROM position_checks ORDER BY checked_at DESC LIMIT ?

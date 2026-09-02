@@ -74,6 +74,59 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("20일선 이탈", rows[0]["sell_reason"])
         self.assertEqual("1종목", recommendation_tracking_summary(rows)[1][1])
 
+    @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
+    @patch("stock_alarm.dashboard.latest_position_rows")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_recommendation_tracking_entry_price_matches_the_sell_alerts_basis(self, tail_csv, positions, _trades):
+        # recommendation_performance.csv's entry_close (133000, a simulated
+        # next-day-open price) is a different basis than the signal-day close
+        # (113100) that positions.csv/sell_alerts.csv actually track against.
+        # Showing 133000 next to a return computed against 113100 makes a
+        # correct number look wrong.
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"pick_date": "2026-08-12", "ticker": "161890", "name": "한국콜마", "entry_close": "133000", "close": "113100"}]
+            if path.endswith("sell_alerts.csv"):
+                return [{"created_at": "2026-08-12T10:30:36", "ticker": "161890", "close": "134500", "return_pct": "18.92", "summary": "고점 대비 수익 반납"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
+        positions.return_value = [{"ticker": "161890", "entry_date": "2026-08-12", "entry_price": "113100", "close": "134500"}]
+
+        row = recommendation_tracking_rows()[0]
+
+        self.assertEqual("113100", row["entry_price"])
+        self.assertEqual("134500", row["sell_alert_price"])
+        self.assertEqual("18.92", row["sell_alert_return_pct"])
+
+    @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
+    @patch("stock_alarm.dashboard.latest_position_rows")
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_recommendation_tracking_does_not_borrow_a_newer_picks_position(self, tail_csv, positions, _trades):
+        # A ticker recommended twice (once already sold, once currently held)
+        # must not have the older, closed pick display the newer pick's
+        # entry price/current price just because latest_position_rows()
+        # only ever returns the ticker's one active position.
+        def fake_tail(path, _count):
+            if path.endswith("recommendations.csv"):
+                return [
+                    {"created_at": "2026-08-12T09:05:24", "ticker": "161890", "name": "한국콜마", "close": "113100"},
+                    {"created_at": "2026-08-18T09:05:28", "ticker": "161890", "name": "한국콜마", "close": "127300"},
+                ]
+            if path.endswith("sell_alerts.csv"):
+                return [{"created_at": "2026-08-12T10:30:36", "ticker": "161890", "close": "134500", "return_pct": "18.92"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
+        positions.return_value = [{"ticker": "161890", "entry_date": "2026-08-18", "entry_price": "127300", "close": "155000", "return_pct": "21.76"}]
+
+        rows = {row["pick_date"]: row for row in recommendation_tracking_rows()}
+
+        self.assertEqual("113100", rows["2026-08-12"]["entry_price"])
+        self.assertEqual("134500", rows["2026-08-12"]["current_price"])
+        self.assertEqual("127300", rows["2026-08-18"]["entry_price"])
+        self.assertEqual("추적 중", rows["2026-08-18"]["tracking_status"])
+
     def test_status_class(self):
         self.assertEqual("ok", status_class("ok"))
         self.assertEqual("warn", status_class("old"))

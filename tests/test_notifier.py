@@ -41,11 +41,13 @@ class NotifierTest(unittest.TestCase):
         os.environ["TELEGRAM_BOT_TOKEN"] = ""
         os.environ["TELEGRAM_CHAT_ID"] = ""
         try:
-            with patch("stock_alarm.notifier.send_console") as console:
-                with patch("stock_alarm.notifier.was_sent", return_value=False):
-                    with patch("stock_alarm.notifier.mark_sent"):
-                        self.assertEqual("console", send_notification("hello"))
-                        console.assert_called_once_with("hello")
+            with patch("stock_alarm.notifier.write_delivery_log") as delivery:
+                with patch("stock_alarm.notifier.send_console") as console:
+                    with patch("stock_alarm.notifier.was_sent", return_value=False):
+                        with patch("stock_alarm.notifier.mark_sent"):
+                            self.assertEqual("console", send_notification("hello"))
+                            console.assert_called_once_with("hello")
+                            delivery.assert_called_once()
         finally:
             for key, value in {
                 "NOTIFIER": old_notifier,

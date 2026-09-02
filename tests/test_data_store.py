@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.data_store import finish_run, import_legacy_virtual_trader, record_virtual_valuation, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
+from stock_alarm.data_store import finish_run, import_legacy_virtual_trader, record_virtual_valuation, recent_position_checks, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
 
 
 class DataStoreTest(unittest.TestCase):
@@ -46,6 +46,18 @@ class DataStoreTest(unittest.TestCase):
             self.assertEqual(("HOLD",), connection.execute("SELECT decision FROM position_checks").fetchone())
         finally:
             connection.close()
+
+    def test_recent_position_checks_includes_position_id(self):
+        # position_summary_rows() in dashboard.py matches a report row to its
+        # DB check by (ticker, position_id) -- without position_id in the
+        # query, a re-recommended ticker's new HOLD check gets shadowed by an
+        # older, closed position's ALREADY_ALERTED check for the same ticker.
+        run_id = start_run("sell_check", "2026-08-04", self.path)
+        write_position_checks(run_id, [{"position_id": "p1", "checked_at": "now", "ticker": "005930", "stop_loss_triggered": 0, "ma20_break_triggered": 0, "return_drop_triggered": 0, "giveback_triggered": 0, "decision": "HOLD", "reasons": ""}], self.path)
+
+        row = recent_position_checks(100, self.path)[0]
+
+        self.assertEqual("p1", row["position_id"])
 
     def test_virtual_trader_deposit_and_integer_weighted_buy_are_persisted(self):
         virtual_deposit(100_000, self.path)

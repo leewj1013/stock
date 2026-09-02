@@ -798,7 +798,14 @@ def recommendation_tracking_rows() -> list[dict[str, str]]:
 
     result = []
     for (pick_date, ticker), row in base.items():
+        # `current` holds only the ticker's single active position (already
+        # deduped by latest_position_rows), which belongs to whichever pick
+        # most recently entered it -- not necessarily this row's pick_date.
+        # A ticker recommended more than once must not borrow a different
+        # pick's entry price, current price, or "currently held" status.
         position = current.get(ticker, {})
+        if position.get("entry_date") != pick_date:
+            position = {}
         alert = next(
             (item for item in alerts.get(ticker, []) if str(item.get("created_at") or "")[:10] >= pick_date),
             {},
@@ -827,7 +834,13 @@ def recommendation_tracking_rows() -> list[dict[str, str]]:
         result.append({
             "name": str(row.get("name") or position.get("name") or alert.get("name") or ticker),
             "pick_date": pick_date,
-            "entry_price": str(row.get("entry_close") or row.get("close") or position.get("entry_price") or ""),
+            # Prefer the signal-day close (positions.csv/sell_alerts.csv basis) over
+            # recommendation_performance's entry_close (next-day-open execution
+            # price) -- sell_alert_price/sell_alert_return_pct below are always
+            # computed against the signal-day close, so pairing them with the
+            # other basis makes the displayed return look wrong even though both
+            # numbers are individually correct.
+            "entry_price": str(position.get("entry_price") or row.get("close") or row.get("entry_close") or ""),
             "current_price": str(position.get("close") or alert.get("close") or ""),
             "return_pct": str(return_value or ""),
             "tracking_status": status,
