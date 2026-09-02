@@ -985,7 +985,7 @@ def render() -> str:
   <div class="trader-form"><label for="remote-api-url">HTTPS API 주소</label><input id="remote-api-url" type="url" placeholder="https://stock-api.example.com"><label for="remote-api-token">접속 토큰</label><input id="remote-api-token" type="password" autocomplete="current-password"><button id="remote-connect-button" type="button">읽기 전용 연결</button></div>
   <p class="muted">주소는 이 브라우저에, 토큰은 현재 탭에만 저장됩니다. 원격에서는 입금과 수동주문을 실행할 수 없습니다.</p>
 </section>
-<section><h2>가상계좌 보유종목</h2><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th>매도 감시상태</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>다음 매도 기준</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
+<section><h2>가상계좌 보유종목</h2><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
     <div><span>누적 실현손익</span><b id="sale-realized-profit">0원</b></div>
@@ -1221,8 +1221,8 @@ function renderTrader(message="") {{
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
     const sellReference=`손절 ${{won(item.stop_price||0)}}${{item.ma20?` · 20일선 ${{won(item.ma20)}}`:""}}`;
-    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),item.watch_state||'데이터 대기',`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,sellReference];
-    values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index===1||(index>=3&&index<=8))cell.className="num";if(index===7||index===8)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
+    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,item.watch_state||'데이터 대기',sellReference];
+    values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
   }});
   if (!body.children.length) body.innerHTML='<tr><td colspan="10" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
   renderSales();
