@@ -917,6 +917,21 @@ def previous_virtual_valuation(before: str, path: str = DB_PATH) -> dict[str, An
     return rows[0] if rows else {}
 
 
+def recent_equity_trend(days: int = 7, path: str = DB_PATH) -> list[int]:
+    """Latest recorded equity per calendar day, oldest first, for a sparkline."""
+    rows = query_rows(
+        """SELECT equity FROM virtual_valuation_snapshots
+           WHERE snapshot_id IN (
+               SELECT MAX(snapshot_id) FROM virtual_valuation_snapshots
+               GROUP BY substr(created_at, 1, 10)
+           )
+           ORDER BY created_at DESC LIMIT ?""",
+        (days,),
+        path,
+    )
+    return [int(row["equity"]) for row in reversed(rows)]
+
+
 def virtual_deposits_since(created_at: str, path: str = DB_PATH) -> int:
     rows = query_rows(
         "SELECT COALESCE(SUM(amount), 0) AS amount FROM virtual_deposits WHERE created_at >= ?",

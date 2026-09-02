@@ -166,6 +166,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
         self.assertEqual("<td class='num neg'>-10.30</td>", cell("-10.30", "return_1d_pct"))
 
+    def test_tracking_status_renders_as_a_pill(self):
+        self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))
+        self.assertIn("status-pill pill-danger", cell("매도 알림", "tracking_status"))
+
     @patch.dict("os.environ", {"NEWS_LOOKUP": "1", "NEWS_SCORE_WEIGHT": "1"})
     def test_empty_value_labels_explain_pending_data(self):
         self.assertEqual("수집대기", empty_value_label("return_3d_pct"))

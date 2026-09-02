@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from .app import load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
-from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
+from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 from .sector_reference import load_sector_mapping
 from .trading_profiles import PROFILES
@@ -144,6 +144,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
     return {
         **state,
         "profile": profile,
+        "equity_trend": recent_equity_trend(7, path),
         "price_updated_at": datetime.now().isoformat(timespec="seconds"),
         "price_source": "네이버 금융 · 검증 실패 종목은 진입가 임시표시",
         "risk": risk,

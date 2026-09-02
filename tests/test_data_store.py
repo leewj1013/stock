@@ -2,9 +2,10 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 
-from stock_alarm.data_store import finish_run, import_legacy_virtual_trader, record_virtual_valuation, recent_position_checks, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
+from stock_alarm.data_store import connect, finish_run, import_legacy_virtual_trader, record_virtual_valuation, recent_equity_trend, recent_position_checks, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
 
 
 class DataStoreTest(unittest.TestCase):
@@ -58,6 +59,21 @@ class DataStoreTest(unittest.TestCase):
         row = recent_position_checks(100, self.path)[0]
 
         self.assertEqual("p1", row["position_id"])
+
+    def test_recent_equity_trend_keeps_one_point_per_day_oldest_first(self):
+        with closing(connect(self.path)) as connection:
+            for created_at, equity in [
+                ("2026-08-28T09:00:00", 1_000_000), ("2026-08-28T15:00:00", 1_010_000),
+                ("2026-08-29T09:00:00", 1_020_000),
+                ("2026-08-30T09:00:00", 990_000),
+            ]:
+                connection.execute(
+                    "INSERT INTO virtual_valuation_snapshots(created_at, cash, holdings_cost, valuation, equity, profit_loss, return_pct, return_change_pct) VALUES (?,0,0,0,?,0,0,0)",
+                    (created_at, equity),
+                )
+            connection.commit()
+
+        self.assertEqual([1_010_000, 1_020_000, 990_000], recent_equity_trend(7, self.path))
 
     def test_virtual_trader_deposit_and_integer_weighted_buy_are_persisted(self):
         virtual_deposit(100_000, self.path)

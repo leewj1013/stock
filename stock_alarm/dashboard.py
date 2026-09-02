@@ -88,6 +88,7 @@ NUMERIC_COLUMNS = {
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
+STATUS_PILL_CLASSES = {"추적 중": "pill-accent", "매도 알림": "pill-danger", "성과 완료": "pill-neutral", "성과 수집 중": "pill-neutral"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
@@ -649,6 +650,8 @@ def cell(value: object, column: str = "") -> str:
         shown = format_number(display) if column in NUMERIC_COLUMNS else display_value(display)
         if column in TIMESTAMP_COLUMNS and isinstance(shown, str) and "T" in shown:
             shown = shown.replace("T", " ")
+    if column == "tracking_status" and shown in STATUS_PILL_CLASSES:
+        return f"<td{attr}><span class='status-pill {STATUS_PILL_CLASSES[shown]}'>{e(shown)}</span></td>"
     return f"<td{attr}>{e(shown)}</td>"
 
 
@@ -911,7 +914,7 @@ def render() -> str:
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'확인할 문제 ' + str(issue_count) + '건' if issue_count else '시스템 정상'}</span></div>
 <section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
   <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
-    <strong id="compare-aggressive-equity">불러오는 중</strong>
+    <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
     <div class="profile-compare-stats">
       <span>수익률 <b id="compare-aggressive-return">-</b></span>
       <span>오늘 손익 <b id="compare-aggressive-daily">-</b></span>
@@ -920,7 +923,7 @@ def render() -> str:
     </div>
   </div>
   <div class="profile-compare-card"><span class="profile-compare-label">위험중립형</span>
-    <strong id="compare-neutral-equity">불러오는 중</strong>
+    <div class="profile-compare-heading"><strong id="compare-neutral-equity">불러오는 중</strong><svg class="sparkline" id="compare-neutral-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
     <div class="profile-compare-stats">
       <span>수익률 <b id="compare-neutral-return">-</b></span>
       <span>오늘 손익 <b id="compare-neutral-daily">-</b></span>
@@ -1014,19 +1017,20 @@ def render() -> str:
 .dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:#666}} h2{{line-height:1.3}} .muted{{color:#666;overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:white;border-radius:12px;padding:16px;box-shadow:0 1px 4px #ddd}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
 .home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:white;border:1px solid #d0d5dd;white-space:nowrap}} .system-pill.ok{{background:#ecfdf3;border-color:#abefc6}} .system-pill.bad{{background:#fef3f2;border-color:#fecdca}}
-.profile-compare-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0 24px}} .profile-compare-card{{min-width:0;background:#111827;color:white;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .profile-compare-label{{display:block;color:#cbd5e1;font-size:13px}} .profile-compare-card strong{{display:block;font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .profile-compare-stats{{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;color:#cbd5e1}} .profile-compare-stats b{{font-weight:700}}
+.profile-compare-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0 24px}} .profile-compare-card{{min-width:0;background:#111827;color:white;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .profile-compare-label{{display:block;color:#cbd5e1;font-size:13px}} .profile-compare-heading{{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}} .profile-compare-card strong{{display:block;font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .sparkline{{flex-shrink:0;overflow:visible}} .profile-compare-stats{{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;color:#cbd5e1}} .profile-compare-stats b{{font-weight:700}}
 .operation-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}} .operation-grid>div{{background:#111827;color:white;border-radius:12px;padding:16px 18px;min-width:0}} .operation-grid span,.operation-grid b{{display:block}} .operation-grid span{{font-size:13px;color:#cbd5e1}} .operation-grid b{{margin-top:6px;font-size:17px;overflow-wrap:anywhere}} .empty-state{{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc}} .empty-state b{{color:#334155}} .empty-state span{{color:#64748b}} .progress-heading{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}} .progress-track{{height:12px;background:#e2e8f0;border-radius:999px;overflow:hidden}} .progress-track span{{display:block;height:100%;background:#2563eb;border-radius:inherit}} .learning-status p{{margin-bottom:0}}
 .tracking-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}} .tracking-card{{background:#111827;color:white;border-radius:12px;padding:17px 18px;box-shadow:0 1px 4px #ddd}} .tracking-card span,.tracking-card b{{display:block}} .tracking-card span{{color:#cbd5e1;font-size:13px}} .tracking-card b{{font-size:22px;margin-top:7px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:white;color:#111827;border-radius:14px;padding:16px;box-shadow:0 1px 4px #ddd;border:1px solid #e5e7eb}} .highlight b{{display:block;color:#475569}} .highlight span{{display:block;color:#111827;font-size:24px;font-weight:800;margin-top:8px}}
-.tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}} .tab-label{{display:inline-flex;align-items:center;background:#e9edf3;border-radius:999px;padding:10px 16px;cursor:pointer;font-weight:600}}
-.tab-panel{{display:none}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:#111;color:white}}
+.tabs{{margin-top:20px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px;align-items:start}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;grid-column:1;position:sticky;top:20px;background:white;border-radius:12px;padding:10px;box-shadow:0 1px 4px #ddd}} .tab-label{{display:flex;align-items:center;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:#64748b}} .tab-label:hover{{background:#f1f5f9}}
+.tab-panel{{display:none;grid-column:2;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:#eef6ff;color:#1d4ed8}}
 #tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{min-width:0;background:white;border-radius:12px;padding:20px;margin:20px 0;box-shadow:0 1px 4px #ddd;overflow-x:auto;overflow-y:hidden}} section h2{{margin:0 0 16px}} 
 details{{min-width:0;background:#eef2f6;border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid #e5e7eb}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid #eee;text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:#fafafa;position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:#147a2e;font-weight:600}} .warn{{color:#9a6700;font-weight:600}} .bad{{color:#b42318;font-weight:600}} .pos{{color:#047857;font-weight:700}} .neg{{color:#dc2626;font-weight:700}} .zero{{color:#64748b;font-weight:600}}
+.status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:#eef6ff;color:#1d4ed8}} .status-pill.pill-danger{{background:#fef3f2;color:#b42318}} .status-pill.pill-neutral{{background:#f1f5f9;color:#475569}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid #d0d5dd;background:white;border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:#111;color:white;border-color:#111}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid #d0d5dd;background:#fff;color:#475569;font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:#eef6ff;border-color:#2563eb;color:#1d4ed8}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:#111827;color:white;border-radius:14px;padding:20px;box-shadow:0 1px 4px #ddd}} .trader-balance span{{display:block;color:#cbd5e1}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid #d0d5dd;border-radius:8px}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:#111;color:white;cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
@@ -1038,7 +1042,7 @@ button:focus-visible,input:focus-visible,.tab-label:focus-visible{{outline:3px s
 li{{margin:4px 0}}
 @media(max-width:1100px){{.donut-layout{{grid-template-columns:1fr}}}}
 @media(max-width:1000px){{.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:800px){{body{{margin:14px}} .tab-label{{padding:9px 12px}} .home-heading{{align-items:flex-start}} section{{padding:16px}} th,td{{padding:9px 10px}}}}
+@media(max-width:800px){{body{{margin:14px}} .tabs{{grid-template-columns:1fr}} .tab-labels{{flex-direction:row;flex-wrap:wrap;position:static;box-shadow:none;padding:0;background:transparent}} .tab-panel{{grid-column:1}} .tab-label{{padding:9px 12px;background:#e9edf3}} .home-heading{{align-items:flex-start}} section{{padding:16px}} th,td{{padding:9px 10px}}}}
 @media(max-width:480px){{.profile-compare-grid,.trader-account-grid,.trader-risk-grid,.sale-summary-grid{{grid-template-columns:1fr}} .home-heading{{display:block}} .system-pill{{display:inline-block;margin-top:10px}} .profile-compare-card strong{{font-size:24px}} .trader-breakdown{{justify-content:flex-start;flex-direction:column;gap:6px}} .trader-form>*{{width:100%}}}}
 </style>
 </head>
@@ -1090,10 +1094,20 @@ async function traderRequest(path, options={{}}, profileOverride=null) {{
   if(!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
   return body;
 }}
+function renderSparkline(svgId, points) {{
+  const svg = document.getElementById(svgId);
+  const values = (points || []).filter(value => Number.isFinite(value));
+  if(values.length < 2) {{ svg.innerHTML = ""; return; }}
+  const width=90, height=30, min=Math.min(...values), max=Math.max(...values), span=max-min || 1;
+  const coords = values.map((value,index) => `${{(index/(values.length-1)*width).toFixed(1)}},${{(height-(value-min)/span*height).toFixed(1)}}`);
+  const color = values[values.length-1] >= values[0] ? "#047857" : "#dc2626";
+  svg.innerHTML = `<polyline points="${{coords.join(" ")}}" fill="none" stroke="${{color}}" stroke-width="2"/>`;
+}}
 function renderCompare(name, state) {{
   const prefix = `compare-${{name}}`;
   if(!state) {{ document.getElementById(`${{prefix}}-equity`).textContent = "확인 불가"; return; }}
   document.getElementById(`${{prefix}}-equity`).textContent = won(state.total_equity || state.cash || 0);
+  renderSparkline(`${{prefix}}-sparkline`, state.equity_trend);
   const returnEl=document.getElementById(`${{prefix}}-return`); returnEl.textContent=`${{Number(state.total_return_pct||0).toFixed(2)}}%`; returnEl.className=state.total_return_pct>0?"pos":state.total_return_pct<0?"neg":"zero";
   const risk=state.risk || {{}};
   const riskLabels={{active:"정상",reduced:"축소",halted:"중단"}};
