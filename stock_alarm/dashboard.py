@@ -828,9 +828,22 @@ def recommendation_tracking_rows() -> list[dict[str, str]]:
             )
         except ValueError:
             virtual_bought = False
-        return_value = position.get("return_pct") or alert.get("return_pct") or next(
+        # recommendation_performance.csv keeps tracking a pick's return for 20
+        # trading days regardless of whether/when it sold, so once a sell alert
+        # has fired this is what should drive "현재가"/"수익률" onward -- otherwise
+        # they just freeze at the sell alert's own price/return forever and
+        # duplicate the sell_alert_* columns instead of showing what happened
+        # to the stock after the sale.
+        performance_return = next(
             (row.get(column) for column in ("return_20d_pct", "return_10d_pct", "return_5d_pct", "return_3d_pct", "return_1d_pct") if row.get(column)), ""
         )
+        performance_price = ""
+        if performance_return and row.get("entry_close"):
+            try:
+                performance_price = str(round(float(row["entry_close"]) * (1 + float(performance_return) / 100)))
+            except ValueError:
+                performance_price = ""
+        return_value = position.get("return_pct") or performance_return or alert.get("return_pct")
         result.append({
             "name": str(row.get("name") or position.get("name") or alert.get("name") or ticker),
             "pick_date": pick_date,
@@ -841,7 +854,7 @@ def recommendation_tracking_rows() -> list[dict[str, str]]:
             # other basis makes the displayed return look wrong even though both
             # numbers are individually correct.
             "entry_price": str(position.get("entry_price") or row.get("close") or row.get("entry_close") or ""),
-            "current_price": str(position.get("close") or alert.get("close") or ""),
+            "current_price": str(position.get("close") or performance_price or alert.get("close") or ""),
             "return_pct": str(return_value or ""),
             "tracking_status": status,
             "sell_alert_date": alert_date if alert_date >= pick_date else "",

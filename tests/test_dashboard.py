@@ -127,6 +127,31 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("127300", rows["2026-08-18"]["entry_price"])
         self.assertEqual("추적 중", rows["2026-08-18"]["tracking_status"])
 
+    @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
+    @patch("stock_alarm.dashboard.latest_position_rows", return_value=[])
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_recommendation_tracking_keeps_updating_after_a_sell_alert(self, tail_csv, _positions, _trades):
+        # Once sold, 현재가/수익률 must keep tracking the stock via
+        # recommendation_performance's ongoing Nd returns instead of freezing
+        # at the sell alert's own price/return (which would just duplicate
+        # sell_alert_price/sell_alert_return_pct forever).
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [{"pick_date": "2026-08-01", "ticker": "A", "name": "추천A", "entry_close": "100", "return_5d_pct": "3.5"}]
+            if path.endswith("sell_alerts.csv"):
+                return [{"created_at": "2026-08-03T15:40:00", "ticker": "A", "close": "102", "return_pct": "2.0"}]
+            return []
+
+        tail_csv.side_effect = fake_tail
+
+        row = recommendation_tracking_rows()[0]
+
+        self.assertEqual("매도 알림", row["tracking_status"])
+        self.assertEqual("102", row["sell_alert_price"])
+        self.assertEqual("2.0", row["sell_alert_return_pct"])
+        self.assertEqual("3.5", row["return_pct"])
+        self.assertEqual("103", row["current_price"])
+
     def test_status_class(self):
         self.assertEqual("ok", status_class("ok"))
         self.assertEqual("warn", status_class("old"))
