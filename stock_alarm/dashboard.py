@@ -1035,14 +1035,14 @@ def render() -> str:
 --warn-text:#9a6700;--pos:#047857;--neg:#dc2626;--zero:#64748b;
 --shadow-color:#ddd;--table-border:#eee;--table-header-bg:#fafafa;--details-bg:#eef2f6;--track-bg:#e2e8f0;--pill-neutral-bg:#f1f5f9;--pager-active-bg:#111}}
 @media(prefers-color-scheme:dark){{:root{{
---bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:var(--border);
+--bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
 --text-primary:#e5e7eb;--text-secondary:#94a3b8;--text-muted:#94a3b8;--text-strong:#cbd5e1;
 --border:#2d3444;--border-strong:#3a4254;
 --accent:#60a5fa;--accent-bg:#1e3a5f;--accent-text:#93c5fd;--accent-border:#2d5b8a;
 --danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
 --warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
---shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:#1c2130;--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
+--shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
 *{{box-sizing:border-box}} html{{overflow-x:hidden;overflow-y:scroll;scrollbar-gutter:stable}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;background:var(--bg-page);color:var(--text-primary);line-height:1.5;overflow-x:hidden}} .dashboard-header,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
 .dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:var(--text-muted)}} h2{{line-height:1.3}} .muted{{color:var(--text-muted);overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:var(--bg-surface);border-radius:12px;padding:16px;box-shadow:0 1px 4px var(--shadow-color)}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
@@ -1057,7 +1057,7 @@ def render() -> str:
 #tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
 section{{min-width:0;background:var(--bg-section);border:1px solid var(--section-border);border-radius:12px;padding:20px;margin:20px 0;box-shadow:0 1px 4px var(--shadow-color);overflow-x:auto;overflow-y:hidden}} section h2{{margin:0 0 16px}}
-details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid var(--border)}}
+details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid var(--section-border)}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:var(--success-text);font-weight:600}} .warn{{color:var(--warn-text);font-weight:600}} .bad{{color:var(--danger-text);font-weight:600}} .pos{{color:var(--pos);font-weight:700}} .neg{{color:var(--neg);font-weight:700}} .zero{{color:var(--zero);font-weight:600}}
 .status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:var(--accent-bg);color:var(--accent-text)}} .status-pill.pill-danger{{background:var(--danger-bg);color:var(--danger-text)}} .status-pill.pill-neutral{{background:var(--pill-neutral-bg);color:var(--text-secondary)}}
