@@ -366,6 +366,18 @@ def e(value: object) -> str:
     return html.escape(str(value or ""))
 
 
+NAV_ICONS = {
+    "home": '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/>',
+    "list": '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
+    "chart": '<path d="M6 20V14M12 20V6M18 20v-8"/>',
+    "settings": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
+}
+
+
+def nav_icon(name: str) -> str:
+    return f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{NAV_ICONS[name]}</svg>'
+
+
 def today_delivery_failure_count() -> int:
     today = datetime.now().date().isoformat()
     return sum(
@@ -1040,7 +1052,7 @@ def render() -> str:
 .tracking-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}} .tracking-card{{background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:12px;padding:17px 18px;box-shadow:0 1px 4px var(--shadow-color)}} .tracking-card span,.tracking-card b{{display:block}} .tracking-card span{{color:var(--text-on-accent-muted);font-size:13px}} .tracking-card b{{font-size:22px;margin-top:7px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:var(--bg-surface);color:var(--text-primary);border-radius:14px;padding:16px;box-shadow:0 1px 4px var(--shadow-color);border:1px solid var(--border)}} .highlight b{{display:block;color:var(--text-strong)}} .highlight span{{display:block;color:var(--text-primary);font-size:24px;font-weight:800;margin-top:8px}}
-.tabs{{margin-top:20px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px;align-items:start}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;grid-column:1;position:sticky;top:20px;background:var(--bg-surface);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-secondary)}} .tab-label:hover{{background:var(--bg-surface-alt)}}
+.tabs{{margin-top:20px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px;align-items:start}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;grid-column:1;position:sticky;top:20px;background:var(--bg-surface);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;gap:10px;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-secondary)}} .tab-label:hover{{background:var(--bg-surface-alt)}} .tab-label svg{{flex-shrink:0}}
 .tab-panel{{display:none;grid-column:2;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
 #tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
@@ -1076,10 +1088,10 @@ li{{margin:4px 0}}
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
 <input class="tab-input" id="tab-system" name="tabs" type="radio">
 <div class="tab-labels" role="tablist" aria-label="대시보드 화면">
-<label class="tab-label" for="tab-stocks" role="tab" tabindex="0">홈</label>
-<label class="tab-label" for="tab-tracking" role="tab" tabindex="0">추천 추적</label>
-<label class="tab-label" for="tab-trader" role="tab" tabindex="0">가상 트레이더</label>
-<label class="tab-label" for="tab-system" role="tab" tabindex="0">시스템 관리</label>
+<label class="tab-label" for="tab-stocks" role="tab" tabindex="0">{nav_icon("home")}홈</label>
+<label class="tab-label" for="tab-tracking" role="tab" tabindex="0">{nav_icon("list")}추천 추적</label>
+<label class="tab-label" for="tab-trader" role="tab" tabindex="0">{nav_icon("chart")}가상 트레이더</label>
+<label class="tab-label" for="tab-system" role="tab" tabindex="0">{nav_icon("settings")}시스템 관리</label>
 </div>
 <div class="tab-panel" id="stocks-panel" role="tabpanel">{stock_tab}</div>
 <div class="tab-panel" id="tracking-panel" role="tabpanel">{tracking_tab}</div>
