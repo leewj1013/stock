@@ -78,4 +78,10 @@ Register-ScheduledTask -TaskName "stockAlarmIntradayEvery5Minutes" -Xml $intrada
 Register-ScheduledTask -TaskName "stockAlarmSellEvery5Minutes" -Xml $sellXml -Force | Out-Null
 Register-ScheduledTask -TaskName "stockAlarmDaily" -Action $dailyAction -Trigger (New-ScheduledTaskTrigger -Daily -At 16:00) -Settings $taskSettings -Description "Run stockAlarm after Korean market close" -Force
 Register-ScheduledTask -TaskName "stockAlarmMaintenance" -Action $maintenanceAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 18:00) -Settings $taskSettings -Description "Verify and back up the stockAlarm database" -Force
-Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Action $dashboardServerAction -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Settings $taskSettings -User $env:USERNAME -RunLevel Limited -Description "Start the local dashboard API server at logon (covers reboot)" -Force
+# ensure_dashboard_server.ps1 is a no-op once the port is already listening,
+# so re-running it every 15 minutes is a cheap way to revive the server if it
+# was ever stopped (manually, by a crash, or by sleep) between logons --
+# AtLogOn alone only fires once per session and never recovers after that.
+$dashboardServerLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$dashboardServerWatchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
+Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Action $dashboardServerAction -Trigger @($dashboardServerLogonTrigger, $dashboardServerWatchdogTrigger) -Settings $taskSettings -User $env:USERNAME -RunLevel Limited -Description "Start the local dashboard API server at logon and re-check every 15 minutes so it self-heals if stopped" -Force
