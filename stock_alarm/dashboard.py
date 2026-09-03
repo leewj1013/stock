@@ -371,6 +371,8 @@ NAV_ICONS = {
     "list": '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     "chart": '<path d="M6 20V14M12 20V6M18 20v-8"/>',
     "settings": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
 }
 
 
@@ -1026,25 +1028,35 @@ def render() -> str:
 <title>{e(display_label("stockAlarm Dashboard"))}</title>
 <style>
 :root{{color-scheme:light dark;
---bg-page:#f6f7f9;--bg-surface:#ffffff;--bg-surface-alt:#f8fafc;--bg-accent-card:#111827;--bg-section:#ffffff;--section-border:transparent;
---text-primary:#111;--text-secondary:#64748b;--text-muted:#666;--text-strong:#334155;--text-on-accent:#ffffff;--text-on-accent-muted:#cbd5e1;
---border:#e5e7eb;--border-strong:#d0d5dd;
+--bg-page:#f6f7f9;--bg-surface:#ffffff;--bg-surface-alt:#f8fafc;--bg-accent-card:#ffffff;--bg-section:#ffffff;--section-border:transparent;
+--text-primary:#111;--text-secondary:#64748b;--text-muted:#666;--text-strong:#334155;--text-on-accent:#111;--text-on-accent-muted:#64748b;
+--border:#e5e7eb;--border-strong:#d0d5dd;--hover-overlay:rgba(0,0,0,.05);
 --accent:#2563eb;--accent-bg:#eef6ff;--accent-text:#1d4ed8;--accent-border:#bfdbfe;
 --danger-bg:#fef3f2;--danger-border:#fecdca;--danger-text:#b42318;
 --success-bg:#ecfdf3;--success-border:#abefc6;--success-text:#147a2e;
 --warn-text:#9a6700;--pos:#047857;--neg:#dc2626;--zero:#64748b;
 --shadow-color:#ddd;--table-border:#eee;--table-header-bg:#fafafa;--details-bg:#eef2f6;--track-bg:#e2e8f0;--pill-neutral-bg:#f1f5f9;--pager-active-bg:#111}}
-@media(prefers-color-scheme:dark){{:root{{
+@media(prefers-color-scheme:dark){{:root:not([data-theme="light"]){{
 --bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
---text-primary:#e5e7eb;--text-secondary:#94a3b8;--text-muted:#94a3b8;--text-strong:#cbd5e1;
---border:#2d3444;--border-strong:#3a4254;
+--text-primary:#e5e7eb;--text-secondary:#94a3b8;--text-muted:#94a3b8;--text-strong:#cbd5e1;--text-on-accent:#fff;--text-on-accent-muted:#cbd5e1;
+--border:#2d3444;--border-strong:#3a4254;--hover-overlay:rgba(255,255,255,.08);
 --accent:#60a5fa;--accent-bg:#1e3a5f;--accent-text:#93c5fd;--accent-border:#2d5b8a;
 --danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
 --warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
 --shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
+:root[data-theme="dark"]{{
+--bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
+--text-primary:#e5e7eb;--text-secondary:#94a3b8;--text-muted:#94a3b8;--text-strong:#cbd5e1;--text-on-accent:#fff;--text-on-accent-muted:#cbd5e1;
+--border:#2d3444;--border-strong:#3a4254;--hover-overlay:rgba(255,255,255,.08);
+--accent:#60a5fa;--accent-bg:#1e3a5f;--accent-text:#93c5fd;--accent-border:#2d5b8a;
+--danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
+--success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
+--warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
+--shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}
 *{{box-sizing:border-box}} html{{overflow-x:hidden;overflow-y:scroll;scrollbar-gutter:stable}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;padding-top:110px;background:var(--bg-page);color:var(--text-primary);line-height:1.5}} .dashboard-header,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
-.dashboard-header{{position:fixed;top:0;left:0;right:0;z-index:30;background:var(--bg-page);padding:12px 24px;border-bottom:1px solid var(--section-border);will-change:transform;backface-visibility:hidden}}
+.dashboard-header{{position:fixed;top:0;left:0;right:0;z-index:30;background:var(--bg-page);padding:12px 24px;border-bottom:1px solid var(--section-border);will-change:transform;backface-visibility:hidden;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}}
+.theme-toggle{{display:flex;background:var(--bg-surface-alt);border-radius:999px;padding:3px;gap:2px;flex-shrink:0}} .theme-toggle-btn{{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:999px;background:transparent;color:var(--text-secondary);cursor:pointer}} .theme-toggle-btn[aria-pressed="true"]{{background:var(--bg-surface);color:var(--text-primary);box-shadow:0 1px 2px var(--shadow-color)}}
 .dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:var(--text-muted)}} h2{{line-height:1.3}} .muted{{color:var(--text-muted);overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:var(--bg-surface);border-radius:12px;padding:16px;box-shadow:0 1px 4px var(--shadow-color)}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
 .home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:var(--bg-surface);border:1px solid var(--border-strong);white-space:nowrap}} .system-pill.ok{{background:var(--success-bg);border-color:var(--success-border)}} .system-pill.bad{{background:var(--danger-bg);border-color:var(--danger-border)}}
@@ -1053,7 +1065,7 @@ def render() -> str:
 .tracking-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0}} .tracking-card{{background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:12px;padding:17px 18px;box-shadow:0 1px 4px var(--shadow-color)}} .tracking-card span,.tracking-card b{{display:block}} .tracking-card span{{color:var(--text-on-accent-muted);font-size:13px}} .tracking-card b{{font-size:22px;margin-top:7px}}
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:var(--bg-surface);color:var(--text-primary);border-radius:14px;padding:16px;box-shadow:0 1px 4px var(--shadow-color);border:1px solid var(--border)}} .highlight b{{display:block;color:var(--text-strong)}} .highlight span{{display:block;color:var(--text-primary);font-size:24px;font-weight:800;margin-top:8px}}
-.tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;width:200px;position:fixed;top:118px;left:max(24px,calc((100vw - 1648px)/2 + 24px));z-index:20;background:var(--bg-accent-card);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;gap:10px;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-on-accent-muted)}} .tab-label:hover{{background:rgba(255,255,255,.08)}} .tab-label svg{{flex-shrink:0}}
+.tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;width:200px;position:fixed;top:118px;left:max(24px,calc((100vw - 1648px)/2 + 24px));z-index:20;background:var(--bg-accent-card);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;gap:10px;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-on-accent-muted)}} .tab-label:hover{{background:var(--hover-overlay)}} .tab-label svg{{flex-shrink:0}}
 .tab-panel{{display:none;margin-left:228px;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
 #tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
 .legacy-sections,.legacy-order{{display:none}}
@@ -1079,8 +1091,14 @@ li{{margin:4px 0}}
 </head>
 <body>
 <header class="dashboard-header">
+<div>
 <h1>{e(display_label("stockAlarm Dashboard"))}</h1>
 <div class="dashboard-meta">{e(display_label("generated"))} {e(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</div>
+</div>
+<div class="theme-toggle" role="radiogroup" aria-label="테마 선택">
+<button type="button" class="theme-toggle-btn" data-theme-choice="light" aria-label="라이트 모드" aria-pressed="false">{nav_icon("sun")}</button>
+<button type="button" class="theme-toggle-btn" data-theme-choice="dark" aria-label="다크 모드" aria-pressed="false">{nav_icon("moon")}</button>
+</div>
 </header>
 <div class="legacy-order">{e(display_label("Issues"))} {e(display_label("Today run details"))} {e(display_label("Today recommendations"))} {e(display_label("Recommendation shape"))} {e(display_label("Score breakdown"))} {e(display_label("Why recommended"))} {e(display_label("Sell alert summary"))} {e(display_label("Recent sell alerts"))} {e(display_label("Recommendation stats"))}</div>
 <div class="tabs">
@@ -1113,6 +1131,19 @@ const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
 const tabLabels=[...document.querySelectorAll(".tab-label")];
 function syncTabs() {{ tabLabels.forEach(label=>label.setAttribute("aria-selected",document.getElementById(label.htmlFor).checked?"true":"false")); }}
 tabLabels.forEach((label,index)=>{{label.addEventListener("keydown",event=>{{if(event.key==="Enter"||event.key===" "){{event.preventDefault();label.click();}}if(event.key==="ArrowRight"||event.key==="ArrowLeft"){{event.preventDefault();const next=(index+(event.key==="ArrowRight"?1:-1)+tabLabels.length)%tabLabels.length;tabLabels[next].focus();tabLabels[next].click();}}}});label.addEventListener("click",()=>setTimeout(syncTabs));}}); syncTabs();
+const themeKey = "stockAlarm.theme";
+const themeButtons = [...document.querySelectorAll(".theme-toggle-btn")];
+function applyTheme(choice) {{
+  if(choice) document.documentElement.setAttribute("data-theme", choice);
+  else document.documentElement.removeAttribute("data-theme");
+  const effective = choice || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  themeButtons.forEach(btn=>btn.setAttribute("aria-pressed", btn.dataset.themeChoice === effective ? "true" : "false"));
+}}
+themeButtons.forEach(btn=>btn.addEventListener("click", () => {{
+  localStorage.setItem(themeKey, btn.dataset.themeChoice);
+  applyTheme(btn.dataset.themeChoice);
+}}));
+applyTheme(localStorage.getItem(themeKey));
 async function traderRequest(path, options={{}}, profileOverride=null) {{
   if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
   const profile = profileOverride || currentProfile;
