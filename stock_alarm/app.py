@@ -340,6 +340,15 @@ def evaluate_naver_candidate(
     else:
         fundamentals = {"financial_score": 0.0, "financial_notes": "disabled_for_point_in_time_backtest"}
     financial_score = float(fundamentals.get("financial_score") or 0)
+    if external_lookup:
+        from .financial_statement_reference import financial_ratios
+        ratios = financial_ratios(ticker)
+    else:
+        ratios = {}
+    profile_categories = category_scores(
+        ratios, financial_score, disclosure_score, float(fundamentals.get("dividend_yield") or 0), atr20_pct,
+    )
+    profile_categories["news_category_score"] = round(_scale(news_score, -3, 3), 2)
     score_parts = {
         "volume_score": volume_score, "trading_value_score": trading_value_score, "trend_score": trend_score,
         "news_score": news_score, "disclosure_score": disclosure_score, "financial_score": financial_score,
@@ -369,6 +378,10 @@ def evaluate_naver_candidate(
         legacy_score=round(max(0.0, min(100.0, legacy_score)), 2),
         final_score=round(score, 2),
         passed=1,
+        **profile_categories,
+        # Filled in by apply_relative_strength() once the benchmark-relative
+        # move (needed for momentum) is known; 50 is a neutral placeholder.
+        momentum_score=50.0,
     )
     return CandidateEvaluation(ticker, name, values, pick)
 
@@ -395,6 +408,66 @@ def calculate_legacy_score(close: int, ma20: float, volume_ratio: float, trading
     trend_scale = max(atr20_pct * 3, 10) if atr20_pct else 10
     trend_score = min(distance_pct / trend_scale, 1) * 20
     return round(volume_score + trading_value_score + trend_score, 2)
+
+
+def _scale(value: float | None, low: float, high: float, default: float = 50.0) -> float:
+    """Linearly map value from [low, high] to [0, 100], clamped. None (data
+    unavailable) maps to a neutral 50 rather than penalizing or rewarding."""
+    if value is None or high == low:
+        return default
+    return max(0.0, min(100.0, (value - low) / (high - low) * 100))
+
+
+def _avg_known(*values: float | None) -> float:
+    known = [value for value in values if value is not None]
+    return round(mean(known), 2) if known else 50.0
+
+
+def category_scores(
+    financial_ratios: dict,
+    financial_score: float,
+    disclosure_score_raw: float,
+    dividend_yield: float,
+    atr20_pct: float,
+) -> dict[str, float]:
+    """Six 0-100 profile-scoring categories, independent of the existing
+    quality-gate score (volume/trading_value/trend/etc). Real DART financial
+    figures are preferred; when DART_FINANCIALS_LOOKUP is off or a filing
+    isn't available yet, each category falls back to the closest signal
+    already computed elsewhere in the pipeline so profile ranking still works
+    without the new data.
+    """
+    roe, operating_margin = financial_ratios.get("roe_pct"), financial_ratios.get("operating_margin_pct")
+    if roe is None and operating_margin is None:
+        profitability_score = max(0.0, min(100.0, financial_score / 5 * 100))
+    else:
+        profitability_score = _avg_known(_scale(roe, 0, 20) if roe is not None else None,
+                                          _scale(operating_margin, 0, 20) if operating_margin is not None else None)
+    revenue_growth, oi_growth = financial_ratios.get("revenue_growth_pct"), financial_ratios.get("operating_income_growth_pct")
+    if revenue_growth is None and oi_growth is None:
+        growth_score = _scale(disclosure_score_raw, -3, 3)
+    else:
+        growth_score = _avg_known(_scale(revenue_growth, -10, 30) if revenue_growth is not None else None,
+                                   _scale(oi_growth, -10, 30) if oi_growth is not None else None)
+    debt_ratio = financial_ratios.get("debt_ratio_pct")
+    debt_component = 100.0 - _scale(debt_ratio, 0, 200) if debt_ratio is not None else 50.0
+    volatility_component = 100.0 - _scale(atr20_pct, 0, 10)
+    stability_score = mean([debt_component, volatility_component])
+    dividend_score = _scale(dividend_yield, 0, 5)
+    return {
+        "profitability_score": round(profitability_score, 2),
+        "growth_score": round(growth_score, 2),
+        "stability_score": round(stability_score, 2),
+        "dividend_score": round(dividend_score, 2),
+    }
+
+
+def momentum_score(relative_strength_score: float, volume_ratio: float, trend_score: float) -> float:
+    return round(mean([
+        _scale(relative_strength_score, -5, 5),
+        _scale(volume_ratio, 0, 3),
+        _scale(trend_score, 0, 30),
+    ]), 2)
 
 
 def news_bonus(name: str) -> float:
@@ -586,6 +659,8 @@ def apply_relative_strength(
         # overwhelming liquidity and trend quality.
         relative_score = max(-5.0, min(5.0, relative / 2))
         values.update(benchmark_symbol=symbol, market_proxy_return_pct=benchmark_value, relative_strength_pct=relative, relative_strength_score=relative_score)
+        if item.pick:
+            values["momentum_score"] = momentum_score(relative_score, item.pick.volume_ratio, item.pick.trend_score)
         pick = item.pick
         if pick:
             parts = {
@@ -722,6 +797,89 @@ def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
     return result
 
 
+def profile_total_score(values: dict, weights: dict[str, float]) -> float:
+    from .trading_profiles import CATEGORY_VALUE_KEYS
+    return round(sum(float(values.get(CATEGORY_VALUE_KEYS[category], 50.0) or 50.0) * weight for category, weight in weights.items()), 2)
+
+
+def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, top_n: int, path: str | None = None) -> list[Pick]:
+    """Re-rank the shared, already quality-filtered candidate pool with one
+    profile's own category weights, volatility cap, and max-holdings limit.
+    Never loosens the safety filters `evaluations` already applied -- a
+    candidate that failed those never reaches this function's ranking.
+    """
+    minimum = env_float("MIN_RECOMMEND_SCORE", 50)
+    blocked = open_recommended_tickers()
+    weights = profile.get("scoring_weights")
+    max_volatility = profile.get("max_volatility_atr_pct")
+    ranked = []
+    for evaluation in evaluations:
+        pick = evaluation.pick
+        if not pick or pick.score < minimum or pick.ticker in blocked:
+            continue
+        if max_volatility is not None and pick.atr20_pct > max_volatility:
+            continue
+        rank_score = profile_total_score(evaluation.values, weights) if weights else pick.score
+        ranked.append((rank_score, pick))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    room = top_n
+    max_holdings = profile.get("max_holdings")
+    if max_holdings is not None:
+        from .data_store import virtual_trader_state
+        held = len(virtual_trader_state(path=path or "data/stock_alarm.db").get("holdings", []))
+        room = max(0, min(top_n, max_holdings - held))
+    result, seen = [], set()
+    for _score, pick in ranked:
+        if pick.ticker in seen:
+            continue
+        seen.add(pick.ticker)
+        result.append(pick)
+        if len(result) >= room:
+            break
+    return result
+
+
+def recommend_for_profiles(end_day: date, top_n: int, min_trading_value: int, volume_multiplier: float, run_id: str) -> dict[str, list[Pick]]:
+    """Evaluate the shared candidate universe once, then let each virtual
+    trading profile rank and select from it independently (own weights,
+    volatility cap, max holdings) -- see select_for_profile.
+    """
+    from .trading_profiles import PROFILES
+    from .data_store import write_candidates, write_profile_selections
+    universe = recommend_universe(min_trading_value)
+    if not passes_market_filter(end_day):
+        write_candidates(run_id, ({"ticker": ticker, "name": name, "evaluated_at": datetime.now().isoformat(timespec="seconds"), "passed": 0, "selected": 0, "rejection_reasons": "market_filter"} for ticker, name in universe.items()))
+        return {name: [] for name in PROFILES}
+    evaluations = [evaluate_naver_candidate(ticker, name, end_day, min_trading_value, volume_multiplier, record_quality=True) for ticker, name in universe.items()]
+    evaluations = apply_relative_strength(evaluations, market_benchmark_return(end_day))
+    ranks = {evaluation.pick.ticker: index for index, evaluation in enumerate(
+        sorted((item for item in evaluations if item.pick), key=lambda item: item.pick.score, reverse=True), 1,
+    )}
+    picks_by_profile: dict[str, list[Pick]] = {}
+    for name, profile in PROFILES.items():
+        selected = select_for_profile(evaluations, profile, top_n, path=profile["db_path"])
+        picks_by_profile[name] = selected
+        selected_tickers = {pick.ticker for pick in selected}
+        weights = profile.get("scoring_weights")
+        write_profile_selections(run_id, name, (
+            {
+                "ticker": evaluation.ticker,
+                "rank": ranks.get(evaluation.ticker),
+                "selected": int(evaluation.ticker in selected_tickers),
+                "profile_score": profile_total_score(evaluation.values, weights) if weights and evaluation.pick else None,
+            }
+            for evaluation in evaluations if evaluation.pick
+        ))
+    aggressive_selected = {pick.ticker for pick in picks_by_profile.get("aggressive", [])}
+    write_candidates(run_id, (
+        {**evaluation.values, "rank": ranks.get(evaluation.ticker),
+         "selected": int(evaluation.ticker in aggressive_selected),
+         "rejection_reasons": ("score_or_portfolio_filter" if evaluation.pick and evaluation.ticker not in aggressive_selected and not evaluation.values.get("rejection_reasons") else evaluation.values.get("rejection_reasons"))}
+        for evaluation in evaluations
+    ))
+    return picks_by_profile
+
+
 def sell_cooldown_days(reason: str, stage: str = "") -> float:
     """Recommendation cooldown length after a sell alert, tiered by how strong
     a signal it was: a stop-loss means the setup was wrong and should sit out
@@ -831,6 +989,20 @@ def recommend(markets: list[str], top_n: int, min_trading_value: int, volume_mul
     if os.environ.get("DATA_SOURCE", "naver").lower() == "naver":
         return recommend_naver(latest_naver_trading_day(), top_n, min_trading_value, volume_multiplier, run_id)
     return recommend_for_day(latest_trading_day(), markets, top_n, min_trading_value, volume_multiplier)
+
+
+def recommend_picks_by_profile(markets: list[str], top_n: int, min_trading_value: int, volume_multiplier: float, run_id: str) -> dict[str, list[Pick]]:
+    """Per-profile picks for run()'s live scheduled path. The Naver data
+    source (the only one actually used in production) shares one candidate
+    evaluation and lets each profile rank/select independently -- see
+    recommend_for_profiles. The legacy pykrx path isn't profile-aware and
+    just gives every profile the same shared list, matching its old behavior.
+    """
+    from .trading_profiles import PROFILES
+    if os.environ.get("DATA_SOURCE", "naver").lower() == "naver":
+        return recommend_for_profiles(latest_naver_trading_day(), top_n, min_trading_value, volume_multiplier, run_id)
+    shared = recommend_for_day(latest_trading_day(), markets, top_n, min_trading_value, volume_multiplier)
+    return {name: shared for name in PROFILES}
 
 
 def write_log(picks: list[Pick], path: str = "logs/recommendations.csv") -> None:
@@ -1208,19 +1380,21 @@ def run() -> None:
     market_date = env_date("AS_OF_DATE", date.today()).isoformat()
     run_id = start_run("recommendation", market_date)
     try:
-        picks = recommend(markets, top_n, min_trading_value, volume_multiplier, run_id)
+        picks_by_profile = recommend_picks_by_profile(markets, top_n, min_trading_value, volume_multiplier, run_id)
+        picks = picks_by_profile.get("aggressive", [])
         track_positions(picks)
         write_log(picks)
         virtual_result = auto_buy_virtual_trader(picks)
-        # Secondary virtual-trader profiles buy the same picks with different
-        # sizing/exit rules -- they don't get their own recommend() call or
-        # tracked-position log entry, only their own DB and buy allocation.
+        # Secondary virtual-trader profiles rank/select from the same shared
+        # evaluation with their own weights (see select_for_profile) and buy
+        # their own resulting pick list with their own sizing/exit rules --
+        # they don't get their own tracked-position log entry.
         from .trading_profiles import PROFILES
         for name, profile in PROFILES.items():
             if name == "aggressive":
                 continue
             auto_buy_virtual_trader(
-                picks,
+                picks_by_profile.get(name, []),
                 path=profile["db_path"],
                 sector_cap_override=profile["sector_cap_pct"],
                 exposure_limit_override=profile["exposure_limit_pct"],

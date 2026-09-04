@@ -302,6 +302,22 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
         connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN legacy_score REAL")
     if "legacy_passed" not in candidate_columns:
         connection.execute("ALTER TABLE candidate_snapshots ADD COLUMN legacy_passed INTEGER NOT NULL DEFAULT 0")
+    for name in ("profitability_score", "growth_score", "stability_score", "dividend_score", "momentum_score", "news_category_score"):
+        if name not in candidate_columns:
+            connection.execute(f"ALTER TABLE candidate_snapshots ADD COLUMN {name} REAL")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profile_candidate_selections (
+            run_id TEXT NOT NULL REFERENCES strategy_runs(run_id),
+            profile TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            rank INTEGER,
+            selected INTEGER NOT NULL DEFAULT 0,
+            profile_score REAL,
+            PRIMARY KEY (run_id, profile, ticker)
+        )
+        """
+    )
     position_columns = {row[1] for row in connection.execute("PRAGMA table_info(position_checks)")}
     for name, definition in (
         ("atr20_pct", "REAL"), ("dynamic_stop_loss_pct", "REAL"),
@@ -670,6 +686,7 @@ def write_candidates(run_id: str, rows: Iterable[dict[str, Any]], path: str = DB
         "distance_ma20_pct", "avg_range_pct", "atr20_pct", "benchmark_symbol", "market_proxy_return_pct", "relative_strength_pct", "relative_strength_score", "volume_score", "trading_value_score",
         "trend_score", "news_score", "disclosure_score", "performance_penalty", "financial_score", "financial_notes", "per", "pbr", "dividend_yield",
         "legacy_score", "legacy_passed", "final_score", "passed", "selected", "rank", "rejection_reasons",
+        "profitability_score", "growth_score", "stability_score", "dividend_score", "momentum_score", "news_category_score",
     ]
     values = [(run_id, *(row.get(column) for column in columns)) for row in rows]
     if not values:
@@ -678,6 +695,21 @@ def write_candidates(run_id: str, rows: Iterable[dict[str, Any]], path: str = DB
     with closing(connect(path)) as connection:
         connection.executemany(
             f"INSERT OR REPLACE INTO candidate_snapshots (run_id,{','.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        connection.commit()
+
+
+def write_profile_selections(run_id: str, profile: str, rows: Iterable[dict[str, Any]], path: str = DB_PATH) -> None:
+    """Per-profile ranking/selection outcome for one run's shared candidate
+    evaluation (see write_candidates) -- kept in its own table since which
+    ticker each profile picks, and in what order, differs by profile."""
+    values = [(run_id, profile, row["ticker"], row.get("rank"), int(row.get("selected") or 0), row.get("profile_score")) for row in rows]
+    if not values:
+        return
+    with closing(connect(path)) as connection:
+        connection.executemany(
+            "INSERT OR REPLACE INTO profile_candidate_selections (run_id,profile,ticker,rank,selected,profile_score) VALUES (?,?,?,?,?,?)",
             values,
         )
         connection.commit()

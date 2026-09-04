@@ -5,7 +5,7 @@ import unittest
 from contextlib import closing
 from unittest.mock import patch
 
-from stock_alarm.data_store import connect, finish_run, import_legacy_virtual_trader, record_virtual_valuation, recent_equity_trend, recent_position_checks, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_sell_outcomes
+from stock_alarm.data_store import connect, finish_run, import_legacy_virtual_trader, record_virtual_valuation, recent_equity_trend, recent_position_checks, start_run, virtual_buy, virtual_deposit, virtual_sell, virtual_trader_state, write_candidates, write_position_checks, write_profile_selections, write_sell_outcomes
 
 
 class DataStoreTest(unittest.TestCase):
@@ -27,6 +27,19 @@ class DataStoreTest(unittest.TestCase):
             self.assertEqual(("005930", 1), connection.execute("SELECT ticker, selected FROM candidate_snapshots").fetchone())
         finally:
             connection.close()
+
+    def test_profile_selections_are_recorded_independently_per_profile(self):
+        run_id = start_run("recommendation", "2026-08-04", self.path)
+        write_candidates(run_id, [{"ticker": "005930", "name": "Samsung", "evaluated_at": "now", "legacy_score": 75, "legacy_passed": 1, "passed": 1, "selected": 1, "final_score": 80, "rejection_reasons": ""}], self.path)
+        write_profile_selections(run_id, "aggressive", [{"ticker": "005930", "rank": 1, "selected": 1, "profile_score": 70.0}], self.path)
+        write_profile_selections(run_id, "neutral", [{"ticker": "005930", "rank": 2, "selected": 0, "profile_score": 40.0}], self.path)
+
+        connection = sqlite3.connect(self.path)
+        try:
+            rows = connection.execute("SELECT profile, rank, selected FROM profile_candidate_selections ORDER BY profile").fetchall()
+        finally:
+            connection.close()
+        self.assertEqual([("aggressive", 1, 1), ("neutral", 2, 0)], rows)
 
     def test_sell_outcomes_are_replaced_as_a_snapshot(self):
         common = {"alert_created_at": "2026-08-01", "ticker": "A", "updated_at": "now"}
