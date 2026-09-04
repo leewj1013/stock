@@ -7,7 +7,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from datetime import timedelta
+from datetime import date, timedelta
 from statistics import mean
 
 
@@ -69,16 +69,36 @@ def _latest_krx_market_rows() -> list[dict]:
     return []
 
 
-def _whole_market_snapshot_via_krx() -> dict[str, float] | None:
+def _market_day(as_of_day: date | None = None) -> date:
+    return as_of_day or date.today()
+
+
+def _whole_market_snapshot_via_krx(as_of_day: date | None = None) -> dict[str, float | str] | None:
+    """Return only the requested session's breadth.
+
+    Unlike the dynamic-universe helper above, a market filter must never
+    silently substitute the previous finalized KRX session for today's state.
+    """
+    day = _market_day(as_of_day)
     changes = []
-    for row in _latest_krx_market_rows():
+    for market in ("KOSPI", "KOSDAQ"):
         try:
-            changes.append(float(row.get("FLUC_RT", 0)))
-        except (TypeError, ValueError):
-            continue
+            rows = fetch_krx_market_rows(market, day.strftime("%Y%m%d"))
+        except Exception:
+            rows = []
+        for row in rows:
+            try:
+                changes.append(float(row.get("FLUC_RT", 0)))
+            except (TypeError, ValueError):
+                continue
     if not changes:
         return None
-    return {"up_ratio": sum(value > 0 for value in changes) / len(changes), "avg_change_pct": mean(changes)}
+    return {
+        "up_ratio": sum(value > 0 for value in changes) / len(changes),
+        "avg_change_pct": mean(changes),
+        "as_of_date": day.isoformat(),
+        "source": "krx",
+    }
 
 
 def _looks_like_preferred_share(name: str) -> bool:
@@ -156,7 +176,7 @@ def fetch_market_cap_page_moves(market: str, page: int) -> list[bool]:
     return [change > 0 for change in fetch_market_cap_page_changes(market, page)]
 
 
-def _whole_market_snapshot_via_naver(pages_per_market: int) -> dict[str, float] | None:
+def _whole_market_snapshot_via_naver(pages_per_market: int, as_of_day: date | None = None) -> dict[str, float | str] | None:
     """Sampled from the top market-cap pages of both markets: full KOSPI+KOSDAQ
     has ~2600 tickers, and scraping every page on a 5-minute cron would be slow
     and rude to Naver."""
@@ -169,31 +189,47 @@ def _whole_market_snapshot_via_naver(pages_per_market: int) -> dict[str, float] 
                 continue
     if not changes:
         return None
-    return {"up_ratio": sum(value > 0 for value in changes) / len(changes), "avg_change_pct": mean(changes)}
+    day = _market_day(as_of_day)
+    return {
+        "up_ratio": sum(value > 0 for value in changes) / len(changes),
+        "avg_change_pct": mean(changes),
+        "as_of_date": day.isoformat(),
+        "source": "naver_current",
+    }
 
 
-def whole_market_snapshot(pages_per_market: int = 6) -> dict[str, float] | None:
+def whole_market_snapshot(pages_per_market: int = 6, as_of_day: date | None = None) -> dict[str, float | str] | None:
     """Whole-market breadth: advance/decline ratio and mean %-change.
 
     Prefers the official KRX Open API (every listed stock) when KRX_API_KEY is
     set; falls back to sampling Naver's market-cap ranking pages.
     """
-    return _whole_market_snapshot_via_krx() or _whole_market_snapshot_via_naver(pages_per_market)
+    requested_day = _market_day(as_of_day)
+    snapshot = _whole_market_snapshot_via_krx(requested_day)
+    if snapshot is not None:
+        return snapshot
+
+    # Naver's ranking pages expose only the current trading session. They are
+    # a valid intraday fallback for that session, never for an older request.
+    if requested_day == _market_day():
+        return _whole_market_snapshot_via_naver(pages_per_market, requested_day)
+    return None
 
 
-def whole_market_up_ratio(pages_per_market: int = 6) -> float | None:
-    snapshot = whole_market_snapshot(pages_per_market)
+def whole_market_up_ratio(pages_per_market: int = 6, as_of_day: date | None = None) -> float | None:
+    snapshot = whole_market_snapshot(pages_per_market, as_of_day)
     return snapshot["up_ratio"] if snapshot else None
 
 
-def _cached_snapshot(max_cache_age_seconds: int = 600, pages_per_market: int = 6) -> dict[str, float] | None:
+def _cached_snapshot(max_cache_age_seconds: int = 600, pages_per_market: int = 6, as_of_day: date | None = None) -> dict[str, float | str] | None:
+    requested_day = _market_day(as_of_day)
     if os.environ.get("NO_CACHE", "0") != "1" and os.path.exists(CACHE_PATH):
         if time.time() - os.path.getmtime(CACHE_PATH) <= max_cache_age_seconds:
             with open(CACHE_PATH, encoding="utf-8") as file:
                 cached = json.load(file)
-            if "avg_change_pct" in cached:
+            if "avg_change_pct" in cached and cached.get("as_of_date") == requested_day.isoformat():
                 return cached
-    snapshot = whole_market_snapshot(pages_per_market)
+    snapshot = whole_market_snapshot(pages_per_market, requested_day)
     if snapshot is not None:
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         with open(CACHE_PATH, "w", encoding="utf-8") as file:
@@ -201,11 +237,11 @@ def _cached_snapshot(max_cache_age_seconds: int = 600, pages_per_market: int = 6
     return snapshot
 
 
-def cached_whole_market_up_ratio(max_cache_age_seconds: int = 600, pages_per_market: int = 6) -> float | None:
-    snapshot = _cached_snapshot(max_cache_age_seconds, pages_per_market)
+def cached_whole_market_up_ratio(max_cache_age_seconds: int = 600, pages_per_market: int = 6, as_of_day: date | None = None) -> float | None:
+    snapshot = _cached_snapshot(max_cache_age_seconds, pages_per_market, as_of_day)
     return snapshot["up_ratio"] if snapshot else None
 
 
-def cached_whole_market_average_change_pct(max_cache_age_seconds: int = 600, pages_per_market: int = 6) -> float | None:
-    snapshot = _cached_snapshot(max_cache_age_seconds, pages_per_market)
+def cached_whole_market_average_change_pct(max_cache_age_seconds: int = 600, pages_per_market: int = 6, as_of_day: date | None = None) -> float | None:
+    snapshot = _cached_snapshot(max_cache_age_seconds, pages_per_market, as_of_day)
     return snapshot["avg_change_pct"] if snapshot else None

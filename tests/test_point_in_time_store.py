@@ -49,6 +49,18 @@ class PointInTimeStoreTest(unittest.TestCase):
         rows = PointInTimeStore(self.path).coverage(["005930"], date(2024, 1, 1), date(2024, 1, 2))
         self.assertEqual({row["source"]: row["records"] for row in rows}, {"news": 1, "disclosure": 0, "financial": 0})
 
+    def test_partial_collection_marks_only_actual_news_coverage_as_observed(self):
+        with closing(connect(self.path)) as db:
+            db.execute(
+                "INSERT INTO collection_log(source,ticker,start_date,end_date,status,records,message,collected_at) VALUES(?,?,?,?,?,?,?,?)",
+                ("news", "005930", "2024-06-01", "2024-12-31", "partial", 1000, "provider limit", "2025-01-01T00:00:00+00:00"),
+            )
+            db.commit()
+
+        store = PointInTimeStore(self.path)
+        self.assertFalse(store.scores_asof("005930", date(2024, 5, 31))["pit_sources"]["news"])
+        self.assertTrue(store.scores_asof("005930", date(2024, 6, 1))["pit_sources"]["news"])
+
 
 if __name__ == "__main__":
     unittest.main()

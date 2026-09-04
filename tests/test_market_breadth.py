@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from stock_alarm.market_breadth import (
@@ -50,6 +51,7 @@ class MarketBreadthTest(unittest.TestCase):
 
         self.assertEqual(0.5, snapshot["up_ratio"])
         self.assertEqual(-1.0, snapshot["avg_change_pct"])
+        self.assertEqual(date.today().isoformat(), snapshot["as_of_date"])
         self.assertEqual(0.5, ratio)
 
     def test_whole_market_snapshot_returns_none_when_scrape_fails(self):
@@ -106,9 +108,9 @@ class MarketBreadthTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = os.path.join(tmp, "latest.json")
             with open(cache_path, "w", encoding="utf-8") as file:
-                json.dump({"up_ratio": 0.75, "avg_change_pct": 1.5}, file)
+                json.dump({"up_ratio": 0.75, "avg_change_pct": 1.5, "as_of_date": date.today().isoformat()}, file)
             with patch("stock_alarm.market_breadth.CACHE_PATH", cache_path), \
-                 patch("stock_alarm.market_breadth.whole_market_snapshot") as whole:
+             patch("stock_alarm.market_breadth.whole_market_snapshot") as whole:
                 self.assertEqual(0.75, cached_whole_market_up_ratio())
                 self.assertEqual(1.5, cached_whole_market_average_change_pct())
                 whole.assert_not_called()
@@ -121,6 +123,14 @@ class MarketBreadthTest(unittest.TestCase):
             with patch("stock_alarm.market_breadth.CACHE_PATH", cache_path), \
                  patch("stock_alarm.market_breadth.whole_market_snapshot", return_value={"up_ratio": 0.6, "avg_change_pct": 0.3}):
                 self.assertEqual(0.6, cached_whole_market_up_ratio())
+
+    def test_historical_request_never_falls_back_to_current_naver_page(self):
+        requested = date(2024, 1, 2)
+        with patch("stock_alarm.market_breadth._whole_market_snapshot_via_krx", return_value=None) as krx, \
+             patch("stock_alarm.market_breadth._whole_market_snapshot_via_naver") as naver:
+            self.assertIsNone(whole_market_snapshot(as_of_day=requested))
+        krx.assert_called_once_with(requested)
+        naver.assert_not_called()
 
 
 if __name__ == "__main__":

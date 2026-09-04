@@ -38,6 +38,7 @@ class DashboardTest(unittest.TestCase):
         html = table("T", [{"name": str(index)} for index in range(19)], ["name"])
         self.assertIn("총 19건", html)
 
+    @patch.dict(os.environ, {})
     @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
     def test_render_has_virtual_trader_and_five_page_pager(self, _recommendations):
         html = render()

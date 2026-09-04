@@ -92,7 +92,7 @@ class PointInTimeStore:
             financial = db.execute("SELECT * FROM financial_snapshots WHERE ticker=? AND available_at<=? ORDER BY available_at DESC LIMIT 1",
                                    (ticker, cutoff)).fetchone()
             collected = {row["source"] for row in db.execute(
-                "SELECT DISTINCT source FROM collection_log WHERE ticker=? AND status='success' AND start_date<=? AND end_date>=?",
+                "SELECT DISTINCT source FROM collection_log WHERE ticker=? AND status IN ('success','partial') AND start_date<=? AND end_date>=?",
                 (ticker, day.isoformat(), day.isoformat()),
             ).fetchall()}
         news_value, _ = news_keyword_score([row[0] for row in news])
@@ -114,8 +114,16 @@ class PointInTimeStore:
             for ticker in tickers:
                 for source, table in (("news", "news_events"), ("disclosure", "disclosure_events"), ("financial", "financial_snapshots")):
                     item = db.execute(f"SELECT COUNT(*) count, MIN(published_at) first_at, MAX(published_at) last_at FROM {table} WHERE ticker=?", (ticker,)).fetchone()
+                    collection = db.execute(
+                        "SELECT status,start_date,end_date,message FROM collection_log WHERE ticker=? AND source=? ORDER BY collected_at DESC LIMIT 1",
+                        (ticker, source),
+                    ).fetchone()
+                    status = collection["status"] if collection else ("available" if item["count"] else "unavailable")
                     rows.append({"ticker": ticker, "source": source, "records": int(item["count"]),
                                  "first_published_at": item["first_at"] or "", "last_published_at": item["last_at"] or "",
                                  "requested_start": start.isoformat(), "requested_end": end.isoformat(),
-                                 "status": "available" if item["count"] else "unavailable"})
+                                 "status": status,
+                                 "coverage_start": collection["start_date"] if collection else "",
+                                 "coverage_end": collection["end_date"] if collection else "",
+                                 "message": collection["message"] if collection else ""})
         return rows

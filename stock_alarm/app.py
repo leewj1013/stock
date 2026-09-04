@@ -521,7 +521,7 @@ def market_up_ratio(moves: list[bool]) -> float:
 
 def market_exposure_limit_pct(up_ratio: float) -> float:
     """Return the live 4.3 portfolio exposure cap for a breadth observation."""
-    return 70.0 if up_ratio >= 0.60 else 40.0 if up_ratio >= 0.45 else 10.0
+    return 100.0 if up_ratio >= 0.60 else 40.0 if up_ratio >= 0.45 else 10.0
 
 
 def watchlist_market_up_ratio(end_day: date) -> float:
@@ -538,7 +538,7 @@ def naver_market_up_ratio(end_day: date) -> float:
     approximation if the market-cap page scrape is unavailable."""
     from .market_breadth import cached_whole_market_up_ratio
 
-    ratio = cached_whole_market_up_ratio()
+    ratio = cached_whole_market_up_ratio(as_of_day=end_day)
     return ratio if ratio is not None else watchlist_market_up_ratio(end_day)
 
 
@@ -558,7 +558,7 @@ def market_benchmark_return(end_day: date) -> tuple[str, float | None]:
     if symbol == "KOSPI":
         from .market_breadth import cached_whole_market_average_change_pct
 
-        whole_market = cached_whole_market_average_change_pct()
+        whole_market = cached_whole_market_average_change_pct(as_of_day=end_day)
         if whole_market is not None:
             return "WHOLE_MARKET", whole_market
     try:
@@ -971,21 +971,32 @@ def historical_allocation_factors(path: str = "logs/recommendation_performance.c
     return factors
 
 
-def allocation_percentages(picks: list[Pick], performance_path: str = "logs/recommendation_performance.csv") -> list[float]:
-    """Return per-position target weights against total virtual-account equity."""
+def allocation_percentages(
+    picks: list[Pick],
+    performance_path: str = "logs/recommendation_performance.csv",
+    min_position_pct_override: float | None = None,
+    max_position_pct_override: float | None = None,
+) -> list[float]:
+    """Return per-position target weights against total virtual-account equity.
+
+    Sizing is driven by recent volatility and each ticker's own learned
+    historical performance -- not by the recommendation score, which
+    production data showed is negatively correlated with subsequent returns.
+    """
     if not picks:
         return []
     if os.environ.get("VIRTUAL_TRADER_POSITION_SIZING_MODE", "fixed").strip().lower() == "fixed":
         fixed = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_FIXED_POSITION_PCT", 10)))
         return [round(fixed, 2) for _pick in picks]
     learned = historical_allocation_factors(performance_path)
-    minimum = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10)))
-    maximum = max(minimum, min(100.0, env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30)))
+    min_default = env_float("VIRTUAL_TRADER_MIN_POSITION_PCT", 10) if min_position_pct_override is None else float(min_position_pct_override)
+    max_default = env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30) if max_position_pct_override is None else float(max_position_pct_override)
+    minimum = max(0.0, min(100.0, min_default))
+    maximum = max(minimum, min(100.0, max_default))
     allocations = []
     for pick in picks:
-        quality = max(0.25, min(1.0, pick.score / 100))
         volatility = max(0.5, min(1.0, 3 / max(pick.atr20_pct, 3)))
-        target = maximum * quality * volatility * learned.get(pick.ticker, 1.0)
+        target = maximum * volatility * learned.get(pick.ticker, 1.0)
         allocations.append(round(max(minimum, min(maximum, target)), 2))
     total = sum(allocations)
     if total > 100:
@@ -1104,7 +1115,14 @@ def sector_limited_allocations(
     return limited
 
 
-def auto_buy_virtual_trader(picks: list[Pick], path: str = "data/stock_alarm.db", sector_cap_override: float | None = None) -> dict | None:
+def auto_buy_virtual_trader(
+    picks: list[Pick],
+    path: str = "data/stock_alarm.db",
+    sector_cap_override: float | None = None,
+    exposure_limit_override: float | None = None,
+    min_position_pct_override: float | None = None,
+    max_position_pct_override: float | None = None,
+) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
     from .data_store import virtual_buy, virtual_trader_state
@@ -1115,7 +1133,7 @@ def auto_buy_virtual_trader(picks: list[Pick], path: str = "data/stock_alarm.db"
     allowed, _reason = new_buys_allowed(path=path)
     if not allowed:
         return None
-    allocations = allocation_percentages(picks)
+    allocations = allocation_percentages(picks, min_position_pct_override=min_position_pct_override, max_position_pct_override=max_position_pct_override)
     allocations = correlation_limited_allocations(picks, allocations)
     sector_cap = env_float("SECTOR_GROUP_MAX_PCT", 100) if sector_cap_override is None else sector_cap_override
     if sector_cap < 100:
@@ -1126,7 +1144,9 @@ def auto_buy_virtual_trader(picks: list[Pick], path: str = "data/stock_alarm.db"
         limited = sector_limited_allocations(combined, existing_allocations + allocations, locked_tickers={pick.ticker for pick in existing}, group_cap_override=sector_cap)
         allocations = limited[len(existing):]
     breadth = naver_market_up_ratio(date.today())
-    exposure_limit = market_exposure_limit_pct(breadth)
+    market_limit = market_exposure_limit_pct(breadth)
+    profile_limit = 100.0 if exposure_limit_override is None else max(0.0, min(100.0, float(exposure_limit_override)))
+    exposure_limit = min(market_limit, profile_limit)
     candidates = [
         {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation,
          "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}
@@ -1199,7 +1219,14 @@ def run() -> None:
         for name, profile in PROFILES.items():
             if name == "aggressive":
                 continue
-            auto_buy_virtual_trader(picks, path=profile["db_path"], sector_cap_override=profile["sector_cap_pct"])
+            auto_buy_virtual_trader(
+                picks,
+                path=profile["db_path"],
+                sector_cap_override=profile["sector_cap_pct"],
+                exposure_limit_override=profile["exposure_limit_pct"],
+                min_position_pct_override=profile["min_position_pct"],
+                max_position_pct_override=profile["max_position_pct"],
+            )
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")

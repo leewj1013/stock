@@ -39,7 +39,9 @@ class FormatMessageTest(unittest.TestCase):
 
     @patch("stock_alarm.app.historical_allocation_factors", return_value={"B": 1.5})
     def test_allocation_learns_from_historical_performance(self, _factors):
-        first = self.pick()
+        # atr20_pct=6 keeps the volatility-only baseline below the ceiling so
+        # the learned-performance multiplier has visible room to differentiate.
+        first = Pick(**{**self.pick().__dict__, "atr20_pct": 6})
         second = Pick(**{**first.__dict__, "ticker": "B"})
         with patch.dict("os.environ", {"VIRTUAL_TRADER_POSITION_SIZING_MODE": "dynamic"}):
             allocations = allocation_percentages([first, second])

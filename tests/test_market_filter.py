@@ -15,7 +15,7 @@ from stock_alarm.app import (
 
 class MarketFilterTest(unittest.TestCase):
     def test_live_exposure_limit_thresholds(self):
-        self.assertEqual(70.0, market_exposure_limit_pct(0.60))
+        self.assertEqual(100.0, market_exposure_limit_pct(0.60))
         self.assertEqual(40.0, market_exposure_limit_pct(0.45))
         self.assertEqual(10.0, market_exposure_limit_pct(0.4499))
 
@@ -23,8 +23,10 @@ class MarketFilterTest(unittest.TestCase):
         self.assertEqual(0.5, market_up_ratio([True, False]))
 
     @patch("stock_alarm.market_breadth.cached_whole_market_up_ratio", return_value=0.8)
-    def test_naver_market_up_ratio_prefers_whole_market_breadth(self, _cached):
-        self.assertEqual(0.8, naver_market_up_ratio(date(2026, 7, 25)))
+    def test_naver_market_up_ratio_prefers_whole_market_breadth(self, cached):
+        day = date(2026, 7, 25)
+        self.assertEqual(0.8, naver_market_up_ratio(day))
+        cached.assert_called_once_with(as_of_day=day)
 
     @patch("stock_alarm.app.watchlist_market_up_ratio", return_value=0.3)
     @patch("stock_alarm.market_breadth.cached_whole_market_up_ratio", return_value=None)

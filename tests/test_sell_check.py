@@ -68,6 +68,29 @@ class SellCheckTest(unittest.TestCase):
         self.assertEqual(0.5, alert.quantity_fraction)
 
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 109, 107, 108, 1]] * 20)
+    def test_profile_take_profit_threshold_and_ratio_are_applied(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), remaining_quantity=10,
+            sell_policy={"take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0, "take_profit_1_sell_ratio": 40.0},
+        )
+        self.assertEqual("take_profit_1", alert.stage)
+        self.assertEqual(0.4, alert.quantity_fraction)
+        self.assertIn("+7.0%", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 115, 113, 114, 1]] * 20)
+    def test_profile_second_take_profit_threshold_is_applied(self, _rows, _name):
+        alert = check_position(
+            {"ticker": "005930", "name": "Samsung", "entry_price": "100"},
+            date(2026, 7, 24), partial_taken=True, remaining_quantity=5,
+            sell_policy={"take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0},
+        )
+        self.assertEqual("take_profit_2", alert.stage)
+        self.assertIn("+14.0%", alert.reason)
+
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 101, 99, 100, 1]] * 19 + [[20260724, 0, 95, 93, 94, 1]])
     def test_stop_loss_still_closes_remainder_after_first_take_profit(self, _rows, _name):
         alert = check_position(

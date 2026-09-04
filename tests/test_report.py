@@ -134,6 +134,7 @@ class ReportTest(unittest.TestCase):
 
         self.assertIn("status_daily_task.ps1", task_status())
 
+    @patch.dict(os.environ, {})
     @patch("stock_alarm.report.task_status", return_value="ok")
     @patch("stock_alarm.report.tuning_lines", return_value=["# tuning recommendation", "confidence=weak"])
     def test_lines_includes_tuning(self, _tuning, _task):

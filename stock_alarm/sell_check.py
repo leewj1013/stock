@@ -119,19 +119,22 @@ def _evaluate_position(
         reasons.append(f"{holding_days}일 보유 후 기대수익 미달")
         time_stop_triggered = True
     sale_type, stage, quantity_fraction = "full", "", 1.0
+    take_profit_1_pct = float(policy.get("take_profit_1_pct", env_float("TAKE_PROFIT_1_PCT", 10)))
+    take_profit_2_pct = float(policy.get("take_profit_2_pct", env_float("TAKE_PROFIT_2_PCT", 20)))
+    take_profit_1_sell_ratio = float(policy.get("take_profit_1_sell_ratio", env_float("TAKE_PROFIT_1_SELL_RATIO", 50)))
     # Initial thresholds are conservative placeholders and must be tuned by
     # backtest before any real-account integration.
-    if not reasons and partial_taken and return_pct >= env_float("TAKE_PROFIT_2_PCT", 20):
-        reasons.append(f"2차 익절 목표 +{env_float('TAKE_PROFIT_2_PCT', 20):.1f}% 도달")
+    if not reasons and partial_taken and return_pct >= take_profit_2_pct:
+        reasons.append(f"2차 익절 목표 +{take_profit_2_pct:.1f}% 도달")
         stage = "take_profit_2"
-    elif not reasons and not partial_taken and remaining_quantity == 1 and return_pct >= env_float("TAKE_PROFIT_2_PCT", 20):
-        reasons.append(f"정수수량 제약으로 2차 익절 목표 +{env_float('TAKE_PROFIT_2_PCT', 20):.1f}%에서 1주 전량 매도")
+    elif not reasons and not partial_taken and remaining_quantity == 1 and return_pct >= take_profit_2_pct:
+        reasons.append(f"정수수량 제약으로 2차 익절 목표 +{take_profit_2_pct:.1f}%에서 1주 전량 매도")
         stage = "take_profit_2"
-    elif not reasons and not partial_taken and remaining_quantity >= 2 and return_pct >= env_float("TAKE_PROFIT_1_PCT", 10):
-        reasons.append(f"1차 익절 목표 +{env_float('TAKE_PROFIT_1_PCT', 10):.1f}% 도달")
+    elif not reasons and not partial_taken and remaining_quantity >= 2 and return_pct >= take_profit_1_pct:
+        reasons.append(f"1차 익절 목표 +{take_profit_1_pct:.1f}% 도달")
         sale_type = "partial"
         stage = "take_profit_1"
-        quantity_fraction = max(0.01, min(0.99, env_float("TAKE_PROFIT_1_SELL_RATIO", 50) / 100))
+        quantity_fraction = max(0.01, min(0.99, take_profit_1_sell_ratio / 100))
     return {
         "ticker": ticker, "entry_price": entry_price, "close": close, "ma20": ma20,
         "return_pct": return_pct, "atr20_pct": atr20_pct, "stop_loss_pct": stop_loss_pct,

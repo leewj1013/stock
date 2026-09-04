@@ -21,11 +21,23 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat()
 
 
+class PartialCollectionError(RuntimeError):
+    """The provider limit was reached before the requested start date."""
+
+    def __init__(self, records: int, coverage_start: date | None, message: str):
+        super().__init__(message)
+        self.records = records
+        self.coverage_start = coverage_start
+
+
 def collect_news(ticker: str, name: str, start: date, end: date, db, delay: float = .11) -> int:
     client_id, secret = os.environ.get("NAVER_HUB_CLIENT_ID", ""), os.environ.get("NAVER_HUB_CLIENT_SECRET", "")
     if not client_id or not secret:
         raise RuntimeError("NAVER_HUB_CLIENT_ID/NAVER_HUB_CLIENT_SECRET missing")
     before = db.total_changes
+    oldest_seen: date | None = None
+    reached_requested_start = False
+    exhausted_results = False
     for offset in range(1, 1001, 100):
         url = "https://naverapihub.apigw.ntruss.com/search/v1/news?" + urllib.parse.urlencode({"query": name, "display": 100, "start": offset, "sort": "date"})
         request = urllib.request.Request(url, headers={"X-NCP-APIGW-API-KEY-ID": client_id, "X-NCP-APIGW-API-KEY": secret, "User-Agent": "stockAlarm-pit/1.0"})
@@ -33,11 +45,13 @@ def collect_news(ticker: str, name: str, start: date, end: date, db, delay: floa
             data = json.loads(response.read().decode("utf-8"))
         items = data.get("items", [])
         if not items:
+            exhausted_results = True
             break
         oldest = None
         for item in items:
             published = email.utils.parsedate_to_datetime(item["pubDate"])
             oldest = min(oldest, published.date()) if oldest else published.date()
+            oldest_seen = min(oldest_seen, published.date()) if oldest_seen else published.date()
             if not start <= published.date() <= end:
                 continue
             title = __import__("re").sub(r"<[^>]+>", " ", item.get("title", "")).strip()
@@ -45,9 +59,25 @@ def collect_news(ticker: str, name: str, start: date, end: date, db, delay: floa
                        (ticker, title, item.get("originallink") or item.get("link") or "", iso_utc(published), iso_utc(published), _now(), "naver_search_api", json.dumps(item, ensure_ascii=False)))
         db.commit()
         if oldest and oldest < start:
+            reached_requested_start = True
+            break
+        total = int(data.get("total") or 0)
+        if len(items) < 100 or (total <= 1000 and offset + len(items) - 1 >= total):
+            exhausted_results = True
             break
         time.sleep(delay)
-    return db.total_changes - before
+    records = db.total_changes - before
+    if not reached_requested_start and not exhausted_results and oldest_seen:
+        # If the cap lands inside the requested start date, that boundary day
+        # is incomplete too. Start zero-event coverage on the following day.
+        coverage_start = oldest_seen if oldest_seen > start else start + timedelta(days=1)
+        raise PartialCollectionError(
+            records,
+            coverage_start,
+            f"Naver 1,000-result limit reached; requested start {start.isoformat()} was not reached "
+            f"(oldest collected {oldest_seen.isoformat()})",
+        )
+    return records
 
 
 def _chunks(start: date, end: date, days: int = 365):
@@ -122,11 +152,17 @@ def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", 
                     else:
                         raise ValueError(f"unsupported source: {source}")
                     status, message = "success", ""
+                    log_start = start
+                except PartialCollectionError as error:
+                    records, status, message = error.records, "partial", str(error)
+                    log_start = error.coverage_start or end
+                    local_failures.append({"ticker": ticker, "source": source, "message": message})
                 except Exception as error:
                     records, status, message = 0, "failed", f"{type(error).__name__}:{error}"
+                    log_start = start
                     local_failures.append({"ticker": ticker, "source": source, "message": message})
                 db.execute("INSERT INTO collection_log(source,ticker,start_date,end_date,status,records,message,collected_at) VALUES(?,?,?,?,?,?,?,?)",
-                           (source, ticker, start.isoformat(), end.isoformat(), status, records, message, _now())); db.commit()
+                           (source, ticker, log_start.isoformat(), end.isoformat(), status, records, message, _now())); db.commit()
         return local_failures
     workers = max(1, int(os.environ.get("PIT_COLLECTION_WORKERS", "4")))
     with ThreadPoolExecutor(max_workers=workers) as pool:

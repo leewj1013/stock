@@ -57,6 +57,22 @@ class SectorLimitTest(unittest.TestCase):
         virtual_buy.assert_called_once()
         self.assertEqual("data/stock_alarm_neutral.db", virtual_buy.call_args.kwargs["path"])
 
+    @patch("stock_alarm.data_store.virtual_buy")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.app.correlation_limited_allocations", side_effect=lambda picks, allocations: allocations)
+    @patch("stock_alarm.app.allocation_percentages", return_value=[10.0])
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, ""))
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"cash": 1_000_000, "holdings": [], "total_equity": 1_000_000})
+    def test_profile_exposure_cap_is_tighter_than_aggressive_market_cap(
+        self, _state, _allowed, _allocations, _correlation, _breadth, virtual_buy,
+    ):
+        pick = Pick("005930", "Samsung", 100, 0, 0, 0)
+
+        auto_buy_virtual_trader([pick], exposure_limit_override=50.0)
+
+        candidates = virtual_buy.call_args.args[0]
+        self.assertEqual(50.0, candidates[0]["portfolio_limit_pct"])
+
 
 if __name__ == "__main__":
     unittest.main()

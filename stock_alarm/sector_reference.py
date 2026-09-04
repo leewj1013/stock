@@ -82,12 +82,35 @@ def save_sector_mapping(mapping: dict[str, str], metadata: dict, path: Path = DE
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_sector_mapping(tickers: set[str] | None = None, path: Path = DEFAULT_CACHE, refresh: bool = False) -> dict[str, str]:
+def load_sector_mapping(tickers: set[str] | None = None, path: Path = DEFAULT_CACHE, refresh: bool = False,
+                         retry_after_seconds: int = 600) -> dict[str, str]:
     if path.exists() and not refresh:
         payload = json.loads(path.read_text(encoding="utf-8"))
         mapping = {str(key): str(value) for key, value in payload.get("mapping", {}).items()}
-        # A partial cache is still valid: unmapped tickers are intentionally
-        # isolated by the allocator. Refreshing requires an explicit request.
+        missing = (tickers or set()) - set(mapping)
+        if not missing:
+            return mapping
+        # The requested watchlist has grown past what the cache covers (e.g. a
+        # newly-held ticker never fetched before). Retry just the gap rather
+        # than re-scraping everything. A ticker already known unmapped from a
+        # prior attempt is throttled so a permanently-unmapped one (delisted,
+        # no 업종 category) doesn't hit Naver every render; a ticker seen for
+        # the first time is always worth one immediate try.
+        previously_unmapped = set(payload.get("unmapped_tickers", []))
+        try:
+            fetched_at = datetime.fromisoformat(payload.get("fetched_at", ""))
+            stale_enough = (datetime.now().astimezone() - fetched_at).total_seconds() >= retry_after_seconds
+        except ValueError:
+            stale_enough = True
+        to_fetch = missing if stale_enough else missing - previously_unmapped
+        if not to_fetch:
+            return mapping
+        fetched, metadata = fetch_sector_mapping(to_fetch)
+        mapping.update(fetched)
+        metadata["requested_tickers"] = len(tickers or ())
+        metadata["mapped_tickers"] = len(mapping)
+        metadata["unmapped_tickers"] = sorted((tickers or set()) - set(mapping))
+        save_sector_mapping(mapping, metadata, path)
         return mapping
     mapping, metadata = fetch_sector_mapping(tickers)
     metadata["requested_tickers"] = len(tickers or ())
