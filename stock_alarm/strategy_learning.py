@@ -160,6 +160,18 @@ def return_distribution_p_value(proposed: list[float], baseline: list[float]) ->
     return round(max(0.0, min(1.0, 0.5 * math.erfc(z / math.sqrt(2)))), 8)
 
 
+def cliffs_delta(proposed: list[float], baseline: list[float]) -> float:
+    """Effect size to accompany the Mann-Whitney p-value: fraction of
+    proposed values that beat a baseline value minus the reverse fraction.
+    Ranges -1 (always lower) to +1 (always higher); near 0 means no real
+    separation even if the p-value happens to be small on a big sample."""
+    if not proposed or not baseline:
+        return 0.0
+    greater = sum(p > b for p in proposed for b in baseline)
+    less = sum(p < b for p in proposed for b in baseline)
+    return round((greater - less) / (len(proposed) * len(baseline)), 4)
+
+
 def _proposed_weights(training: list[tuple[dict, float]], current: dict[str, float], max_change: float) -> dict[str, float]:
     proposed = {}
     for factor in FACTORS:

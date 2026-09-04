@@ -42,12 +42,28 @@ class PointInTimeStoreTest(unittest.TestCase):
         self.assertFalse(store.scores_asof("005930", date(2024, 1, 2))["pit_sources"]["financial"])
         self.assertEqual(store.scores_asof("005930", date(2024, 1, 3))["financial_score"], 5.0)
 
+    def test_financial_statement_ratios_only_after_availability(self):
+        with closing(connect(self.path)) as db:
+            db.execute("INSERT INTO financial_statement_snapshots VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (
+                "005930", 2024, "11011", iso_utc(datetime(2025, 3, 15, tzinfo=KST)),
+                iso_utc(datetime(2025, 3, 16, tzinfo=KST)), 12.5, 45.0, 8.0, 10.0, 20.0,
+                "test", iso_utc(datetime(2025, 3, 16, tzinfo=KST))))
+            db.commit()
+        store = PointInTimeStore(self.path)
+        before = store.scores_asof("005930", date(2025, 3, 15))
+        self.assertFalse(before["pit_sources"]["financial_statement"])
+        self.assertEqual({}, before["financial_ratios"])
+        after = store.scores_asof("005930", date(2025, 3, 16))
+        self.assertTrue(after["pit_sources"]["financial_statement"])
+        self.assertEqual(12.5, after["financial_ratios"]["roe_pct"])
+        self.assertEqual(45.0, after["financial_ratios"]["debt_ratio_pct"])
+
     def test_coverage_counts_sources(self):
         with closing(connect(self.path)) as db:
             db.execute("INSERT INTO news_events VALUES(?,?,?,?,?,?,?,?)", ("005930", "호실적 성장 뉴스", "", "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00", "test", "{}"))
             db.commit()
         rows = PointInTimeStore(self.path).coverage(["005930"], date(2024, 1, 1), date(2024, 1, 2))
-        self.assertEqual({row["source"]: row["records"] for row in rows}, {"news": 1, "disclosure": 0, "financial": 0})
+        self.assertEqual({row["source"]: row["records"] for row in rows}, {"news": 1, "disclosure": 0, "financial": 0, "financial_statement": 0})
 
     def test_partial_collection_marks_only_actual_news_coverage_as_observed(self):
         with closing(connect(self.path)) as db:

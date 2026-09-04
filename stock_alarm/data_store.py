@@ -776,6 +776,25 @@ def latest_candidates(limit: int = 100, path: str = DB_PATH) -> list[dict[str, A
     )
 
 
+def latest_profile_selections(path: str = DB_PATH) -> list[dict[str, Any]]:
+    """Each profile's own rank/selection for the latest run, joined with the
+    shared category-score breakdown that drove it -- see
+    app.py:select_for_profile / recommend_for_profiles."""
+    return query_rows(
+        """
+        SELECT s.profile, s.ticker, c.name, s.rank, s.selected, s.profile_score,
+               c.profitability_score, c.growth_score, c.stability_score,
+               c.dividend_score, c.momentum_score, c.news_category_score
+        FROM profile_candidate_selections s
+        JOIN candidate_snapshots c ON c.run_id = s.run_id AND c.ticker = s.ticker
+        WHERE s.run_id = (SELECT run_id FROM strategy_runs WHERE run_type = 'recommendation' ORDER BY started_at DESC LIMIT 1)
+        ORDER BY s.profile, s.selected DESC, s.rank ASC
+        """,
+        (),
+        path,
+    )
+
+
 def rejection_summary(path: str = DB_PATH) -> list[dict[str, Any]]:
     candidates = latest_candidates(100000, path)
     counts: dict[str, int] = {}

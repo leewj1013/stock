@@ -22,6 +22,10 @@ PROFILES = {
         "scoring_weights": {"profitability": 0.20, "growth": 0.30, "stability": 0.10, "dividend": 0.05, "momentum": 0.25, "news": 0.10},
         "max_volatility_atr_pct": None,
         "max_holdings": 7,
+        # 백테스트에서 확인: 상승/하락 추세에선 baseline보다 낫지만 횡보장에서
+        # 유독 약함 (모멘텀이 자꾸 반전당함). 가중치는 그대로 두고 횡보장에서만
+        # 노출 한도를 절반으로 줄여 그 약점만 겨냥한다.
+        "regime_exposure_multiplier": {"sideways": 0.5},
     },
     "neutral": {
         "db_path": "data/stock_alarm_neutral.db",
@@ -36,6 +40,7 @@ PROFILES = {
         "scoring_weights": {"profitability": 0.25, "growth": 0.20, "stability": 0.30, "dividend": 0.10, "momentum": 0.10, "news": 0.05},
         "max_volatility_atr_pct": 6.0,
         "max_holdings": 10,
+        "regime_exposure_multiplier": {},
     },
 }
 

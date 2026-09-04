@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS financial_snapshots(
  availability_method TEXT NOT NULL, revision_status TEXT NOT NULL, collected_at TEXT NOT NULL,
  PRIMARY KEY(ticker, metric_date, source));
 CREATE INDEX IF NOT EXISTS idx_financial_asof ON financial_snapshots(ticker, available_at);
+CREATE TABLE IF NOT EXISTS financial_statement_snapshots(
+ ticker TEXT NOT NULL, bsns_year INTEGER NOT NULL, reprt_code TEXT NOT NULL,
+ published_at TEXT NOT NULL, available_at TEXT NOT NULL,
+ roe_pct REAL, debt_ratio_pct REAL, operating_margin_pct REAL,
+ revenue_growth_pct REAL, operating_income_growth_pct REAL,
+ source TEXT NOT NULL, collected_at TEXT NOT NULL,
+ PRIMARY KEY(ticker, bsns_year, reprt_code));
+CREATE INDEX IF NOT EXISTS idx_financial_statement_asof ON financial_statement_snapshots(ticker, available_at);
 CREATE TABLE IF NOT EXISTS collection_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, ticker TEXT NOT NULL, start_date TEXT, end_date TEXT,
  status TEXT NOT NULL, records INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '', collected_at TEXT NOT NULL);
@@ -91,6 +99,10 @@ class PointInTimeStore:
                                      (ticker, cutoff, iso_utc(datetime.combine(day - timedelta(days=disclosure_window_days), time.min, KST)))).fetchall()
             financial = db.execute("SELECT * FROM financial_snapshots WHERE ticker=? AND available_at<=? ORDER BY available_at DESC LIMIT 1",
                                    (ticker, cutoff)).fetchone()
+            statement = db.execute(
+                "SELECT * FROM financial_statement_snapshots WHERE ticker=? AND available_at<=? ORDER BY available_at DESC LIMIT 1",
+                (ticker, cutoff),
+            ).fetchone()
             collected = {row["source"] for row in db.execute(
                 "SELECT DISTINCT source FROM collection_log WHERE ticker=? AND status IN ('success','partial') AND start_date<=? AND end_date>=?",
                 (ticker, day.isoformat(), day.isoformat()),
@@ -104,15 +116,23 @@ class PointInTimeStore:
         # zero, not missing data. Financials additionally require a usable as-of row.
         sources = {"news": "news" in collected or bool(news), "disclosure": "disclosure" in collected or bool(disclosures),
                    "financial": bool(financial)}
+        dividend_yield = float(financial["dividend_yield"] or 0) if financial else 0.0
+        financial_ratios = {
+            "roe_pct": statement["roe_pct"], "debt_ratio_pct": statement["debt_ratio_pct"],
+            "operating_margin_pct": statement["operating_margin_pct"], "revenue_growth_pct": statement["revenue_growth_pct"],
+            "operating_income_growth_pct": statement["operating_income_growth_pct"],
+        } if statement else {}
+        sources["financial_statement"] = bool(statement)
         return {"news_score": float(news_value), "disclosure_score": float(disclosure_value),
-                "financial_score": float(financial_value), "pit_sources": sources,
+                "financial_score": float(financial_value), "dividend_yield": dividend_yield,
+                "financial_ratios": financial_ratios, "pit_sources": sources,
                 "external_factor_status": "available_point_in_time" if any(sources.values()) else "unavailable_point_in_time_snapshot"}
 
     def coverage(self, tickers: list[str], start: date, end: date) -> list[dict]:
         with closing(connect(self.path)) as db:
             rows = []
             for ticker in tickers:
-                for source, table in (("news", "news_events"), ("disclosure", "disclosure_events"), ("financial", "financial_snapshots")):
+                for source, table in (("news", "news_events"), ("disclosure", "disclosure_events"), ("financial", "financial_snapshots"), ("financial_statement", "financial_statement_snapshots")):
                     item = db.execute(f"SELECT COUNT(*) count, MIN(published_at) first_at, MAX(published_at) last_at FROM {table} WHERE ticker=?", (ticker,)).fetchone()
                     collection = db.execute(
                         "SELECT status,start_date,end_date,message FROM collection_log WHERE ticker=? AND source=? ORDER BY collected_at DESC LIMIT 1",

@@ -43,31 +43,52 @@ def _fetch_rows_for_year(corp_code: str, key: str, year: int, reprt_code: str) -
     return data.get("list") or []
 
 
-def fetch_account_summary(ticker: str, year: int | None = None, reprt_code: str = "11011") -> dict:
-    """DART "단일회사 주요계정" (fnlttSinglAcnt) for the most recent filed annual report.
+# (month DART's filing deadline has passed, reprt_code, fiscal year offset from today.year).
+# Ordered most-recent-first so the first one that's actually been filed wins.
+# Quarterly/half-year filings report revenue and operating income as
+# year-to-date cumulative figures, so comparing this YTD to the prior year's
+# same-period YTD (frmtrm_amount) is still a like-for-like growth rate --
+# ROE from a partial-year net income is understated relative to a full-year
+# rate, but that's an acceptable trade for fresher data in a re-ranking
+# signal, not a safety filter.
+_QUARTERLY_REPORT_SEQUENCE = [
+    (11, "11014", 0), (8, "11012", 0), (5, "11013", 0), (3, "11011", -1),
+]
 
-    thstrm_amount/frmtrm_amount give this-year and prior-year figures in the
-    same response, so a single call covers both the raw accounts and what's
-    needed for a year-over-year growth rate. The annual filing (reprt_code
-    11011) for fiscal year N is only published around March of year N+1, so
-    the latest one available is always for last year -- and just after year
-    end, even that may not be filed yet, so fall back one year further.
+
+def _candidate_reports(today: date) -> list[tuple[int, str]]:
+    for month_available, reprt_code, year_offset in _QUARTERLY_REPORT_SEQUENCE:
+        if today.month >= month_available:
+            year = today.year + year_offset
+            return [(year, reprt_code), (year - 1, "11011")]
+    return [(today.year - 1, "11011"), (today.year - 2, "11011")]
+
+
+def fetch_account_summary(ticker: str, year: int | None = None, reprt_code: str = "11011") -> dict:
+    """DART "단일회사 주요계정" (fnlttSinglAcnt) for the most recently filed
+    report -- quarterly/half-year when its filing window has opened,
+    otherwise the latest annual report. Passing `year` explicitly pins the
+    lookup to that year/reprt_code (used by tests and one-off lookups)
+    instead of the live waterfall.
+
+    thstrm_amount/frmtrm_amount give this-period and prior-period figures in
+    the same response, so a single call covers both the raw accounts and
+    what's needed for a year-over-year growth rate.
     """
     key = os.environ.get("DART_API_KEY", "")
     corp_code = corp_code_by_stock(ticker)
     if not key or not corp_code:
         return {}
-    candidate_years = [year] if year is not None else [date.today().year - 1, date.today().year - 2]
+    candidates = [(year, reprt_code)] if year is not None else _candidate_reports(date.today())
     rows: list[dict] = []
-    resolved_year = candidate_years[0]
-    for candidate in candidate_years:
-        rows = _fetch_rows_for_year(corp_code, key, candidate, reprt_code)
-        resolved_year = candidate
+    resolved_year, resolved_reprt_code = candidates[0]
+    for candidate_year, candidate_reprt_code in candidates:
+        rows = _fetch_rows_for_year(corp_code, key, candidate_year, candidate_reprt_code)
+        resolved_year, resolved_reprt_code = candidate_year, candidate_reprt_code
         if rows:
             break
     if not rows:
         return {}
-    year = resolved_year
     revenue, revenue_prev = _account_values(rows, "매출액")
     operating_income, operating_income_prev = _account_values(rows, "영업이익")
     net_income, _ = _account_values(rows, "당기순이익")
@@ -78,7 +99,7 @@ def fetch_account_summary(ticker: str, year: int | None = None, reprt_code: str 
         "revenue": revenue, "revenue_prev": revenue_prev,
         "operating_income": operating_income, "operating_income_prev": operating_income_prev,
         "net_income": net_income, "assets": assets, "liabilities": liabilities, "equity": equity,
-        "bsns_year": year, "reprt_code": reprt_code,
+        "bsns_year": resolved_year, "reprt_code": resolved_reprt_code,
     }
 
 
@@ -94,9 +115,22 @@ def _ratio_pct(numerator: float | None, denominator: float | None) -> float | No
     return numerator / denominator * 100
 
 
+# Quarterly/half-year filings report net income as a year-to-date cumulative
+# figure, but equity (the ROE denominator) is a point-in-time balance-sheet
+# number -- dividing YTD income by full equity understates ROE for most of
+# the year (e.g. a Q1 filing only carries ~3 months of income). Annualizing
+# the numerator makes ROE comparable across filing types; the margin ratios
+# below divide two flow figures over the same YTD period so they don't need
+# this adjustment.
+_ANNUALIZATION_FACTOR = {"11011": 1.0, "11012": 2.0, "11013": 4.0, "11014": 12 / 9}
+
+
 def _ratios_from_summary(summary: dict) -> dict:
+    net_income = summary.get("net_income")
+    factor = _ANNUALIZATION_FACTOR.get(summary.get("reprt_code"), 1.0)
+    annualized_net_income = net_income * factor if net_income is not None else None
     return {
-        "roe_pct": _ratio_pct(summary.get("net_income"), summary.get("equity")),
+        "roe_pct": _ratio_pct(annualized_net_income, summary.get("equity")),
         "debt_ratio_pct": _ratio_pct(summary.get("liabilities"), summary.get("equity")),
         "operating_margin_pct": _ratio_pct(summary.get("operating_income"), summary.get("revenue")),
         "revenue_growth_pct": _growth_pct(summary.get("revenue"), summary.get("revenue_prev")),

@@ -256,7 +256,10 @@ def evaluate_naver_candidate(
 ) -> CandidateEvaluation:
     evaluated_at = datetime.now().isoformat(timespec="seconds")
     base = {"ticker": ticker, "name": name, "evaluated_at": evaluated_at, "passed": 0, "selected": 0}
-    rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=90), end_day)
+    # 140 calendar days comfortably covers a 63-trading-day (~3 month) window
+    # for price_momentum_pct below, on top of the shorter windows (MA20, ATR)
+    # everything else here only ever reads from the tail of `rows`.
+    rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=140), end_day)
     if len(rows) < 21:
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": "insufficient_history"})
     from .data_quality import validate_price_rows
@@ -285,6 +288,8 @@ def evaluate_naver_candidate(
     previous_close = int(rows[-2][4])
     avg_range = average_intraday_range_pct(highs, lows, closes[-10:])
     atr20_pct = average_true_range_pct(rows)
+    momentum_1m_pct = price_momentum_pct(rows, 21)
+    momentum_3m_pct = price_momentum_pct(rows, 63)
     rejections = []
     day_return = day_change_pct(previous_close, close)
     distance_ma20_pct = (close / ma20 - 1) * 100 if ma20 else 0
@@ -379,6 +384,8 @@ def evaluate_naver_candidate(
         final_score=round(score, 2),
         passed=1,
         **profile_categories,
+        momentum_1m_pct=momentum_1m_pct,
+        momentum_3m_pct=momentum_3m_pct,
         # Filled in by apply_relative_strength() once the benchmark-relative
         # move (needed for momentum) is known; 50 is a neutral placeholder.
         momentum_score=50.0,
@@ -462,12 +469,30 @@ def category_scores(
     }
 
 
-def momentum_score(relative_strength_score: float, volume_ratio: float, trend_score: float) -> float:
-    return round(mean([
+def price_momentum_pct(rows: list[list], trading_days: int) -> float | None:
+    """% price change over the last `trading_days` sessions, or None if there
+    isn't enough history yet (e.g. a recently-listed ticker)."""
+    if len(rows) <= trading_days:
+        return None
+    recent, past = float(rows[-1][4]), float(rows[-1 - trading_days][4])
+    return (recent / past - 1) * 100 if past else None
+
+
+def momentum_score(
+    relative_strength_score: float, volume_ratio: float, trend_score: float,
+    momentum_1m_pct: float | None = None, momentum_3m_pct: float | None = None,
+) -> float:
+    # 1-day relative strength reacts fast but is noisy; the 1/3-month returns
+    # (21/63 trading days -- the classic momentum-factor windows) capture a
+    # sturdier trend that's less prone to single-day whipsaw.
+    components = [
         _scale(relative_strength_score, -5, 5),
         _scale(volume_ratio, 0, 3),
         _scale(trend_score, 0, 30),
-    ]), 2)
+        _scale(momentum_1m_pct, -20, 20),
+        _scale(momentum_3m_pct, -30, 30),
+    ]
+    return round(mean(components), 2)
 
 
 def news_bonus(name: str) -> float:
@@ -620,6 +645,25 @@ def passes_market_filter(end_day: date) -> bool:
     return naver_market_up_ratio(end_day) >= minimum
 
 
+def current_market_regime(end_day: date) -> str:
+    """Classify today as bull/bear/sideways the same way the isolated
+    backtest labels history (see backtest_data.label_market_regimes), so a
+    profile can react to live market structure using the exact rule its own
+    backtest results were measured against.
+    """
+    from .backtest_data import label_market_regimes
+    ma_days = int(env_float("BACKTEST_REGIME_MA_DAYS", 120))
+    return_days = int(env_float("BACKTEST_REGIME_RETURN_DAYS", 60))
+    trend_pct = env_float("BACKTEST_REGIME_TREND_PCT", 5)
+    warmup = max(ma_days, return_days)
+    try:
+        rows = naver_rows("KOSPI", end_day - timedelta(days=int(warmup * 1.6) + 30), end_day)
+    except Exception:
+        return "sideways"
+    labels = label_market_regimes(rows, ma_days, return_days, trend_pct)
+    return labels[-1]["regime"] if labels else "sideways"
+
+
 def market_benchmark_return(end_day: date) -> tuple[str, float | None]:
     """The relative-strength baseline: a single index ticker only reflects its
     (often large-cap-heavy) constituents, while the whole-market mean %-change
@@ -660,7 +704,10 @@ def apply_relative_strength(
         relative_score = max(-5.0, min(5.0, relative / 2))
         values.update(benchmark_symbol=symbol, market_proxy_return_pct=benchmark_value, relative_strength_pct=relative, relative_strength_score=relative_score)
         if item.pick:
-            values["momentum_score"] = momentum_score(relative_score, item.pick.volume_ratio, item.pick.trend_score)
+            values["momentum_score"] = momentum_score(
+                relative_score, item.pick.volume_ratio, item.pick.trend_score,
+                values.get("momentum_1m_pct"), values.get("momentum_3m_pct"),
+            )
         pick = item.pick
         if pick:
             parts = {
@@ -1294,6 +1341,7 @@ def auto_buy_virtual_trader(
     exposure_limit_override: float | None = None,
     min_position_pct_override: float | None = None,
     max_position_pct_override: float | None = None,
+    regime_exposure_multiplier: dict[str, float] | None = None,
 ) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
@@ -1318,7 +1366,10 @@ def auto_buy_virtual_trader(
     breadth = naver_market_up_ratio(date.today())
     market_limit = market_exposure_limit_pct(breadth)
     profile_limit = 100.0 if exposure_limit_override is None else max(0.0, min(100.0, float(exposure_limit_override)))
-    exposure_limit = min(market_limit, profile_limit)
+    regime_multiplier = 1.0
+    if regime_exposure_multiplier:
+        regime_multiplier = float(regime_exposure_multiplier.get(current_market_regime(date.today()), 1.0))
+    exposure_limit = min(market_limit, profile_limit) * regime_multiplier
     candidates = [
         {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation,
          "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}
@@ -1384,12 +1435,12 @@ def run() -> None:
         picks = picks_by_profile.get("aggressive", [])
         track_positions(picks)
         write_log(picks)
-        virtual_result = auto_buy_virtual_trader(picks)
+        from .trading_profiles import PROFILES
+        virtual_result = auto_buy_virtual_trader(picks, regime_exposure_multiplier=PROFILES["aggressive"]["regime_exposure_multiplier"])
         # Secondary virtual-trader profiles rank/select from the same shared
         # evaluation with their own weights (see select_for_profile) and buy
         # their own resulting pick list with their own sizing/exit rules --
         # they don't get their own tracked-position log entry.
-        from .trading_profiles import PROFILES
         for name, profile in PROFILES.items():
             if name == "aggressive":
                 continue
@@ -1400,6 +1451,7 @@ def run() -> None:
                 exposure_limit_override=profile["exposure_limit_pct"],
                 min_position_pct_override=profile["min_position_pct"],
                 max_position_pct_override=profile["max_position_pct"],
+                regime_exposure_multiplier=profile["regime_exposure_multiplier"],
             )
         finish_run(run_id)
     except Exception:

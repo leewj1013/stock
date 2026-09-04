@@ -1,6 +1,6 @@
 import unittest
 
-from stock_alarm.app import category_scores, momentum_score
+from stock_alarm.app import category_scores, momentum_score, price_momentum_pct
 
 
 class CategoryScoresTest(unittest.TestCase):
@@ -31,10 +31,26 @@ class CategoryScoresTest(unittest.TestCase):
         self.assertEqual(100.0, high_yield["dividend_score"])
 
     def test_momentum_score_rewards_strength_volume_and_trend(self):
+        # 1m/3m price momentum left as None (unavailable) -> neutral 50 each,
+        # so only the three always-available components should move the score.
         weak = momentum_score(relative_strength_score=-5, volume_ratio=0, trend_score=0)
         strong = momentum_score(relative_strength_score=5, volume_ratio=3, trend_score=30)
-        self.assertEqual(0.0, weak)
-        self.assertEqual(100.0, strong)
+        self.assertEqual(20.0, weak)
+        self.assertEqual(80.0, strong)
+
+    def test_price_momentum_pct_computes_return_over_the_lookback(self):
+        rows = [[str(20260000 + day), 0, 0, 0, 100 + day, 0] for day in range(70)]
+        recent, past = 100 + 69, 100 + (69 - 21)
+        self.assertAlmostEqual((recent / past - 1) * 100, price_momentum_pct(rows, 21))
+
+    def test_price_momentum_pct_returns_none_with_insufficient_history(self):
+        rows = [[str(20260000 + day), 0, 0, 0, 100, 0] for day in range(10)]
+        self.assertIsNone(price_momentum_pct(rows, 21))
+
+    def test_momentum_score_also_rewards_1m_and_3m_price_momentum(self):
+        weak = momentum_score(relative_strength_score=0, volume_ratio=0, trend_score=0, momentum_1m_pct=-20, momentum_3m_pct=-30)
+        strong = momentum_score(relative_strength_score=0, volume_ratio=0, trend_score=0, momentum_1m_pct=20, momentum_3m_pct=30)
+        self.assertLess(weak, strong)
 
 
 if __name__ == "__main__":

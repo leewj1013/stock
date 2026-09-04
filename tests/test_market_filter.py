@@ -1,16 +1,28 @@
 import os
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from stock_alarm.app import (
     Pick,
+    current_market_regime,
     market_exposure_limit_pct,
     market_up_ratio,
     naver_market_up_ratio,
     passes_market_filter,
     recommend_naver,
 )
+
+
+def _kospi_rows(days: int, daily_drift_pct: float) -> list[list]:
+    close = 1000.0
+    rows = []
+    day = date(2024, 1, 1)
+    for _ in range(days):
+        close *= 1 + daily_drift_pct / 100
+        rows.append([day.strftime("%Y%m%d"), close, close, close, close, 100])
+        day += timedelta(days=1)
+    return rows
 
 
 class MarketFilterTest(unittest.TestCase):
@@ -62,6 +74,22 @@ class MarketFilterTest(unittest.TestCase):
     def test_recommend_naver_returns_empty_on_weak_market(self, make_pick, _filter, _stocks):
         self.assertEqual([], recommend_naver(date(2026, 7, 25), 5, 0, 1.5))
         make_pick.assert_not_called()
+
+    @patch("stock_alarm.app.naver_rows", return_value=_kospi_rows(200, 0.3))
+    def test_current_market_regime_classifies_a_rising_market_as_bull(self, _rows):
+        self.assertEqual("bull", current_market_regime(date(2026, 7, 25)))
+
+    @patch("stock_alarm.app.naver_rows", return_value=_kospi_rows(200, -0.3))
+    def test_current_market_regime_classifies_a_falling_market_as_bear(self, _rows):
+        self.assertEqual("bear", current_market_regime(date(2026, 7, 25)))
+
+    @patch("stock_alarm.app.naver_rows", return_value=_kospi_rows(200, 0.0))
+    def test_current_market_regime_classifies_a_flat_market_as_sideways(self, _rows):
+        self.assertEqual("sideways", current_market_regime(date(2026, 7, 25)))
+
+    @patch("stock_alarm.app.naver_rows", side_effect=RuntimeError("network down"))
+    def test_current_market_regime_defaults_to_sideways_on_failure(self, _rows):
+        self.assertEqual("sideways", current_market_regime(date(2026, 7, 25)))
 
 
 if __name__ == "__main__":

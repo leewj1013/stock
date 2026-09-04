@@ -10,7 +10,7 @@ from statistics import mean
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
 from .data_store import (
-    latest_portfolio_risk, recent_position_checks, recent_price_quality, recent_runs,
+    latest_portfolio_risk, latest_profile_selections, recent_position_checks, recent_price_quality, recent_runs,
     recent_sell_outcomes, recent_virtual_trades, rejection_summary,
 )
 from .health import lines as health_lines
@@ -84,6 +84,14 @@ NUMERIC_COLUMNS = {
     "current_price",
     "sell_alert_return_pct",
     "sell_alert_price",
+    "rank",
+    "profile_score",
+    "profitability_score",
+    "growth_score",
+    "stability_score",
+    "dividend_score",
+    "momentum_score",
+    "news_category_score",
 }
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "mfe_20d_pct", "mae_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at"}
@@ -204,6 +212,14 @@ LABELS = {
     "passed": "기술조건 통과",
     "selected": "최종선정",
     "rank": "순위",
+    "profile": "성향",
+    "profile_score": "성향점수",
+    "profitability_score": "수익성",
+    "growth_score": "성장성",
+    "stability_score": "안정성",
+    "dividend_score": "배당성",
+    "momentum_score": "모멘텀",
+    "news_category_score": "뉴스",
     "rejection_reasons": "탈락사유",
     "decision": "판단",
     "reasons": "판단사유",
@@ -643,6 +659,11 @@ def position_summary_rows(limit: int | None = None) -> list[dict[str, str]]:
     return rows
 
 
+def profile_selection_rows() -> list[dict[str, str]]:
+    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
+    return [{**row, "profile": labels.get(row.get("profile"), row.get("profile"))} for row in latest_profile_selections()]
+
+
 def header_cell(column: str) -> str:
     attr = " class='num'" if column in NUMERIC_COLUMNS else ""
     return f"<th{attr}>{e(display_label(column))}</th>"
@@ -1019,6 +1040,7 @@ def render() -> str:
 {user_table("Today run details", user_run_rows(), ["step", "status"], "오늘 사용자 확인이 필요한 자동 작업은 없습니다.")}
 {details("데이터 품질과 발송 상태", table("Price quality", recent_price_quality(30), ["created_at", "ticker", "status", "reason"]) + table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "error"]))}
 {details("알고리즘 검증 결과", table("전략별 성과", benchmark_summary_rows(), ["strategy", "total_return_pct", "mdd_pct", "sharpe"]) + table("매도 사유별 결과", sell_quality_rows(), ["sell_reason_group", "count", "avg_realized_return_pct", "rebound_5d_rate_pct", "assessment"]))}
+{details("프로필별 후보 평가", table("성향별 카테고리 점수", profile_selection_rows(), ["profile", "ticker", "name", "rank", "selected", "profile_score", "profitability_score", "growth_score", "stability_score", "dividend_score", "momentum_score", "news_category_score"]))}
 {details("고급 운영 정보", table("Candidate rejection summary", rejection_summary(), ["reason", "count"]) + table("Recent position checks", recent_position_checks(), ["checked_at", "name", "return_pct", "decision", "reasons"]) + table("Current settings", settings_rows(), ["setting", "value"]) + table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"]) + f'<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section><section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section><section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>')}
 """
     return f"""<!doctype html>

@@ -8,11 +8,12 @@ from datetime import date, datetime
 from pathlib import Path
 from statistics import mean
 
-from .app import apply_relative_strength, configured_stocks, evaluate_naver_candidate, env_float, load_env, market_up_ratio
+from .app import _scale, apply_relative_strength, category_scores, configured_stocks, evaluate_naver_candidate, env_float, load_env, market_up_ratio, profile_total_score
 from .backtest_data import BENCHMARK, DATA_DIR, REPORT_DIR, read_rows
 from .point_in_time_store import DEFAULT_PATH as PIT_DEFAULT_PATH, PointInTimeStore
 from .sell_check import check_position
 from .strategy_learning import DEFAULT_WEIGHTS, FACTORS, objective, walk_forward_validate
+from .trading_profiles import CATEGORY_VALUE_KEYS
 
 
 @dataclass
@@ -73,13 +74,20 @@ def summarize_by_regime(trades: list[Trade], variant: str) -> list[dict]:
 
 class BacktestEngine:
     def __init__(self, data_dir: Path = DATA_DIR, report_dir: Path = REPORT_DIR, score_weights: dict[str, float] | None = None,
-                 names: dict[str, str] | None = None, pit_store_path: Path | None = None):
+                 names: dict[str, str] | None = None, pit_store_path: Path | None = None,
+                 profile: dict | None = None):
         self.data_dir, self.report_dir = data_dir, report_dir
         self.names = dict(names) if names is not None else configured_stocks()
         self.rows = {ticker: read_rows(ticker, data_dir) for ticker in [BENCHMARK, *self.names]}
         self.by_date = {ticker: {_date_key(row): (index, row) for index, row in enumerate(rows)} for ticker, rows in self.rows.items()}
         self.regimes = self._read_regimes(report_dir / "regime_labels.csv")
         self.weights = {factor: float((score_weights or DEFAULT_WEIGHTS).get(factor, DEFAULT_WEIGHTS[factor])) for factor in FACTORS}
+        # Optional profile-scoring re-rank: candidates still have to clear the
+        # same quality gate (self.minimum_score on the existing factor score)
+        # -- a profile's category weights only change which of those already
+        # passed a profile actually picks, matching select_for_profile in
+        # app.py's live pipeline.
+        self.profile = profile
         self.top_n = int(os.environ.get("TOP_N", "5"))
         self.minimum_score = env_float("MIN_RECOMMEND_SCORE", 50)
         self.min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
@@ -147,20 +155,45 @@ class BacktestEngine:
                     pit = self.pit_store.scores_asof(ticker, date.fromisoformat(day))
                     values = dict(evaluation.values)
                     values.update(pit)
-                    values.update({f"pit_{source}_available": bool(pit["pit_sources"][source]) for source in ("news", "disclosure", "financial")})
+                    values.update({f"pit_{source}_available": bool(pit["pit_sources"][source]) for source in ("news", "disclosure", "financial", "financial_statement")})
                     pick = replace(
                         evaluation.pick,
                         news_score=float(pit["news_score"]),
                         disclosure_score=float(pit["disclosure_score"]),
                         financial_score=float(pit["financial_score"]),
                     )
+                    # Category scores were computed against the disabled
+                    # (external_lookup=False) placeholders above; redo them
+                    # against the real point-in-time news/disclosure/financial
+                    # values so profile backtests aren't ranking on frozen
+                    # constants. financial_ratios is real DART ROE/growth/
+                    # debt-ratio when a filing was on record as of this day;
+                    # otherwise category_scores falls back to financial_score/
+                    # disclosure sentiment the same way the live pipeline does.
+                    values.update(category_scores(
+                        pit["financial_ratios"], pit["financial_score"], pit["disclosure_score"], pit["dividend_yield"], values.get("atr20_pct") or 0,
+                    ))
+                    values["news_category_score"] = round(_scale(pit["news_score"], -3, 3), 2)
                     evaluation = replace(evaluation, values=values, pick=pick)
                 evaluations.append(evaluation)
         return apply_relative_strength(evaluations, (BENCHMARK, self._benchmark_return(day)), self.weights)
 
-    def candidates(self, day: str, blocked: set[str]) -> list[dict]:
+    def candidates(self, day: str, blocked: set[str], open_count: int = 0) -> list[dict]:
         evaluations = self.passed_evaluations(day, blocked)
-        selected = sorted((item for item in evaluations if item.pick and item.pick.score >= self.minimum_score), key=lambda item: item.pick.score, reverse=True)[:self.top_n]
+        passing = [item for item in evaluations if item.pick and item.pick.score >= self.minimum_score]
+        room = self.top_n
+        if self.profile:
+            max_volatility = self.profile.get("max_volatility_atr_pct")
+            if max_volatility is not None:
+                passing = [item for item in passing if (item.values.get("atr20_pct") or 0) <= max_volatility]
+            weights = self.profile.get("scoring_weights")
+            rank_key = (lambda item: profile_total_score(item.values, weights)) if weights else (lambda item: item.pick.score)
+            max_holdings = self.profile.get("max_holdings")
+            if max_holdings is not None:
+                room = max(0, min(self.top_n, max_holdings - open_count))
+        else:
+            rank_key = lambda item: item.pick.score
+        selected = sorted(passing, key=rank_key, reverse=True)[:room]
         output = []
         for item in selected:
             pick = item.pick
@@ -210,6 +243,30 @@ class BacktestEngine:
             values[f"benchmark_{horizon}d_pct"] = benchmark_return
             values[f"excess_{horizon}d_pct"] = stock_return - benchmark_return if stock_return is not None and benchmark_return is not None else None
         return values
+
+    def category_training_rows(self, horizon: int = 5) -> list[tuple[str, dict, float]]:
+        """(day, category_scores, objective_return) for every candidate that
+        passed the shared quality filter on every backtest day -- not just
+        the ones a particular profile went on to select. This is the
+        population profile_weight_learning.learn_profile_weights() correlates
+        category scores against, mirroring how strategy_learning.py learns
+        the global factor weights but reusing forward_outcomes() (fixed
+        N-day-ahead return) instead of full sell-rule trade simulation, since
+        we need every passing candidate's outcome, not just the ones actually
+        traded.
+        """
+        benchmark_days = sorted(day for day in self.regimes if day in self.by_date.get(BENCHMARK, {}))
+        rows = []
+        for day in benchmark_days:
+            for item in self.passed_evaluations(day, blocked=set()):
+                if item.pick.score < self.minimum_score:
+                    continue
+                categories = {category: float(item.values.get(key) or 0) for category, key in CATEGORY_VALUE_KEYS.items()}
+                outcome = self.forward_outcomes(item.pick.ticker, day, (horizon,))
+                value = outcome.get(f"excess_{horizon}d_pct")
+                if value is not None:
+                    rows.append((day, categories, value))
+        return rows
 
     def _learning_row(self, position: dict) -> dict:
         ticker, entry_day, entry_price = position["ticker"], position["entry_date"], position["entry_price"]
@@ -284,7 +341,7 @@ class BacktestEngine:
             for ticker, sold_day in cooldown.items():
                 if (date.fromisoformat(day) - date.fromisoformat(sold_day)).days <= int(env_float("SELL_RECOMMEND_COOLDOWN_DAYS", 3)):
                     blocked.add(ticker)
-            for signal in self.candidates(day, blocked):
+            for signal in self.candidates(day, blocked, open_count=len(positions) + len(pending)):
                 pending[signal["ticker"]] = signal
         if benchmark_days:
             last_day = benchmark_days[-1]

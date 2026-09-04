@@ -73,6 +73,40 @@ class SectorLimitTest(unittest.TestCase):
         candidates = virtual_buy.call_args.args[0]
         self.assertEqual(50.0, candidates[0]["portfolio_limit_pct"])
 
+    @patch("stock_alarm.data_store.virtual_buy")
+    @patch("stock_alarm.app.current_market_regime", return_value="sideways")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.app.correlation_limited_allocations", side_effect=lambda picks, allocations: allocations)
+    @patch("stock_alarm.app.allocation_percentages", return_value=[10.0])
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, ""))
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"cash": 1_000_000, "holdings": [], "total_equity": 1_000_000})
+    def test_regime_exposure_multiplier_halves_the_cap_in_a_sideways_market(
+        self, _state, _allowed, _allocations, _correlation, _breadth, _regime, virtual_buy,
+    ):
+        pick = Pick("005930", "Samsung", 100, 0, 0, 0)
+
+        auto_buy_virtual_trader([pick], regime_exposure_multiplier={"sideways": 0.5})
+
+        candidates = virtual_buy.call_args.args[0]
+        self.assertEqual(50.0, candidates[0]["portfolio_limit_pct"])
+
+    @patch("stock_alarm.data_store.virtual_buy")
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.app.correlation_limited_allocations", side_effect=lambda picks, allocations: allocations)
+    @patch("stock_alarm.app.allocation_percentages", return_value=[10.0])
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, ""))
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"cash": 1_000_000, "holdings": [], "total_equity": 1_000_000})
+    def test_regime_exposure_multiplier_is_unaffected_outside_its_configured_regime(
+        self, _state, _allowed, _allocations, _correlation, _breadth, _regime, virtual_buy,
+    ):
+        pick = Pick("005930", "Samsung", 100, 0, 0, 0)
+
+        auto_buy_virtual_trader([pick], regime_exposure_multiplier={"sideways": 0.5})
+
+        candidates = virtual_buy.call_args.args[0]
+        self.assertEqual(100.0, candidates[0]["portfolio_limit_pct"])
+
 
 if __name__ == "__main__":
     unittest.main()

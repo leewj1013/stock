@@ -4,6 +4,7 @@ import argparse
 import email.utils
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -135,8 +136,88 @@ def collect_financials(ticker: str, start: date, end: date, db) -> int:
     return db.total_changes - before
 
 
-def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", "disclosure", "financial"), limit: int = 0) -> dict:
-    load_env(); names = configured_stocks(); names = dict(list(names.items())[:limit or None])
+_REPRT_CODE_BY_FILING_MONTH = {"03": "11013", "06": "11012", "09": "11014", "12": "11011"}
+
+
+def _parse_report_period(report_name: str) -> tuple[int, str] | None:
+    """DART report titles carry their own fiscal period, e.g. "사업보고서
+    (2023.12)" (annual), "반기보고서 (2024.06)" (half-year), "분기보고서
+    (2024.03)"/"(2024.09)" (Q1/Q3) -- letting us pick exactly which historical
+    filing to re-fetch instead of only ever reaching DART's latest one."""
+    match = re.search(r"\((\d{4})\.(\d{2})\)", report_name)
+    if not match:
+        return None
+    reprt_code = _REPRT_CODE_BY_FILING_MONTH.get(match.group(2))
+    return (int(match.group(1)), reprt_code) if reprt_code else None
+
+
+def collect_financial_statements(ticker: str, start: date, end: date, db, delay: float = .15) -> int:
+    """Point-in-time ROE/debt-ratio/margin/growth from DART's actual filed
+    financial statements, timestamped by when each filing really became
+    public -- reuses disclosure_events (collected separately) to know which
+    (year, report type) filings exist and when, instead of a second DART
+    list-API scrape."""
+    from .financial_statement_reference import fetch_account_summary, _ratios_from_summary
+    rows = db.execute(
+        "SELECT report_name, published_at, available_at FROM disclosure_events WHERE ticker=? AND "
+        "(report_name LIKE '%사업보고서%' OR report_name LIKE '%반기보고서%' OR report_name LIKE '%분기보고서%') "
+        "ORDER BY published_at",
+        (ticker,),
+    ).fetchall()
+    before = db.total_changes
+    # A "[기재정정]" (correction) filing for the same period supersedes the
+    # original. Keep only the LATEST filing per (year, reprt_code) -- since
+    # rows are ascending by published_at, a later row simply overwrites an
+    # earlier one for the same key. DART's account-summary API isn't keyed by
+    # a specific filing, so it already returns the current (corrected)
+    # figures regardless; what actually changes here is which date we treat
+    # as "available from" -- using the correction's later date is the more
+    # conservative point-in-time choice.
+    latest_by_period: dict[tuple[int, str], object] = {}
+    for row in rows:
+        published_date = datetime.fromisoformat(row["published_at"]).date()
+        if not (start <= published_date <= end):
+            continue
+        period = _parse_report_period(row["report_name"])
+        if not period:
+            continue
+        latest_by_period[period] = row
+    for (year, reprt_code), row in latest_by_period.items():
+        try:
+            summary = fetch_account_summary(ticker, year=year, reprt_code=reprt_code)
+        except Exception:
+            continue
+        if not summary:
+            continue
+        ratios = _ratios_from_summary(summary)
+        db.execute(
+            "INSERT OR REPLACE INTO financial_statement_snapshots VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ticker, year, reprt_code, row["published_at"], row["available_at"],
+             ratios["roe_pct"], ratios["debt_ratio_pct"], ratios["operating_margin_pct"],
+             ratios["revenue_growth_pct"], ratios["operating_income_growth_pct"], "dart_fnlttSinglAcnt", _now()),
+        )
+        db.commit()
+        time.sleep(delay)
+    return db.total_changes - before
+
+
+def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", "disclosure", "financial"), limit: int = 0, use_dynamic_universe: bool = False) -> dict:
+    """`use_dynamic_universe=True` widens collection past the static
+    watchlist to whatever `recommend_universe()` (the same function `run()`
+    uses live) currently returns -- i.e. today's top-trading-value tickers
+    under DYNAMIC_SCREENING_TOP_N. That set changes day to day, so this is a
+    best-effort forward-looking snapshot (covering what's actually being
+    traded right now), not a historically-accurate reconstruction of which
+    tickers were in the top-N on each past day.
+    """
+    load_env()
+    if use_dynamic_universe:
+        from .app import recommend_universe
+        min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
+        names = recommend_universe(min_trading_value)
+    else:
+        names = configured_stocks()
+    names = dict(list(names.items())[:limit or None])
     failures = []
     def collect_ticker(ticker: str, name: str) -> list[dict]:
         local_failures = []
@@ -149,6 +230,8 @@ def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", 
                         records = collect_disclosures(ticker, start, end, db)
                     elif source == "financial":
                         records = collect_financials(ticker, start, end, db)
+                    elif source == "financial_statement":
+                        records = collect_financial_statements(ticker, start, end, db)
                     else:
                         raise ValueError(f"unsupported source: {source}")
                     status, message = "success", ""
@@ -183,7 +266,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Collect point-in-time external factors")
     parser.add_argument("--start", type=date.fromisoformat, default=date(2022, 6, 30)); parser.add_argument("--end", type=date.fromisoformat, default=date.today())
     parser.add_argument("--sources", default="news,disclosure,financial"); parser.add_argument("--limit", type=int, default=0); parser.add_argument("--db", type=Path, default=DEFAULT_PATH)
-    args = parser.parse_args(); print(json.dumps(collect(args.start, args.end, args.db, tuple(args.sources.split(",")), args.limit), ensure_ascii=False, indent=2))
+    parser.add_argument("--dynamic-universe", action="store_true", help="widen past the static watchlist to today's recommend_universe() (DYNAMIC_SCREENING_TOP_N)")
+    args = parser.parse_args()
+    print(json.dumps(collect(args.start, args.end, args.db, tuple(args.sources.split(",")), args.limit, args.dynamic_universe), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__": main()

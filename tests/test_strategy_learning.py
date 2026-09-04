@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from stock_alarm.data_store import upsert_recommendation_outcomes
-from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes
+from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, cliffs_delta, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes
 
 
 class StrategyLearningTest(unittest.TestCase):
@@ -52,6 +52,12 @@ class StrategyLearningTest(unittest.TestCase):
 
     def test_return_distribution_test_detects_clear_improvement(self):
         self.assertLess(return_distribution_p_value([5.0] * 40, [-1.0] * 40), 0.05)
+
+    def test_cliffs_delta_is_plus_one_when_proposed_always_beats_baseline(self):
+        self.assertEqual(1.0, cliffs_delta([5.0, 6.0], [1.0, 2.0]))
+
+    def test_cliffs_delta_is_near_zero_when_distributions_fully_overlap(self):
+        self.assertEqual(0.0, cliffs_delta([1.0, 2.0], [1.0, 2.0]))
 
     def test_decision_message_includes_samples_fold_results_and_p_value(self):
         message = decision_message({

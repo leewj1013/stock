@@ -1,12 +1,15 @@
 import json
 import tempfile
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from stock_alarm.financial_statement_reference import (
     _account_values,
+    _candidate_reports,
     _growth_pct,
     _ratio_pct,
+    _ratios_from_summary,
     fetch_account_summary,
     financial_ratios,
 )
@@ -81,6 +84,32 @@ class FinancialStatementReferenceTest(unittest.TestCase):
     def test_financial_ratios_empty_summary_returns_empty_dict(self, _fetch):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual({}, financial_ratios("005930", cache_dir=directory))
+
+    def test_ratios_annualize_net_income_for_partial_year_filings(self):
+        summary = {"net_income": 100.0, "equity": 400.0}
+        annual = _ratios_from_summary({**summary, "reprt_code": "11011"})
+        q1 = _ratios_from_summary({**summary, "reprt_code": "11013"})
+        half_year = _ratios_from_summary({**summary, "reprt_code": "11012"})
+        self.assertAlmostEqual(25.0, annual["roe_pct"])
+        self.assertAlmostEqual(100.0, q1["roe_pct"])
+        self.assertAlmostEqual(50.0, half_year["roe_pct"])
+
+    def test_candidate_reports_prefers_the_latest_filed_quarter(self):
+        self.assertEqual([(2026, "11014"), (2025, "11011")], _candidate_reports(date(2026, 11, 20)))
+        self.assertEqual([(2026, "11012"), (2025, "11011")], _candidate_reports(date(2026, 9, 4)))
+        self.assertEqual([(2026, "11013"), (2025, "11011")], _candidate_reports(date(2026, 6, 1)))
+        self.assertEqual([(2025, "11011"), (2024, "11011")], _candidate_reports(date(2026, 2, 1)))
+
+    @patch.dict("os.environ", {"DART_API_KEY": "key"})
+    @patch("stock_alarm.financial_statement_reference.corp_code_by_stock", return_value="00126380")
+    @patch("stock_alarm.financial_statement_reference.date")
+    @patch("stock_alarm.financial_statement_reference.urllib.request.urlopen")
+    def test_fetch_account_summary_uses_the_live_waterfall_without_an_explicit_year(self, urlopen, mock_date, _corp_code):
+        mock_date.today.return_value = date(2026, 9, 4)
+        urlopen.return_value.__enter__.return_value.read.return_value = json.dumps({"list": ACCOUNT_ROWS}).encode("utf-8")
+        summary = fetch_account_summary("005930")
+        self.assertEqual(2026, summary["bsns_year"])
+        self.assertEqual("11012", summary["reprt_code"])
 
 
 if __name__ == "__main__":
