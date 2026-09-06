@@ -79,9 +79,66 @@ Register-ScheduledTask -TaskName "stockAlarmSellEvery5Minutes" -Xml $sellXml -Fo
 Register-ScheduledTask -TaskName "stockAlarmDaily" -Action $dailyAction -Trigger (New-ScheduledTaskTrigger -Daily -At 16:00) -Settings $taskSettings -Description "Run stockAlarm after Korean market close" -Force
 Register-ScheduledTask -TaskName "stockAlarmMaintenance" -Action $maintenanceAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 18:00) -Settings $taskSettings -Description "Verify and back up the stockAlarm database" -Force
 # ensure_dashboard_server.ps1 is a no-op once the port is already listening,
-# so re-running it every 15 minutes is a cheap way to revive the server if it
+# so re-checking it periodically is a cheap way to revive the server if it
 # was ever stopped (manually, by a crash, or by sleep) between logons --
 # AtLogOn alone only fires once per session and never recovers after that.
-$dashboardServerLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$dashboardServerWatchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
-Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Action $dashboardServerAction -Trigger @($dashboardServerLogonTrigger, $dashboardServerWatchdogTrigger) -Settings $taskSettings -User $env:USERNAME -RunLevel Limited -Description "Start the local dashboard API server at logon and re-check every 15 minutes so it self-heals if stopped" -Force
+# Limited to weekday market hours (like the intraday/sell tasks) instead of
+# every 15 minutes around the clock, since that's the only time it's actually
+# useful and it cuts down how often the hidden-launcher window briefly flashes.
+$escapedEnsureDashboardPath = [System.Security.SecurityElement]::Escape($ensureDashboardPath)
+$dashboardServerXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Date>$(Get-Date -Format s)</Date>
+    <Author>$env:COMPUTERNAME\$env:USERNAME</Author>
+    <URI>\stockAlarmDashboardServer</URI>
+    <Description>Start the local dashboard API server at logon and re-check every 15 minutes during market hours so it self-heals if stopped</Description>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$userSid</UserId>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <WakeToRun>true</WakeToRun>
+    <Hidden>true</Hidden>
+  </Settings>
+  <Triggers>
+    <LogonTrigger>
+      <UserId>$userSid</UserId>
+    </LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>$($startBoundary.Replace("08:50:00", "08:51:00"))</StartBoundary>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT15M</Interval>
+        <Duration>PT6H50M</Duration>
+        <StopAtDurationEnd>true</StopAtDurationEnd>
+      </Repetition>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>wscript.exe</Command>
+      <Arguments>"$escapedHiddenLauncherPath" "$escapedEnsureDashboardPath"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Xml $dashboardServerXml -Force | Out-Null
