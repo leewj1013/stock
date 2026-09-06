@@ -97,6 +97,10 @@ RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_retu
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
 STATUS_PILL_CLASSES = {"추적 중": "pill-accent", "매도 알림": "pill-danger", "성과 완료": "pill-neutral", "성과 수집 중": "pill-neutral"}
+# The raw tracking_status still drives filtering/summary counts elsewhere
+# (data_accumulation_rows) -- this only simplifies what the badge itself
+# says, keeping the detailed status one hover away via the title attribute.
+TRACKING_STATUS_DISPLAY = {"추적 중": "진행 중", "성과 수집 중": "진행 중", "매도 알림": "완료 (매도)", "성과 완료": "완료 (기간만료)"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "generated": "생성 시각",
@@ -686,7 +690,7 @@ def cell(value: object, column: str = "") -> str:
         if column in TIMESTAMP_COLUMNS and isinstance(shown, str) and "T" in shown:
             shown = shown.replace("T", " ")
     if column == "tracking_status" and shown in STATUS_PILL_CLASSES:
-        return f"<td{attr}><span class='status-pill {STATUS_PILL_CLASSES[shown]}'>{e(shown)}</span></td>"
+        return f"<td{attr}><span class='status-pill {STATUS_PILL_CLASSES[shown]}' title='{e(shown)}'>{e(TRACKING_STATUS_DISPLAY.get(shown, shown))}</span></td>"
     return f"<td{attr}>{e(shown)}</td>"
 
 

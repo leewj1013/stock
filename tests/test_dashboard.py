@@ -171,6 +171,14 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))
         self.assertIn("status-pill pill-danger", cell("매도 알림", "tracking_status"))
 
+    def test_tracking_status_badge_shows_a_simplified_label_with_the_raw_status_as_a_tooltip(self):
+        self.assertIn("title='추적 중'", cell("추적 중", "tracking_status"))
+        self.assertIn(">진행 중<", cell("추적 중", "tracking_status"))
+        self.assertIn(">진행 중<", cell("성과 수집 중", "tracking_status"))
+        self.assertIn("title='매도 알림'", cell("매도 알림", "tracking_status"))
+        self.assertIn(">완료 (매도)<", cell("매도 알림", "tracking_status"))
+        self.assertIn(">완료 (기간만료)<", cell("성과 완료", "tracking_status"))
+
     @patch.dict("os.environ", {"NEWS_LOOKUP": "1", "NEWS_SCORE_WEIGHT": "1"})
     def test_empty_value_labels_explain_pending_data(self):
         self.assertEqual("수집대기", empty_value_label("return_3d_pct"))

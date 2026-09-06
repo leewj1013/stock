@@ -117,7 +117,7 @@ class ScriptTest(unittest.TestCase):
 
         self.assertIn("stockAlarmDashboardServer", script)
         self.assertIn("ensure_dashboard_server.ps1", script)
-        self.assertIn("New-ScheduledTaskTrigger -AtLogOn", script)
+        self.assertIn("<LogonTrigger>", script)
 
     def test_issue_alert_macro(self):
         with open("issue_alert.bat", encoding="utf-8-sig") as file:
