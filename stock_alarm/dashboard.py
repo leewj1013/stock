@@ -41,6 +41,9 @@ NUMERIC_COLUMNS = {
     "performance_penalty",
     "count",
     "entry_count",
+    "completed",
+    "total",
+    "percent",
     "return_pct",
     "picks",
     "avg_1d_return_pct",
@@ -149,6 +152,10 @@ LABELS = {
     "return_pct": "수익률",
     "metric": "지표",
     "value": "값",
+    "horizon": "경과 기간",
+    "completed": "완료 표본",
+    "total": "전체 표본",
+    "percent": "진행률(%)",
     "setting": "설정",
     "channel": "채널",
     "message_id": "메시지 ID",
@@ -676,6 +683,26 @@ def data_accumulation_rows() -> list[dict[str, str]]:
     ]
 
 
+def sample_progress_rows() -> list[dict[str, str]]:
+    """Break "20일 학습 표본" progress down by every horizon (1/3/5/10/20일)
+    so it's clear how many picks are still mid-flight at each stage, not
+    just the final 20-day count that data_accumulation_rows shows."""
+    rows = tail_csv("logs/recommendation_performance.csv", 100000)
+    unique = {(row.get("pick_date", ""), row.get("ticker", "")): row for row in rows}
+    samples = list(unique.values())
+    total = len(samples)
+    result = []
+    for horizon in (1, 3, 5, 10, 20):
+        completed = sum(bool(row.get(f"return_{horizon}d_pct")) for row in samples)
+        result.append({
+            "horizon": f"{horizon}일",
+            "completed": str(completed),
+            "total": str(total),
+            "percent": f"{completed / total * 100:.1f}" if total else "0.0",
+        })
+    return result
+
+
 def benchmark_summary_rows() -> list[dict[str, str]]:
     """Read the latest formal, isolated benchmark output without rerunning analysis."""
     path = os.path.join("reports", "backtest", "benchmark_comparison", "strategy_metrics.csv")
@@ -817,6 +844,7 @@ def recommendation_tracking_rows() -> list[dict[str, str]]:
         result.append({
             "name": str(row.get("name") or position.get("name") or alert.get("name") or ticker),
             "pick_date": pick_date,
+            "score": str(row.get("score") or ""),
             # Prefer the signal-day close (positions.csv/sell_alerts.csv basis) over
             # recommendation_performance's entry_close (next-day-open execution
             # price) -- sell_alert_price/sell_alert_return_pct below are always
@@ -878,7 +906,7 @@ def render() -> str:
         ensure_ascii=False,
     ).replace("</", "<\\/")
     stock_tab = f"""
-<div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'확인할 문제 ' + str(issue_count) + '건' if issue_count else '시스템 정상'}</span></div>
+<div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div></div>
 <section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
   <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
     <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
@@ -916,7 +944,7 @@ def render() -> str:
     tracking_tab = f"""
 <div class="home-heading"><div><h2>추천종목 추적</h2><p class="muted">가상매수 여부와 관계없이 추천 이후의 성과와 매도 알림을 관리합니다.</p></div><span class="system-pill">총 {len(tracking_rows)}건</span></div>
 <div class="tracking-summary">{tracking_cards}</div>
-{user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
+{user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
     trader_tab = """
 <div class="trader-profile-toggle" role="tablist" aria-label="가상 트레이더 성향 선택">
@@ -968,6 +996,7 @@ def render() -> str:
 <div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'경고 ' + str(issue_count) + '건' if issue_count else '모든 작업 정상'}</span></div>
 <section class="learning-status"><h2>데이터 학습 준비</h2><div class="progress-heading"><b>20일 성과 표본 {progress['current']} / {progress['target']}</b><span>{progress['percent']}%</span></div><div class="progress-track"><span style="width:{progress['percent']}%"></span></div><p class="muted">최소 300개가 쌓이면 강화된 검증 절차를 통해 가중치 승격 여부를 판단합니다.</p></section>
 {table("데이터 축적 현황", data_accumulation_rows(), ["metric", "value", "status"])}
+{table("표본 진행 현황", sample_progress_rows(), ["horizon", "completed", "total", "percent"])}
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {user_table("Today run details", user_run_rows(), ["step", "status"], "오늘 사용자 확인이 필요한 자동 작업은 없습니다.")}
 {details("데이터 품질과 발송 상태", table("Price quality", recent_price_quality(30), ["created_at", "ticker", "status", "reason"]) + table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "error"]))}
@@ -999,7 +1028,8 @@ def render() -> str:
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
 --warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
 --shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
-:root[data-theme="dark"]{{
+:root[data-theme="light"]{{color-scheme:light}}
+:root[data-theme="dark"]{{color-scheme:dark;
 --bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
 --text-primary:#e5e7eb;--text-secondary:#94a3b8;--text-muted:#94a3b8;--text-strong:#cbd5e1;--text-on-accent:#fff;--text-on-accent-muted:#cbd5e1;
 --border:#2d3444;--border-strong:#3a4254;--hover-overlay:rgba(255,255,255,.08);
@@ -1027,7 +1057,7 @@ details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:var(--success-text);font-weight:600}} .warn{{color:var(--warn-text);font-weight:600}} .bad{{color:var(--danger-text);font-weight:600}} .pos{{color:var(--pos);font-weight:700}} .neg{{color:var(--neg);font-weight:700}} .zero{{color:var(--zero);font-weight:600}}
 .status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:var(--accent-bg);color:var(--accent-text)}} .status-pill.pill-danger{{background:var(--danger-bg);color:var(--danger-text)}} .status-pill.pill-neutral{{background:var(--pill-neutral-bg);color:var(--text-secondary)}}
-.pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:var(--text-on-accent);border-color:var(--pager-active-bg)}}
+.pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .trader-balance span{{display:block;color:var(--text-on-accent-muted)}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text-primary)}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:var(--bg-accent-card);color:var(--text-on-accent);cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:var(--text-strong)}}

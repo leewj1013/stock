@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -58,7 +58,7 @@ class DashboardTest(unittest.TestCase):
     def test_recommendation_tracking_separates_unbought_sell_alerts(self, tail_csv, _positions, trades):
         def fake_tail(path, _count):
             if path.endswith("recommendation_performance.csv"):
-                return [{"pick_date": "2026-08-01", "ticker": "A", "name": "추천A", "entry_close": "100", "return_5d_pct": "3.5"}]
+                return [{"pick_date": "2026-08-01", "ticker": "A", "name": "추천A", "score": "78.5", "entry_close": "100", "return_5d_pct": "3.5"}]
             if path.endswith("sell_alerts.csv"):
                 return [{"created_at": "2026-08-10T15:40:00", "ticker": "A", "close": "102", "return_pct": "2.0", "reason": "20일선 이탈"}]
             return []
@@ -73,6 +73,7 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("2026-08-10", rows[0]["sell_alert_date"])
         self.assertEqual("102", rows[0]["sell_alert_price"])
         self.assertEqual("20일선 이탈", rows[0]["sell_reason"])
+        self.assertEqual("78.5", rows[0]["score"])
         self.assertEqual("1종목", recommendation_tracking_summary(rows)[1][1])
 
     @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
@@ -166,6 +167,27 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
         self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
         self.assertEqual("<td class='num neg'>-10.30</td>", cell("-10.30", "return_1d_pct"))
+
+    @patch("stock_alarm.dashboard.tail_csv")
+    def test_sample_progress_rows_breaks_down_completion_by_horizon(self, tail_csv):
+        def fake_tail(path, _count):
+            if path.endswith("recommendation_performance.csv"):
+                return [
+                    {"pick_date": "2026-08-01", "ticker": "A", "return_1d_pct": "1.0", "return_3d_pct": "2.0"},
+                    {"pick_date": "2026-08-02", "ticker": "B", "return_1d_pct": "0.5"},
+                ]
+            return []
+
+        tail_csv.side_effect = fake_tail
+
+        rows = {row["horizon"]: row for row in sample_progress_rows()}
+
+        self.assertEqual("2", rows["1일"]["completed"])
+        self.assertEqual("2", rows["1일"]["total"])
+        self.assertEqual("100.0", rows["1일"]["percent"])
+        self.assertEqual("1", rows["3일"]["completed"])
+        self.assertEqual("50.0", rows["3일"]["percent"])
+        self.assertEqual("0", rows["20일"]["completed"])
 
     def test_tracking_status_renders_as_a_pill(self):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))
