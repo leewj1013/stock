@@ -135,6 +135,21 @@ class DataStoreTest(unittest.TestCase):
                 {"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 20},
             ], self.path)
 
+    def test_virtual_buy_skips_a_candidate_it_can_only_fund_far_below_its_target(self):
+        # Candidates are processed in order and share one cash pool. If the
+        # cash left over after earlier picks can only fund a sliver of this
+        # one's target weight, that token-sized position isn't worth opening
+        # -- skip it and leave the cash rather than buy a near-meaningless amount.
+        virtual_deposit(100_000, self.path)
+        with patch.dict(os.environ, {"VIRTUAL_TRADER_MAX_POSITION_PCT": "100", "RISK_MAX_EXPOSURE_PCT": "100"}):
+            result = virtual_buy([
+                {"ticker": "A", "name": "Alpha", "close": 9_000, "score": 80, "allocation_pct": 90},
+                {"ticker": "B", "name": "Beta", "close": 5_000, "score": 70, "allocation_pct": 30},
+            ], self.path)
+
+        self.assertEqual(1, result["bought"])
+        self.assertEqual(["A"], [execution["ticker"] for execution in result["executions"]])
+
     def test_virtual_valuation_records_change_from_previous_batch(self):
         virtual_deposit(100_000, self.path)
         virtual_buy([{"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 20}], self.path)
@@ -161,6 +176,22 @@ class DataStoreTest(unittest.TestCase):
         self.assertEqual(1, result["sold"])
         self.assertEqual([], result["holdings"])
         self.assertEqual(103_000, result["cash"])
+
+    def test_virtual_sell_does_not_double_sell_the_same_ticker_within_one_batch(self):
+        # A stale duplicate row in data/positions.csv can make find_alerts()
+        # emit two alerts for the same ticker in a single sell-check run.
+        # Only one real share exists, so only one sale should be recorded --
+        # not two, which would double-count the realized loss/profit.
+        virtual_deposit(100_000, self.path)
+        virtual_buy([{"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 10}], self.path)
+
+        result = virtual_sell([
+            {"ticker": "A", "name": "Alpha", "close": 9_000, "reason": "20일선 이탈"},
+            {"ticker": "A", "name": "Alpha", "close": 9_000, "reason": "20일선 이탈"},
+        ], self.path)
+
+        self.assertEqual(1, result["sold"])
+        self.assertEqual([], result["holdings"])
 
     def test_partial_take_profit_records_state_then_second_stage_closes_remainder(self):
         virtual_deposit(100_000, self.path)

@@ -5,7 +5,7 @@ import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, alert_summary, alerted_tickers, check_position, find_alerts, format_message, max_returns, previous_returns, read_positions, run, write_log
+from stock_alarm.sell_check import SellAlert, active_positions, alert_summary, alerted_tickers, check_position, find_alerts, format_message, max_returns, previous_returns, read_positions, run, write_log
 
 
 class SellCheckTest(unittest.TestCase):
@@ -14,6 +14,23 @@ class SellCheckTest(unittest.TestCase):
             file.write("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n")
         self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
         self.assertEqual("005930", read_positions(file.name)[0]["ticker"])
+
+    def test_active_positions_keeps_only_the_latest_row_per_ticker(self):
+        # data/positions.csv is append-only: track_positions() only ever adds
+        # a new row for a ticker once its earlier entry is inactive, so a
+        # stale old row (e.g. never pruned) must not be treated as a second,
+        # independent position alongside the real current one.
+        with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
+            file.write(
+                "ticker,name,entry_price,entry_date\n"
+                "000810,삼성화재,628000,2026-08-14\n"
+                "000810,삼성화재,668000,2026-09-04\n"
+            )
+        self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
+        self.assertEqual(2, len(read_positions(file.name)), "read_positions() must still see every raw row")
+        rows = active_positions(file.name)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("668000", rows[0]["entry_price"])
 
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows")

@@ -48,6 +48,23 @@ def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
         return [row for row in csv.DictReader(file) if row.get("ticker") and row.get("entry_price")]
 
 
+def active_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
+    """read_positions(), collapsed to the latest row per ticker.
+
+    The file is append-only (track_positions() never removes a row), and
+    only ever adds a new row for a ticker once its prior entry is inactive
+    -- so at most one row per ticker is ever the current position. Without
+    this, a stale earlier entry left in the file gets evaluated alongside
+    the real current one and can produce a duplicate sell alert for the
+    same position. positions_check.py's validator uses read_positions()
+    directly since it needs to see every raw row, duplicates included.
+    """
+    latest: dict[str, dict[str, str]] = {}
+    for row in read_positions(path):
+        latest[row["ticker"].strip()] = row
+    return list(latest.values())
+
+
 def _evaluate_position(
     position: dict[str, str],
     end_day: date,
@@ -425,7 +442,7 @@ def run() -> str:
 
     end_day = latest_naver_trading_day()
     run_id = start_run("sell_check", end_day.isoformat())
-    positions = read_positions()
+    positions = active_positions()
     try:
         alerts, virtual_result = _run_profile_sell_check(positions, end_day, run_id, PROFILES["aggressive"])
         finish_run(run_id)

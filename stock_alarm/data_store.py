@@ -451,6 +451,7 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[s
     if not valid:
         raise ValueError("no recommendation candidates available")
     max_position_pct = max(0.0, min(100.0, float(os.environ.get("VIRTUAL_TRADER_MAX_POSITION_PCT", "30"))))
+    min_fill_ratio = max(0.0, min(1.0, float(os.environ.get("VIRTUAL_TRADER_MIN_FILL_RATIO", "0.5"))))
     now = datetime.now().isoformat(timespec="seconds")
     with closing(connect(path)) as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -490,6 +491,14 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[s
             quantity = int(additional_budget // price)
             cost = price * quantity
             if quantity < 1 or spent + cost > cash:
+                continue
+            # Candidates are processed in order, spending down the shared
+            # cash pool -- one recommended late in the list can be left with
+            # only scraps of cash and end up at a token-sized fraction of its
+            # target weight. A position too small to matter isn't worth
+            # opening; skip it and leave the cash for a better-funded pick
+            # (this cycle or the next) instead of buying a sliver of it now.
+            if target_cost > 0 and cost < target_cost * min_fill_ratio:
                 continue
             trades.append((now, row["ticker"], row.get("name", ""), price, quantity, cost, allocation_pct, float(row.get("score") or 0)))
             spent += cost
@@ -563,13 +572,22 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
         connection.execute("BEGIN IMMEDIATE")
         total_proceeds = 0
         sales = []
+        # A stale duplicate position row (e.g. an old closed entry never
+        # pruned from data/positions.csv) can make find_alerts() emit two
+        # alerts for the same ticker in one call. Sales for earlier alerts
+        # aren't INSERTed until after this loop, so a naive re-query would
+        # see the same "1 share available" for both and double-sell it --
+        # track what this batch has already reserved per ticker instead.
+        reserved_quantity: dict[str, int] = {}
+        reserved_cost_basis: dict[str, int] = {}
         for alert in alerts:
             ticker, price = str(alert.get("ticker") or ""), int(float(alert.get("close") or 0))
             if not ticker or price <= 0:
                 continue
             bought = connection.execute("SELECT COALESCE(SUM(quantity),0), COALESCE(SUM(cost),0), MAX(name) FROM virtual_trades WHERE ticker=?", (ticker,)).fetchone()
             sold = connection.execute("SELECT COALESCE(SUM(quantity),0), COALESCE(SUM(cost_basis),0) FROM virtual_sales WHERE ticker=?", (ticker,)).fetchone()
-            quantity, cost_basis = int(bought[0] - sold[0]), int(bought[1] - sold[1])
+            quantity = int(bought[0] - sold[0]) - reserved_quantity.get(ticker, 0)
+            cost_basis = int(bought[1] - sold[1]) - reserved_cost_basis.get(ticker, 0)
             if quantity <= 0 or cost_basis <= 0:
                 continue
             sale_type = str(alert.get("sale_type") or "full")
@@ -586,6 +604,8 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
             proceeds = price * sale_quantity
             stage = str(alert.get("stage") or "")
             sales.append((now, ticker, alert.get("name") or bought[2] or "", price, sale_quantity, proceeds, sale_cost_basis, proceeds - sale_cost_basis, alert.get("reason", ""), sale_type, stage))
+            reserved_quantity[ticker] = reserved_quantity.get(ticker, 0) + sale_quantity
+            reserved_cost_basis[ticker] = reserved_cost_basis.get(ticker, 0) + sale_cost_basis
             total_proceeds += proceeds
         if sales:
             connection.executemany(
