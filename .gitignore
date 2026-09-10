@@ -1,4 +1,5 @@
 .env
+.env.bak*
 data/positions.csv
 data/stock_alarm.db
 data/stock_alarm_neutral.db

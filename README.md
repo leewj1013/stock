@@ -67,7 +67,7 @@ issue_alert
 ## 자동 학습과 위험관리
 
 - 추천 당시 점수 구성과 이후 1·3·5·10·20거래일 성과를 DB에 누적합니다.
-- 유효 표본 300건 이상부터 3개 이상의 Walk-forward 구간(구간당 최소 60건)을 검증합니다.
+- **20거래일 성과까지 확정된** 유효 표본 300건 이상부터 3개 이상의 Walk-forward 구간(구간당 최소 60건)을 검증합니다. 1·3·5·10일 성과만 채워진 추천은 아직 표본으로 세지 않습니다.
 - 모든 구간의 수익률 개선, MDD 악화 2%p 이내, 비모수 검정 p-value 0.05 미만을 모두 만족한 가중치만 다음 거래일부터 적용합니다.
 - 가중치는 하루 최대 5%p, 기본값의 75~125% 범위에서만 변경됩니다.
 - 일 -2%, 주 -5%, 계좌 고점 대비 -10%에 도달하면 신규 가상매수만 중단하며 매도 점검은 계속됩니다.
@@ -318,7 +318,7 @@ MAX_ENTRY_DAY_CHANGE_PCT=5
 MAX_MA20_DISTANCE_PCT=10
 MAX_MA20_DISTANCE_ATR=1.5
 MAX_AVG_RANGE_PCT=12
-MIN_MARKET_UP_RATIO=0.45
+MIN_MARKET_UP_RATIO=0.25
 SELL_LOSS_PCT=5
 SELL_DROP_PCT=3
 SELL_PROTECT_PROFIT_PCT=5
