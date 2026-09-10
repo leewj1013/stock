@@ -641,7 +641,7 @@ def naver_market_up_ratio(end_day: date) -> float:
 
 
 def passes_market_filter(end_day: date) -> bool:
-    minimum = env_float("MIN_MARKET_UP_RATIO", 0.45)
+    minimum = env_float("MIN_MARKET_UP_RATIO", 0.25)
     return naver_market_up_ratio(end_day) >= minimum
 
 

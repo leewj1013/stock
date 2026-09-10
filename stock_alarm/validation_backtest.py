@@ -92,7 +92,7 @@ class BacktestEngine:
         self.minimum_score = env_float("MIN_RECOMMEND_SCORE", 50)
         self.min_trading_value = int(os.environ.get("MIN_TRADING_VALUE", "5000000000"))
         self.volume_multiplier = env_float("VOLUME_MULTIPLIER", 1.5)
-        self.market_ratio = env_float("MIN_MARKET_UP_RATIO", 0.45)
+        self.market_ratio = env_float("MIN_MARKET_UP_RATIO", 0.25)
         self.cost_pct = (int(os.environ.get("EXECUTION_COST_BPS", "30")) + int(os.environ.get("BACKTEST_SLIPPAGE_BPS", "10"))) / 100
         configured_pit = os.environ.get("PIT_STORE_PATH", "").strip()
         resolved_pit = pit_store_path or (Path(configured_pit) if configured_pit else PIT_DEFAULT_PATH)
@@ -454,7 +454,7 @@ def run(data_dir: Path = DATA_DIR, report_dir: Path = REPORT_DIR) -> dict:
         key: os.environ.get(key, default) for key, default in {
             "BACKTEST_START_DATE": "2022-01-01", "BACKTEST_END_DATE": date.today().isoformat(),
             "TOP_N": "5", "MIN_TRADING_VALUE": "5000000000", "VOLUME_MULTIPLIER": "1.5",
-            "MIN_RECOMMEND_SCORE": "50", "MIN_MARKET_UP_RATIO": "0.45", "EXECUTION_COST_BPS": "30",
+            "MIN_RECOMMEND_SCORE": "50", "MIN_MARKET_UP_RATIO": "0.25", "EXECUTION_COST_BPS": "30",
             "BACKTEST_SLIPPAGE_BPS": "10", "TAKE_PROFIT_1_PCT": "10", "TAKE_PROFIT_1_SELL_RATIO": "50",
             "BACKTEST_TRADE_ALLOCATION_PCT": "10",
             "TAKE_PROFIT_2_PCT": "20", "SELL_LOSS_PCT": "5", "SELL_ATR_MULTIPLIER": "2",

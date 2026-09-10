@@ -55,7 +55,7 @@ def lines() -> list[str]:
         f"MAX_ENTRY_DAY_CHANGE_PCT={os.environ.get('MAX_ENTRY_DAY_CHANGE_PCT', '5')}",
         f"MAX_MA20_DISTANCE_PCT={os.environ.get('MAX_MA20_DISTANCE_PCT', '10')}",
         f"MAX_MA20_DISTANCE_ATR={os.environ.get('MAX_MA20_DISTANCE_ATR', '1.5')}",
-        f"MIN_MARKET_UP_RATIO={os.environ.get('MIN_MARKET_UP_RATIO', '0.45')}",
+        f"MIN_MARKET_UP_RATIO={os.environ.get('MIN_MARKET_UP_RATIO', '0.25')}",
         f"KRX_API_KEY={yes(bool(os.environ.get('KRX_API_KEY')))}",
         f"DYNAMIC_SCREENING_TOP_N={os.environ.get('DYNAMIC_SCREENING_TOP_N', '0')}",
         f"NEWS_LOOKUP={enabled('NEWS_LOOKUP')}",
