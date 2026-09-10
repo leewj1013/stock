@@ -667,7 +667,9 @@ def data_accumulation_rows() -> list[dict[str, str]]:
     samples = list(unique.values())
     completed_5d = sum(bool(row.get("return_5d_pct")) for row in samples)
     completed_20d = sum(bool(row.get("return_20d_pct")) for row in samples)
-    minimum = max(300, int(os.environ.get("STRATEGY_LEARNING_MIN_SAMPLES", "300")))
+    # Same env var and floor strategy_learning.learn() gates on, so the dashboard
+    # can never advertise a different threshold than the one that actually promotes.
+    minimum = max(300, int(os.environ.get("LEARNING_MIN_SAMPLES", "300")))
     usable = completed_20d
     timestamps = [
         str(row.get(key) or "")

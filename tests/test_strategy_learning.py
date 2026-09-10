@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from stock_alarm.data_store import upsert_recommendation_outcomes
+from stock_alarm.data_store import query_rows, upsert_recommendation_outcomes
 from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, cliffs_delta, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes
 
 
@@ -81,7 +81,8 @@ class StrategyLearningTest(unittest.TestCase):
                     "pick_date": (start + timedelta(days=index)).date().isoformat(), "ticker": f"S{index:03d}",
                     "name": "Test", "strategy_version": "test", "score": 50,
                     "factors_json": json.dumps(factors), "return_1d_pct": float(index % 7),
-                    "excess_1d_pct": float(index % 7), "quality_status": "valid", "updated_at": "now",
+                    "excess_1d_pct": float(index % 7), "return_20d_pct": float(index % 7),
+                    "quality_status": "valid", "updated_at": "now",
                 })
             upsert_recommendation_outcomes(rows, path)
             with patch("stock_alarm.strategy_learning.return_distribution_p_value", return_value=0.5):
@@ -89,6 +90,45 @@ class StrategyLearningTest(unittest.TestCase):
             self.assertEqual("rejected", result["status"])
             self.assertEqual(3, len(result["folds"]))
             self.assertIn("significance", result["decision_reason"])
+
+    def test_version_bump_does_not_duplicate_a_pick(self):
+        # strategy_version is in the primary key, so re-syncing the same pick under a
+        # new version used to leave the old row behind and count the pick twice.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "test.db")
+            row = {
+                "pick_date": "2026-01-02", "ticker": "005930", "name": "Test", "score": 50,
+                "factors_json": "{}", "return_1d_pct": 1.0, "return_20d_pct": 2.0,
+                "quality_status": "valid", "updated_at": "now",
+            }
+            upsert_recommendation_outcomes([{**row, "strategy_version": "v5"}], path)
+            upsert_recommendation_outcomes([{**row, "strategy_version": "v6"}], path)
+
+            stored = query_rows("SELECT strategy_version FROM recommendation_outcomes", path=path)
+            self.assertEqual(["v6"], [item["strategy_version"] for item in stored])
+
+    def test_learning_ignores_picks_without_a_20d_outcome(self):
+        # "300건" means 300 picks that have matured to 20 trading days; a row holding
+        # only a 1-day return is not a finished observation yet.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "test.db")
+            rows = []
+            start = datetime(2026, 1, 1)
+            for index in range(360):
+                factors = {factor: 1.0 for factor in DEFAULT_WEIGHTS}
+                factors["volume_score"] = float(index % 30)
+                rows.append({
+                    "pick_date": (start + timedelta(days=index)).date().isoformat(), "ticker": f"U{index:03d}",
+                    "name": "Test", "strategy_version": "test", "score": 50,
+                    "factors_json": json.dumps(factors), "return_1d_pct": float(index % 7),
+                    "excess_1d_pct": float(index % 7), "return_20d_pct": None,
+                    "quality_status": "valid", "updated_at": "now",
+                })
+            upsert_recommendation_outcomes(rows, path)
+
+            result = learn(path, datetime(2026, 8, 27, 16, 0))
+            self.assertEqual("insufficient_data", result["status"])
+            self.assertEqual(0, result["sample_count"])
 
     def test_daily_weight_change_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -103,7 +143,8 @@ class StrategyLearningTest(unittest.TestCase):
                     "pick_date": (start + timedelta(days=index)).date().isoformat(), "ticker": f"T{index:03d}",
                     "name": "Test", "strategy_version": "test", "score": 50,
                     "factors_json": json.dumps(factors), "return_1d_pct": value,
-                    "excess_1d_pct": value, "quality_status": "valid", "updated_at": "now",
+                    "excess_1d_pct": value, "return_20d_pct": value,
+                    "quality_status": "valid", "updated_at": "now",
                 })
             upsert_recommendation_outcomes(rows, path)
             with patch.dict(os.environ, {"LEARNING_MIN_SAMPLES": "300", "LEARNING_VALIDATION_MIN_SAMPLES": "60", "LEARNING_VALIDATION_FOLDS": "3", "LEARNING_MAX_DAILY_WEIGHT_CHANGE": "0.05"}):

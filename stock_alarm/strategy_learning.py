@@ -280,6 +280,10 @@ def learn(path: str = DB_PATH, now: datetime | None = None) -> dict:
     maximum = max(minimum, int(os.environ.get("LEARNING_MAX_SAMPLES", "1000")))
     alpha = float(os.environ.get("LEARNING_SIGNIFICANCE_LEVEL", "0.05"))
     rows = list(reversed(recent_recommendation_outcomes(maximum, path)))
+    # A pick only counts once its 20-day outcome is known. objective() itself still
+    # averages the 1/3/5/10-day horizons and stays horizon-agnostic, because
+    # validation_backtest feeds it rows that never carry a 20-day return.
+    rows = [row for row in rows if row.get("return_20d_pct") is not None]
     usable = [(row, objective(row)) for row in rows]
     usable = [(row, value) for row, value in usable if value is not None]
     current = active_weights(path)

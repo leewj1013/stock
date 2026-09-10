@@ -925,6 +925,7 @@ def upsert_recommendation_outcomes(rows: Iterable[dict[str, Any]], path: str = D
         "excess_1d_pct", "excess_3d_pct", "excess_5d_pct", "excess_10d_pct", "excess_20d_pct",
         "mfe_20d_pct", "mae_20d_pct", "quality_status", "updated_at",
     ]
+    rows = list(rows)
     values = [tuple(row.get(column) for column in columns) for row in rows]
     if not values:
         return
@@ -932,6 +933,15 @@ def upsert_recommendation_outcomes(rows: Iterable[dict[str, Any]], path: str = D
         connection.executemany(
             f"INSERT OR REPLACE INTO recommendation_outcomes({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
             values,
+        )
+        # strategy_version is part of the primary key, so a version bump turns the
+        # REPLACE into an INSERT and leaves the previous version's row behind as a
+        # stale orphan -- sync_outcomes only ever refreshes the current version.
+        # The learning sample then counts the same pick twice, which inflates the
+        # sample count and makes the significance test treat one observation as two.
+        connection.executemany(
+            "DELETE FROM recommendation_outcomes WHERE pick_date = ? AND ticker = ? AND strategy_version <> ?",
+            [(row.get("pick_date"), row.get("ticker"), row.get("strategy_version")) for row in rows],
         )
         connection.commit()
 
