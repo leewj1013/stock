@@ -301,6 +301,20 @@ DISPLAY_VALUES = {
     "naver": "네이버 금융",
     "valid": "정상",
     "invalid": "비정상",
+    "stale": "지연됨",
+    "quarantined": "격리됨",
+    "missing_price": "가격 없음",
+    "invalid_ohlc": "OHLC 이상값",
+    "unparseable_price": "가격 형식 오류",
+    "close_source_mismatch": "종가 불일치",
+    "LIQUIDATION_TRADING": "정리매매",
+    "OVERHEATED": "단기과열",
+    "INVESTMENT_WARNING": "투자경고",
+    "INVESTMENT_RISK": "투자위험",
+    "VI_STATIC": "정적VI",
+    "VI_DYNAMIC": "동적VI",
+    "VI_STATIC_AND_DYNAMIC": "정적+동적VI",
+    "STOCK_WARRANTS": "신주인수권",
     "reference_unavailable": "비교가격 확인 불가",
     "notifier returned false": "알림 전송 실패",
     "stock_alarm": "stockAlarm",
@@ -325,6 +339,17 @@ def display_value(value: object) -> str:
         return DISPLAY_VALUES[text]
     if "," in text and all(part.strip() in DISPLAY_VALUES for part in text.split(",")):
         return ", ".join(DISPLAY_VALUES[part.strip()] for part in text.split(","))
+    if text.startswith("price_date="):
+        return f"기준일={text.removeprefix('price_date=')}"
+    if text.startswith("stock_warning:"):
+        return f"종목 경고:{display_value(text.removeprefix('stock_warning:'))}"
+    for status in ("valid", "invalid", "stale", "quarantined"):
+        prefix = f"price_{status}:"
+        if text.startswith(prefix):
+            return f"가격 {DISPLAY_VALUES[status]}:{display_value(text.removeprefix(prefix))}"
+    if text.endswith(")") and "(경고:" in text:
+        base, _, warning_part = text.partition("(경고:")
+        return f"{display_value(base)}(경고:{display_value(warning_part[:-1])})"
     if text.endswith("=ok"):
         return f"{display_label(text[:-3])}=정상"
     if text.endswith("=missing"):

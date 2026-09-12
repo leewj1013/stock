@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, display_value, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -268,6 +268,15 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("title='매도 알림'", cell("매도 알림", "tracking_status"))
         self.assertIn(">완료 (매도)<", cell("매도 알림", "tracking_status"))
         self.assertIn(">완료 (기간만료)<", cell("성과 완료", "tracking_status"))
+
+    def test_price_quality_status_and_reason_render_in_korean(self):
+        self.assertEqual("격리됨", display_value("quarantined"))
+        self.assertEqual("지연됨", display_value("stale"))
+        self.assertEqual("종가 불일치", display_value("close_source_mismatch"))
+        self.assertEqual("기준일=2026-09-11", display_value("price_date=2026-09-11"))
+        self.assertEqual("OHLC 이상값(경고:정리매매)", display_value("invalid_ohlc(경고:LIQUIDATION_TRADING)"))
+        self.assertEqual("종목 경고:정리매매", display_value("stock_warning:LIQUIDATION_TRADING"))
+        self.assertEqual("가격 지연됨:기준일=2026-09-11", display_value("price_stale:price_date=2026-09-11"))
 
     @patch.dict("os.environ", {"NEWS_LOOKUP": "1", "NEWS_SCORE_WEIGHT": "1"})
     def test_empty_value_labels_explain_pending_data(self):
