@@ -91,10 +91,22 @@ NUMERIC_COLUMNS = {
     "dividend_score",
     "momentum_score",
     "news_category_score",
+    "order_quantity",
+    "filled_price",
+    "filled_amount",
+    "commission_amount",
 }
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
-TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at"}
+TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at", "ordered_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
+# Enum-valued columns whose Korean label depends on which table they're in --
+# e.g. "SELL" means "매도 검토" for a candidate decision but plain "매도" for
+# an order side, so these can't live in the global DISPLAY_VALUES dict.
+COLUMN_VALUE_LABELS = {
+    "order_side": {"BUY": "매수", "SELL": "매도"},
+    "order_type": {"LIMIT": "지정가", "MARKET": "시장가"},
+    "order_status": {"OPEN": "미체결", "FILLED": "체결완료", "PARTIALLY_FILLED": "부분체결", "CANCELED": "취소", "REJECTED": "거부", "EXPIRED": "만료"},
+}
 STATUS_PILL_CLASSES = {"추적 중": "pill-accent", "매도 알림": "pill-danger", "성과 완료": "pill-neutral", "성과 수집 중": "pill-neutral"}
 # The raw tracking_status still drives filtering/summary counts elsewhere
 # (data_accumulation_rows) -- this only simplifies what the badge itself
@@ -192,6 +204,17 @@ LABELS = {
     "entry_price": "진입가",
     "average_price": "평균매수가",
     "account_type": "계좌 유형",
+    "ordered_at": "주문 시각",
+    "order_side": "매매구분",
+    "order_type": "주문유형",
+    "order_status": "주문상태",
+    "order_quantity": "주문수량",
+    "filled_price": "체결가",
+    "filled_amount": "체결금액",
+    "commission_amount": "수수료",
+    "commission_rate": "수수료율",
+    "start_date": "적용 시작일",
+    "end_date": "적용 종료일",
     "Candidate rejection summary": "후보 탈락 사유 요약",
     "Recent position checks": "최근 전체 보유종목 판단",
     "started_at": "시작시각",
@@ -713,10 +736,42 @@ def real_account_state() -> dict:
             }
             for item in domestic_items
         ]
+        # Order history/commissions are a nice-to-have next to the holdings
+        # table -- a failure here (e.g. Toss outage) shouldn't blank out the
+        # whole tab when holdings/buying-power already came back fine.
+        try:
+            orders = client.order_history(account_seq, "CLOSED", limit=10).get("orders", [])
+        except Exception:
+            orders = []
+        order_rows = [
+            {
+                "ordered_at": order.get("orderedAt", ""),
+                "ticker": order.get("symbol", ""),
+                "order_side": order.get("side", ""),
+                "order_type": order.get("orderType", ""),
+                "order_status": order.get("status", ""),
+                "order_quantity": order.get("quantity", ""),
+                "filled_price": (order.get("execution") or {}).get("averageFilledPrice", ""),
+                "filled_amount": (order.get("execution") or {}).get("filledAmount", ""),
+                "commission_amount": (order.get("execution") or {}).get("commission", ""),
+            }
+            for order in orders if order.get("currency", "KRW") == "KRW"
+        ]
+        try:
+            commission_rows = [
+                {
+                    "commission_rate": f"{float(row.get('commissionRate') or 0) * 100:.4f}%",
+                    "start_date": row.get("startDate", ""), "end_date": row.get("endDate", ""),
+                }
+                for row in client.commissions(account_seq) if row.get("marketCountry") == "KR"
+            ]
+        except Exception:
+            commission_rows = []
         return {
             "connected": True, "account_type": accounts[0].get("accountType", ""),
             "cash": cash, "market_value": market_value, "profit_loss": profit_loss,
             "total_equity": cash + market_value, "holdings": rows,
+            "orders": order_rows, "commissions": commission_rows,
         }
     except Exception as error:
         return {"connected": False, "reason": str(error)}
@@ -744,6 +799,8 @@ def cell(value: object, column: str = "") -> str:
     attr = f" class='{' '.join(classes)}'" if classes else ""
     if column in BOOLEAN_COLUMNS and str(display) in {"0", "1"}:
         shown = "예" if str(display) == "1" else "아니요"
+    elif column in COLUMN_VALUE_LABELS and str(display) in COLUMN_VALUE_LABELS[column]:
+        shown = COLUMN_VALUE_LABELS[column][str(display)]
     else:
         shown = format_number(display) if column in NUMERIC_COLUMNS else display_value(display)
         if column in TIMESTAMP_COLUMNS and isinstance(shown, str) and "T" in shown:
@@ -1130,7 +1187,9 @@ def render() -> str:
   <div class="trader-balance"><span>주식 평가액</span><strong>{real_account['market_value']:,}원</strong></div>
   <div class="trader-balance"><span>평가손익</span><strong>{real_account['profit_loss']:+,}원</strong></div>
 </div>
-{user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct", "watch_state"], "보유 중인 종목이 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
+{user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct", "watch_state"], "보유 중인 종목이 없습니다.")}
+{user_table("최근 주문 내역", real_account["orders"], ["ordered_at", "ticker", "order_side", "order_type", "order_status", "order_quantity", "filled_price", "filled_amount", "commission_amount"], "최근 체결/취소된 주문이 없습니다.")}
+{user_table("수수료율", real_account["commissions"], ["commission_rate", "start_date", "end_date"], "수수료율 정보를 확인할 수 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
 """
     market_calendar = market_calendar_state()
     market_calendar_card = (

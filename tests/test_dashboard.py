@@ -229,6 +229,53 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual("종목 경고: LIQUIDATION_TRADING", state["holdings"][0]["watch_state"])
 
+    @patch("stock_alarm.toss_client.all_warnings_for", return_value=set())
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_real_account_state_includes_domestic_order_history_and_commissions(self, toss_client_cls, _warnings):
+        toss_client_cls.return_value.accounts.return_value = [{"accountSeq": 1, "accountType": "BROKERAGE"}]
+        toss_client_cls.return_value.holdings.return_value = {"items": []}
+        toss_client_cls.return_value.buying_power.return_value = {"cashBuyingPower": "0"}
+        toss_client_cls.return_value.order_history.return_value = {"orders": [
+            {"symbol": "005930", "side": "BUY", "orderType": "LIMIT", "status": "FILLED", "quantity": "10",
+             "currency": "KRW", "orderedAt": "2026-09-12T10:00:00+09:00",
+             "execution": {"averageFilledPrice": "70000", "filledAmount": "700000", "commission": "105"}},
+            {"symbol": "AAPL", "side": "SELL", "orderType": "MARKET", "status": "FILLED", "quantity": "1",
+             "currency": "USD", "orderedAt": "2026-09-12T10:00:00+09:00", "execution": {}},
+        ]}
+        toss_client_cls.return_value.commissions.return_value = [
+            {"marketCountry": "KR", "commissionRate": "0.00015", "startDate": "2021-01-01", "endDate": "9999-12-31"},
+            {"marketCountry": "US", "commissionRate": "0.001", "startDate": None, "endDate": "2026-09-13"},
+        ]
+
+        state = real_account_state()
+
+        self.assertEqual(1, len(state["orders"]))
+        self.assertEqual("005930", state["orders"][0]["ticker"])
+        self.assertEqual("BUY", state["orders"][0]["order_side"])
+        self.assertEqual(1, len(state["commissions"]))
+        self.assertEqual("0.0150%", state["commissions"][0]["commission_rate"])
+
+    @patch("stock_alarm.toss_client.all_warnings_for", return_value=set())
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_real_account_state_tolerates_an_order_history_failure(self, toss_client_cls, _warnings):
+        toss_client_cls.return_value.accounts.return_value = [{"accountSeq": 1, "accountType": "BROKERAGE"}]
+        toss_client_cls.return_value.holdings.return_value = {"items": []}
+        toss_client_cls.return_value.buying_power.return_value = {"cashBuyingPower": "0"}
+        toss_client_cls.return_value.order_history.side_effect = RuntimeError("toss outage")
+        toss_client_cls.return_value.commissions.side_effect = RuntimeError("toss outage")
+
+        state = real_account_state()
+
+        self.assertTrue(state["connected"])
+        self.assertEqual([], state["orders"])
+        self.assertEqual([], state["commissions"])
+
+    def test_order_columns_render_with_korean_labels(self):
+        row_html = cell("BUY", "order_side") + cell("LIMIT", "order_type") + cell("FILLED", "order_status")
+        self.assertIn("매수", row_html)
+        self.assertIn("지정가", row_html)
+        self.assertIn("체결완료", row_html)
+
     @patch.dict("os.environ", {})
     @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
     @patch("stock_alarm.toss_client.all_warnings_for", return_value={"LIQUIDATION_TRADING"})
