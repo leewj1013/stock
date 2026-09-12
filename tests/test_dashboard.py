@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -246,6 +246,16 @@ class DashboardTest(unittest.TestCase):
 
         self.assertIn('실제 계좌<span class="nav-badge">1</span>', html)
         self.assertIn('id="nav-badge-trader" hidden', html)
+
+    def test_watch_state_pill_class_matches_by_prefix_despite_the_ticker_suffix(self):
+        self.assertEqual("pill-danger", watch_state_pill_class("종목 경고: LIQUIDATION_TRADING"))
+        self.assertEqual("pill-warn", watch_state_pill_class("종목 주의: OVERHEATED"))
+        self.assertEqual("pill-neutral", watch_state_pill_class("정상 보유"))
+        self.assertEqual("", watch_state_pill_class("데이터 대기"))
+
+    def test_watch_state_renders_as_a_pill(self):
+        self.assertIn("status-pill pill-danger", cell("종목 경고: LIQUIDATION_TRADING", "watch_state"))
+        self.assertIn("status-pill pill-warn", cell("종목 주의: OVERHEATED", "watch_state"))
 
     def test_tracking_status_renders_as_a_pill(self):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))

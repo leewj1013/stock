@@ -100,6 +100,20 @@ STATUS_PILL_CLASSES = {"추적 중": "pill-accent", "매도 알림": "pill-dange
 # (data_accumulation_rows) -- this only simplifies what the badge itself
 # says, keeping the detailed status one hover away via the title attribute.
 TRACKING_STATUS_DISPLAY = {"추적 중": "진행 중", "성과 수집 중": "진행 중", "매도 알림": "완료 (매도)", "성과 완료": "완료 (기간만료)"}
+# watch_state carries a ticker-specific suffix (e.g. "종목 경고: LIQUIDATION_TRADING"),
+# so it can't be matched as a whole string like STATUS_PILL_CLASSES -- match by prefix instead.
+WATCH_STATE_PILL_PREFIXES = [
+    ("종목 경고", "pill-danger"), ("매도조건 충족", "pill-danger"),
+    ("종목 주의", "pill-warn"), ("손절선 근접", "pill-warn"), ("20일선 주의", "pill-warn"),
+    ("1차 익절 완료", "pill-accent"), ("정상 보유", "pill-neutral"),
+]
+
+
+def watch_state_pill_class(value: str) -> str:
+    for prefix, klass in WATCH_STATE_PILL_PREFIXES:
+        if value.startswith(prefix):
+            return klass
+    return ""
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
     "실제 계좌": "실제 계좌",
@@ -713,6 +727,8 @@ def cell(value: object, column: str = "") -> str:
             shown = shown.replace("T", " ")
     if column == "tracking_status" and shown in STATUS_PILL_CLASSES:
         return f"<td{attr}><span class='status-pill {STATUS_PILL_CLASSES[shown]}' title='{e(shown)}'>{e(TRACKING_STATUS_DISPLAY.get(shown, shown))}</span></td>"
+    if column == "watch_state" and watch_state_pill_class(str(shown)):
+        return f"<td{attr}><span class='status-pill {watch_state_pill_class(str(shown))}'>{e(shown)}</span></td>"
     return f"<td{attr}>{e(shown)}</td>"
 
 
@@ -1129,7 +1145,7 @@ def render() -> str:
 --accent:#2563eb;--accent-bg:#eef6ff;--accent-text:#1d4ed8;--accent-border:#bfdbfe;
 --danger-bg:#fef3f2;--danger-border:#fecdca;--danger-text:#b42318;
 --success-bg:#ecfdf3;--success-border:#abefc6;--success-text:#147a2e;
---warn-text:#9a6700;--pos:#047857;--neg:#dc2626;--zero:#64748b;
+--warn-text:#9a6700;--warn-bg:#fff8e6;--warn-border:#fde68a;--pos:#047857;--neg:#dc2626;--zero:#64748b;
 --shadow-color:#ddd;--table-border:#eee;--table-header-bg:#fafafa;--details-bg:#eef2f6;--track-bg:#e2e8f0;--pill-neutral-bg:#f1f5f9;--pager-active-bg:#111}}
 @media(prefers-color-scheme:dark){{:root:not([data-theme="light"]){{
 --bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
@@ -1138,7 +1154,7 @@ def render() -> str:
 --accent:#60a5fa;--accent-bg:#1e3a5f;--accent-text:#93c5fd;--accent-border:#2d5b8a;
 --danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
---warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
+--warn-text:#fbbf24;--warn-bg:#3a2e0a;--warn-border:#78350f;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
 --shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
 :root[data-theme="light"]{{color-scheme:light}}
 :root[data-theme="dark"]{{color-scheme:dark;
@@ -1148,7 +1164,7 @@ def render() -> str:
 --accent:#60a5fa;--accent-bg:#1e3a5f;--accent-text:#93c5fd;--accent-border:#2d5b8a;
 --danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
---warn-text:#fbbf24;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
+--warn-text:#fbbf24;--warn-bg:#3a2e0a;--warn-border:#78350f;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
 --shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}
 *{{box-sizing:border-box}} html{{overflow-x:hidden;overflow-y:scroll;scrollbar-gutter:stable}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;padding-top:110px;background:var(--bg-page);color:var(--text-primary);line-height:1.5}} .dashboard-header,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
 .dashboard-header{{position:fixed;top:0;left:0;right:0;z-index:30;background:var(--bg-page);padding:12px 24px;border-bottom:1px solid var(--section-border);will-change:transform;backface-visibility:hidden;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}}
@@ -1168,7 +1184,7 @@ section{{min-width:0;background:var(--bg-section);border:1px solid var(--section
 details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid var(--section-border)}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:var(--success-text);font-weight:600}} .warn{{color:var(--warn-text);font-weight:600}} .bad{{color:var(--danger-text);font-weight:600}} .pos{{color:var(--pos);font-weight:700}} .neg{{color:var(--neg);font-weight:700}} .zero{{color:var(--zero);font-weight:600}}
-.status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:var(--accent-bg);color:var(--accent-text)}} .status-pill.pill-danger{{background:var(--danger-bg);color:var(--danger-text)}} .status-pill.pill-neutral{{background:var(--pill-neutral-bg);color:var(--text-secondary)}}
+.status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:var(--accent-bg);color:var(--accent-text)}} .status-pill.pill-danger{{background:var(--danger-bg);color:var(--danger-text)}} .status-pill.pill-neutral{{background:var(--pill-neutral-bg);color:var(--text-secondary)}} .status-pill.pill-warn{{background:var(--warn-bg);color:var(--warn-text)}}
 .nav-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:999px;background:var(--danger-bg);color:var(--danger-text);font-size:11px;font-weight:700}} .nav-badge[hidden]{{display:none}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
@@ -1335,6 +1351,11 @@ function renderPortfolioCharts() {{
   document.getElementById("sector-donut-count").textContent=`${{sectors.length}}개`;
   renderDonut("sector-donut","sector-donut-legend",shown,"보유종목이 없습니다.");
 }}
+const WATCH_STATE_PILL_PREFIXES=[["종목 경고","pill-danger"],["매도조건 충족","pill-danger"],["종목 주의","pill-warn"],["손절선 근접","pill-warn"],["20일선 주의","pill-warn"],["1차 익절 완료","pill-accent"],["정상 보유","pill-neutral"]];
+function watchStatePillClass(value) {{
+  const hit = WATCH_STATE_PILL_PREFIXES.find(([prefix]) => value.startsWith(prefix));
+  return hit ? hit[1] : "";
+}}
 function renderTrader(message="") {{
   document.getElementById("trader-total-equity").textContent = won(trader.total_equity || trader.cash || 0);
   document.getElementById("trader-cash").textContent = won(trader.cash || 0);
@@ -1363,8 +1384,15 @@ function renderTrader(message="") {{
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
     const sellReference=`손절 ${{won(item.stop_price||0)}}${{item.ma20?` · 20일선 ${{won(item.ma20)}}`:""}}`;
-    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,item.watch_state||'데이터 대기',sellReference];
-    values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
+    const watchState=item.watch_state||'데이터 대기';
+    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference];
+    values.forEach((value,index)=>{{
+      const cell=document.createElement("td");
+      if(index===8 && watchStatePillClass(watchState)) {{const pill=document.createElement("span"); pill.className=`status-pill ${{watchStatePillClass(watchState)}}`; pill.textContent=value; cell.appendChild(pill);}}
+      else cell.textContent=value;
+      if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";
+      row.appendChild(cell);
+    }}); body.appendChild(row);
   }});
   if (!body.children.length) body.innerHTML='<tr><td colspan="10" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
   const warningCount=(trader.holdings||[]).filter(item=>(item.watch_state||"").startsWith("종목")).length;
