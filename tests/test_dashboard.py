@@ -214,6 +214,21 @@ class DashboardTest(unittest.TestCase):
             state = real_account_state()
         self.assertFalse(state["connected"])
 
+    @patch("stock_alarm.toss_client.all_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_real_account_state_flags_a_holding_with_an_active_stock_warning(self, toss_client_cls, _warnings):
+        toss_client_cls.return_value.accounts.return_value = [{"accountSeq": 1, "accountType": "BROKERAGE"}]
+        toss_client_cls.return_value.holdings.return_value = {"items": [
+            {"symbol": "005930", "name": "Samsung", "marketCountry": "KR", "quantity": 10,
+             "averagePurchasePrice": 70000, "lastPrice": 71000,
+             "marketValue": {"amount": 710000}, "profitLoss": {"amount": 10000, "rate": 0.014}},
+        ]}
+        toss_client_cls.return_value.buying_power.return_value = {"cashBuyingPower": "0"}
+
+        state = real_account_state()
+
+        self.assertEqual("종목 경고: LIQUIDATION_TRADING", state["holdings"][0]["watch_state"])
+
     def test_tracking_status_renders_as_a_pill(self):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))
         self.assertIn("status-pill pill-danger", cell("매도 알림", "tracking_status"))

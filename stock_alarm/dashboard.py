@@ -152,6 +152,7 @@ LABELS = {
     "count": "건수",
     "entry_count": "추천 횟수",
     "return_pct": "수익률",
+    "watch_state": "관찰 상태",
     "metric": "지표",
     "value": "값",
     "horizon": "경과 기간",
@@ -650,6 +651,17 @@ def real_account_state() -> dict:
         domestic_items = [item for item in holdings.get("items", []) if item.get("marketCountry") == "KR"]
         market_value = int(sum(float((item.get("marketValue") or {}).get("amount") or 0) for item in domestic_items))
         profit_loss = int(sum(float((item.get("profitLoss") or {}).get("amount") or 0) for item in domestic_items))
+        from .toss_client import all_warnings_for, BLOCKING_STOCK_WARNINGS
+
+        def watch_state(symbol: str) -> str:
+            active = all_warnings_for(symbol)
+            blocking = active & BLOCKING_STOCK_WARNINGS
+            if blocking:
+                return f"종목 경고: {','.join(sorted(blocking))}"
+            if active:
+                return f"종목 주의: {','.join(sorted(active))}"
+            return "정상 보유"
+
         rows = [
             {
                 "name": item.get("name", ""),
@@ -660,6 +672,7 @@ def real_account_state() -> dict:
                 "valuation": (item.get("marketValue") or {}).get("amount", ""),
                 "profit_loss": (item.get("profitLoss") or {}).get("amount", ""),
                 "return_pct": str(round(float((item.get("profitLoss") or {}).get("rate") or 0) * 100, 2)),
+                "watch_state": watch_state(str(item.get("symbol") or "")),
             }
             for item in domestic_items
         ]
@@ -1077,7 +1090,7 @@ def render() -> str:
   <div class="trader-balance"><span>주식 평가액</span><strong>{real_account['market_value']:,}원</strong></div>
   <div class="trader-balance"><span>평가손익</span><strong>{real_account['profit_loss']:+,}원</strong></div>
 </div>
-{user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct"], "보유 중인 종목이 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
+{user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct", "watch_state"], "보유 중인 종목이 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
 """
     market_calendar = market_calendar_state()
     market_calendar_card = (
