@@ -260,15 +260,31 @@ def evaluate_naver_candidate(
     # for price_momentum_pct below, on top of the shorter windows (MA20, ATR)
     # everything else here only ever reads from the tail of `rows`.
     rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=140), end_day)
+    if price_rows is None and external_lookup and len(rows) < 21:
+        # Naver came back empty/too-short (seen this session: SSL timeouts,
+        # zero-filled placeholder rows) -- try Toss's official candles once
+        # before giving up. Point-in-time backtests (price_rows supplied)
+        # never take this path.
+        from .toss_client import TossClient, candles_to_naver_rows
+        try:
+            fallback_rows = candles_to_naver_rows(TossClient().candles(ticker, count=140).get("candles", []))
+        except Exception:
+            fallback_rows = []
+        rows = fallback_rows or rows
     if len(rows) < 21:
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": "insufficient_history"})
     from .data_quality import validate_price_rows
-    quality = validate_price_rows(ticker, rows, end_day)
+    quality = validate_price_rows(ticker, rows, end_day, allow_external_lookup=external_lookup)
     if record_quality:
         from .data_store import record_price_quality
         record_price_quality(quality)
     if record_quality and quality["status"] != "valid":
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": f"price_{quality['status']}:{quality['reason']}"})
+    if external_lookup:
+        from .toss_client import blocking_warnings_for
+        blocking = blocking_warnings_for(ticker)
+        if blocking:
+            return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": f"stock_warning:{','.join(sorted(blocking))}"})
 
     closes = [int(row[4]) for row in rows[-20:]]
     highs = [int(row[2]) for row in rows[-10:]]

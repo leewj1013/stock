@@ -10,6 +10,12 @@ import urllib.request
 
 DEFAULT_BASE_URL = "https://openapi.tossinvest.com"
 
+# Warning types serious enough to block a new recommendation or force-exit an
+# existing holding. OVERHEATED/INVESTMENT_WARNING/VI_* are common and often
+# short-lived -- blocking on those would false-positive on otherwise-normal
+# stocks, so they're surfaced as information only, not a hard stop.
+BLOCKING_STOCK_WARNINGS = {"LIQUIDATION_TRADING", "INVESTMENT_RISK"}
+
 
 class TossApiError(RuntimeError):
     def __init__(self, status: int | None, code: str, message: str):
@@ -21,8 +27,9 @@ class TossApiError(RuntimeError):
 class TossClient:
     """Minimal read-only Toss Securities client.
 
-    Deliberately exposes authentication, market prices and account discovery only.
-    No order endpoint is implemented in this module.
+    Deliberately exposes authentication, market prices, account discovery,
+    holdings, buying power, stock warnings, candles and the market calendar
+    only. No order endpoint is implemented in this module.
     """
 
     def __init__(self, client_id: str | None = None, client_secret: str | None = None,
@@ -69,6 +76,46 @@ class TossClient:
         result = self._get("/api/v1/accounts").get("result", [])
         return result if isinstance(result, list) else []
 
+    def holdings(self, account_seq: int, symbol: str | None = None) -> dict:
+        """Holdings overview (positions + totals) for one account.
+
+        account_seq comes from accounts()' accountSeq field. Account/asset/
+        order endpoints all require it as the X-Tossinvest-Account header,
+        not a query param.
+        """
+        query = f"?{urllib.parse.urlencode({'symbol': symbol})}" if symbol else ""
+        return self._get(f"/api/v1/holdings{query}", account_seq=account_seq).get("result", {})
+
+    def buying_power(self, account_seq: int, currency: str = "KRW") -> dict:
+        query = urllib.parse.urlencode({"currency": currency})
+        return self._get(f"/api/v1/buying-power?{query}", account_seq=account_seq).get("result", {})
+
+    def stock_warnings(self, symbol: str) -> list[dict]:
+        """Active trading-caution flags for a symbol: liquidation trading,
+        overheated, investment warning/risk designation, VI (volatility
+        interruption), stock warrants. No account header needed -- these are
+        per-symbol, not per-account."""
+        result = self._get(f"/api/v1/stocks/{symbol}/warnings").get("result", [])
+        return result if isinstance(result, list) else []
+
+    def blocking_warnings(self, symbol: str) -> set[str]:
+        """The subset of stock_warnings() serious enough to act on (see
+        BLOCKING_STOCK_WARNINGS)."""
+        warnings = self.stock_warnings(symbol)
+        return {row["warningType"] for row in warnings if row.get("warningType") in BLOCKING_STOCK_WARNINGS}
+
+    def candles(self, symbol: str, interval: str = "1d", count: int = 200,
+                before: str | None = None, adjusted: bool = True) -> dict:
+        """OHLCV candles. interval is "1m" or "1d" only, max 200 per call."""
+        query = {"symbol": symbol, "interval": interval, "count": count, "adjusted": str(adjusted).lower()}
+        if before:
+            query["before"] = before
+        return self._get(f"/api/v1/candles?{urllib.parse.urlencode(query)}").get("result", {})
+
+    def market_calendar_kr(self) -> dict:
+        """Yesterday/today/tomorrow's KR trading hours (integrated KRX+NXT)."""
+        return self._get("/api/v1/market-calendar/KR").get("result", {})
+
     def connection_check(self, probe_symbol: str = "005930") -> dict:
         self.access_token()
         prices = self.prices([probe_symbol])
@@ -84,11 +131,11 @@ class TossClient:
             "trading_enabled": False,
         }
 
-    def _get(self, path: str) -> dict:
-        request = urllib.request.Request(
-            f"{self.base_url}{path}", method="GET",
-            headers={"Authorization": f"Bearer {self.access_token()}", "User-Agent": "stockAlarm/1.0"},
-        )
+    def _get(self, path: str, account_seq: int | None = None) -> dict:
+        headers = {"Authorization": f"Bearer {self.access_token()}", "User-Agent": "stockAlarm/1.0"}
+        if account_seq is not None:
+            headers["X-Tossinvest-Account"] = str(account_seq)
+        request = urllib.request.Request(f"{self.base_url}{path}", method="GET", headers=headers)
         return self._open_json(request)
 
     def _open_json(self, request: urllib.request.Request) -> dict:
@@ -109,4 +156,33 @@ class TossClient:
             raise TossApiError(error.code, code, message) from None
         except urllib.error.URLError as error:
             raise TossApiError(None, "network-error", str(error.reason)) from None
+
+
+def candles_to_naver_rows(candles: list[dict]) -> list[list]:
+    """Convert candles()' `candles` list into the [YYYYMMDD, open, high, low,
+    close, volume] row format naver_rows() produces (oldest first), so a
+    caller can use either source as a drop-in for the same downstream code."""
+    rows = []
+    for candle in candles:
+        try:
+            day = candle["timestamp"][:10].replace("-", "")
+            rows.append([
+                day, int(float(candle["openPrice"])), int(float(candle["highPrice"])),
+                int(float(candle["lowPrice"])), int(float(candle["closePrice"])), int(float(candle.get("volume") or 0)),
+            ])
+        except (KeyError, ValueError, TypeError):
+            continue
+    rows.sort(key=lambda row: row[0])
+    return rows
+
+
+def blocking_warnings_for(symbol: str) -> set[str]:
+    """TossClient().blocking_warnings(), tolerating any failure (missing
+    TOSS_CLIENT_ID/SECRET, network, rate limit) as "no warning known" --
+    callers use this to gate recommendations/holdings, and a Toss outage
+    must not block the whole recommendation or sell-check run."""
+    try:
+        return TossClient().blocking_warnings(symbol)
+    except Exception:
+        return set()
 

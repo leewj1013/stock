@@ -52,6 +52,40 @@ class RiskFiltersTest(unittest.TestCase):
         self.assertIn("entry_day_change", result.values["rejection_reasons"])
         self.assertIn("extended_above_ma20", result.values["rejection_reasons"])
 
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.app.naver_rows")
+    def test_rejects_a_candidate_under_liquidation_trading(self, naver_rows, _warnings):
+        naver_rows.return_value = [[20260701 + index, 0, 100, 100, 100, 100] for index in range(21)]
+        result = evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 22), 0, 1.5)
+        self.assertEqual("stock_warning:LIQUIDATION_TRADING", result.values["rejection_reasons"])
+
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value=set())
+    @patch("stock_alarm.app.naver_rows")
+    def test_does_not_call_toss_when_external_lookup_is_disabled(self, naver_rows, warnings):
+        naver_rows.return_value = [[20260701 + index, 0, 100, 100, 100, 100] for index in range(21)]
+        evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 22), 0, 1.5, external_lookup=False)
+        warnings.assert_not_called()
+
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value=set())
+    @patch("stock_alarm.toss_client.TossClient")
+    @patch("stock_alarm.app.naver_rows", return_value=[])
+    def test_falls_back_to_toss_candles_when_naver_returns_nothing(self, _naver_rows, toss_client_cls, _warnings):
+        toss_client_cls.return_value.candles.return_value = {
+            "candles": [
+                {"timestamp": f"2026-07-{day:02d}T09:00:00+09:00", "openPrice": "100", "highPrice": "100", "lowPrice": "100", "closePrice": "100", "volume": "100"}
+                for day in range(1, 22)
+            ],
+        }
+        result = evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 21), 0, 1.5)
+        self.assertNotEqual("insufficient_history", result.values["rejection_reasons"])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    @patch("stock_alarm.app.naver_rows", return_value=[])
+    def test_does_not_fall_back_to_toss_in_a_backtest(self, _naver_rows, toss_client_cls):
+        result = evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 22), 0, 1.5, price_rows=[], external_lookup=False)
+        self.assertEqual("insufficient_history", result.values["rejection_reasons"])
+        toss_client_cls.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
