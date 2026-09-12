@@ -8,6 +8,8 @@ $maintenancePath = Join-Path $projectRoot "scripts\run_db_maintenance.ps1"
 $maintenanceAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$maintenancePath`""
 $ensureDashboardPath = Join-Path $projectRoot "scripts\ensure_dashboard_server.ps1"
 $dashboardServerAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$ensureDashboardPath`""
+$collectWarningsPath = Join-Path $projectRoot "scripts\collect_stock_warnings.ps1"
+$collectWarningsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$collectWarningsPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -142,3 +144,7 @@ $dashboardServerXml = @"
 </Task>
 "@
 Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Xml $dashboardServerXml -Force | Out-Null
+# Toss only exposes CURRENTLY active stock warnings, not a historical
+# archive -- so this has to be collected going forward, once a day after
+# close, to eventually check whether avoiding warned stocks helps returns.
+Register-ScheduledTask -TaskName "stockAlarmCollectStockWarnings" -Action $collectWarningsAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "16:10") -Settings $taskSettings -Description "Snapshot today's active Toss stock warnings for the recommend universe (point-in-time collection)" -Force

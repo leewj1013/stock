@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS financial_statement_snapshots(
  source TEXT NOT NULL, collected_at TEXT NOT NULL,
  PRIMARY KEY(ticker, bsns_year, reprt_code));
 CREATE INDEX IF NOT EXISTS idx_financial_statement_asof ON financial_statement_snapshots(ticker, available_at);
+CREATE TABLE IF NOT EXISTS stock_warning_snapshots(
+ ticker TEXT NOT NULL, warning_type TEXT NOT NULL, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '',
+ available_at TEXT NOT NULL, collected_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'toss',
+ PRIMARY KEY(ticker, warning_type, start_date));
+CREATE INDEX IF NOT EXISTS idx_stock_warning_asof ON stock_warning_snapshots(ticker, available_at);
 CREATE TABLE IF NOT EXISTS collection_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, ticker TEXT NOT NULL, start_date TEXT, end_date TEXT,
  status TEXT NOT NULL, records INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '', collected_at TEXT NOT NULL);

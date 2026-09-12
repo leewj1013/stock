@@ -201,6 +201,33 @@ def collect_financial_statements(ticker: str, start: date, end: date, db, delay:
     return db.total_changes - before
 
 
+def collect_stock_warnings(ticker: str, db) -> int:
+    """Snapshot today's active Toss stock warnings (LIQUIDATION_TRADING,
+    OVERHEATED, INVESTMENT_WARNING/RISK, VI_*, STOCK_WARRANTS) for a ticker.
+
+    Unlike the other collectors this has no historical archive to backfill
+    from -- Toss only exposes currently-active warnings, not a past log --
+    so available_at is the collection moment itself: we genuinely didn't
+    know about a warning until we polled and saw it. Collecting from here
+    on builds up real point-in-time coverage to eventually check whether
+    avoiding warned stocks actually helps returns (see the profile category
+    score / news signal validations already done in validation_backtest.py).
+    """
+    from .toss_client import TossClient
+    now = iso_utc(datetime.now(KST))
+    try:
+        warnings = TossClient().stock_warnings(ticker)
+    except Exception:
+        return 0
+    for warning in warnings:
+        db.execute(
+            "INSERT OR REPLACE INTO stock_warning_snapshots(ticker,warning_type,start_date,end_date,available_at,collected_at,source) VALUES(?,?,?,?,?,?,?)",
+            (ticker, warning.get("warningType", ""), warning.get("startDate") or "", warning.get("endDate") or "", now, now, "toss"),
+        )
+    db.commit()
+    return len(warnings)
+
+
 def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", "disclosure", "financial"), limit: int = 0, use_dynamic_universe: bool = False) -> dict:
     """`use_dynamic_universe=True` widens collection past the static
     watchlist to whatever `recommend_universe()` (the same function `run()`
@@ -232,6 +259,8 @@ def collect(start: date, end: date, path: Path = DEFAULT_PATH, sources=("news", 
                         records = collect_financials(ticker, start, end, db)
                     elif source == "financial_statement":
                         records = collect_financial_statements(ticker, start, end, db)
+                    elif source == "stock_warning":
+                        records = collect_stock_warnings(ticker, db)
                     else:
                         raise ValueError(f"unsupported source: {source}")
                     status, message = "success", ""

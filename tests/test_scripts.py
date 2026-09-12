@@ -119,6 +119,21 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("ensure_dashboard_server.ps1", script)
         self.assertIn("<LogonTrigger>", script)
 
+    def test_register_task_registers_daily_stock_warning_collection(self):
+        with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("stockAlarmCollectStockWarnings", script)
+        self.assertIn("collect_stock_warnings.ps1", script)
+        self.assertIn("Monday,Tuesday,Wednesday,Thursday,Friday", script)
+
+    def test_collect_stock_warnings_script_runs_the_point_in_time_collector(self):
+        with open("scripts/collect_stock_warnings.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("stock_alarm.point_in_time_collect", script)
+        self.assertIn("--sources stock_warning", script)
+
     def test_issue_alert_macro(self):
         with open("issue_alert.bat", encoding="utf-8-sig") as file:
             batch = file.read()

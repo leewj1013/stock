@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from stock_alarm.point_in_time_collect import PartialCollectionError, _parse_report_period, collect, collect_financial_statements, collect_news
+from stock_alarm.point_in_time_collect import PartialCollectionError, _parse_report_period, collect, collect_financial_statements, collect_news, collect_stock_warnings
 from stock_alarm.point_in_time_store import connect
 
 
@@ -81,6 +81,33 @@ class PointInTimeCollectTest(unittest.TestCase):
         self.assertEqual(1000, caught.exception.records)
         self.assertEqual(date(2024, 6, 1), caught.exception.coverage_start)
         self.assertIn("requested start 2022-06-30 was not reached", str(caught.exception))
+
+    def test_collect_dispatches_the_stock_warning_source(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("stock_alarm.point_in_time_collect.load_env"), \
+             patch("stock_alarm.point_in_time_collect.configured_stocks", return_value={"005930": "Samsung"}), \
+             patch("stock_alarm.point_in_time_collect.collect_stock_warnings", return_value=0) as collect_stock_warnings_mock:
+            collect(date(2024, 1, 1), date(2024, 1, 2), Path(tmp) / "pit.sqlite3", sources=("stock_warning",))
+        collect_stock_warnings_mock.assert_called_once()
+        self.assertEqual("005930", collect_stock_warnings_mock.call_args.args[0])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_collect_stock_warnings_stores_active_warnings(self, toss_client_cls):
+        toss_client_cls.return_value.stock_warnings.return_value = [
+            {"warningType": "LIQUIDATION_TRADING", "startDate": "2026-09-01", "endDate": None},
+        ]
+        with tempfile.TemporaryDirectory() as tmp, closing(connect(Path(tmp) / "pit.sqlite3")) as db:
+            records = collect_stock_warnings("033340", db)
+            stored = db.execute("SELECT ticker, warning_type, start_date FROM stock_warning_snapshots").fetchall()
+
+        self.assertEqual(1, records)
+        self.assertEqual([("033340", "LIQUIDATION_TRADING", "2026-09-01")], [tuple(row) for row in stored])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_collect_stock_warnings_tolerates_a_toss_failure(self, toss_client_cls):
+        toss_client_cls.side_effect = ValueError("missing credentials")
+        with tempfile.TemporaryDirectory() as tmp, closing(connect(Path(tmp) / "pit.sqlite3")) as db:
+            self.assertEqual(0, collect_stock_warnings("033340", db))
 
 
 if __name__ == "__main__":
