@@ -74,6 +74,52 @@ class TossClientTest(unittest.TestCase):
         self.assertIn("currency=KRW", request.full_url)
 
     @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_sellable_quantity_sends_symbol_and_account_header(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": {"symbol": "005930", "sellableQuantity": "10"}}),
+        ]
+        result = TossClient("client-id", "client-secret").sellable_quantity(123456, "005930")
+        self.assertEqual("10", result["sellableQuantity"])
+        request = urlopen.call_args.args[0]
+        self.assertEqual("123456", request.get_header("X-tossinvest-account"))
+        self.assertIn("symbol=005930", request.full_url)
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_commissions_returns_a_list(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": [{"market": "KR", "rate": "0.015"}]}),
+        ]
+        result = TossClient("client-id", "client-secret").commissions(123456)
+        self.assertEqual([{"market": "KR", "rate": "0.015"}], result)
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_order_history_requires_status_and_sends_account_header(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": {"orders": [], "nextCursor": None}}),
+        ]
+        result = TossClient("client-id", "client-secret").order_history(123456, "OPEN", symbol="005930")
+        self.assertEqual([], result["orders"])
+        request = urlopen.call_args.args[0]
+        self.assertEqual("123456", request.get_header("X-tossinvest-account"))
+        self.assertIn("status=OPEN", request.full_url)
+        self.assertIn("symbol=005930", request.full_url)
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_order_detail_sends_account_header(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": {"orderId": "abc", "status": "FILLED"}}),
+        ]
+        result = TossClient("client-id", "client-secret").order_detail(123456, "abc")
+        self.assertEqual("FILLED", result["status"])
+        request = urlopen.call_args.args[0]
+        self.assertEqual("123456", request.get_header("X-tossinvest-account"))
+        self.assertIn("/api/v1/orders/abc", request.full_url)
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
     def test_stock_warnings_needs_no_account_header(self, urlopen):
         urlopen.side_effect = [
             FakeResponse({"access_token": "token", "expires_in": 86400}),

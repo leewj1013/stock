@@ -28,8 +28,13 @@ class TossClient:
     """Minimal read-only Toss Securities client.
 
     Deliberately exposes authentication, market prices, account discovery,
-    holdings, buying power, stock warnings, candles and the market calendar
-    only. No order endpoint is implemented in this module.
+    holdings, buying power, sellable quantity, commissions, order history/
+    detail, stock warnings, candles and the market calendar only. Order
+    *placement* (create/modify/cancel) is intentionally not implemented --
+    Toss's API grants it under the exact same OAuth2 client-credentials
+    scheme as everything else here (no separate permission tier), so the
+    only thing currently preventing a live trade is that this module never
+    calls it.
     """
 
     def __init__(self, client_id: str | None = None, client_secret: str | None = None,
@@ -89,6 +94,31 @@ class TossClient:
     def buying_power(self, account_seq: int, currency: str = "KRW") -> dict:
         query = urllib.parse.urlencode({"currency": currency})
         return self._get(f"/api/v1/buying-power?{query}", account_seq=account_seq).get("result", {})
+
+    def sellable_quantity(self, account_seq: int, symbol: str) -> dict:
+        """How much of `symbol` this account can sell right now."""
+        query = urllib.parse.urlencode({"symbol": symbol})
+        return self._get(f"/api/v1/sellable-quantity?{query}", account_seq=account_seq).get("result", {})
+
+    def commissions(self, account_seq: int) -> list[dict]:
+        """Per-market trading commission rates for this account."""
+        result = self._get("/api/v1/commissions", account_seq=account_seq).get("result", [])
+        return result if isinstance(result, list) else []
+
+    def order_history(self, account_seq: int, status: str, symbol: str | None = None,
+                       from_date: str | None = None, to_date: str | None = None,
+                       cursor: str | None = None, limit: int | None = None) -> dict:
+        """Paginated order history. status is required: "OPEN" (unfilled/working)
+        or "CLOSED" (filled/cancelled/expired)."""
+        query = {"status": status}
+        for key, value in (("symbol", symbol), ("from", from_date), ("to", to_date), ("cursor", cursor), ("limit", limit)):
+            if value is not None:
+                query[key] = value
+        return self._get(f"/api/v1/orders?{urllib.parse.urlencode(query)}", account_seq=account_seq).get("result", {})
+
+    def order_detail(self, account_seq: int, order_id: str) -> dict:
+        """A single order's current status and fill history."""
+        return self._get(f"/api/v1/orders/{order_id}", account_seq=account_seq).get("result", {})
 
     def stock_warnings(self, symbol: str) -> list[dict]:
         """Active trading-caution flags for a symbol: liquidation trading,
