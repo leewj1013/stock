@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from datetime import date, datetime
+from unittest.mock import patch
 
 from stock_alarm.data_quality import checked_prices, validate_price_rows
 
@@ -12,6 +13,18 @@ class DataQualityTest(unittest.TestCase):
         invalid = validate_price_rows("A", [["20260827", 100, 90, 110, 105, 10]], date(2026, 8, 27))
         self.assertEqual("stale", stale["status"])
         self.assertEqual("invalid", invalid["status"])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_enriches_the_reason_with_a_confirmed_warning_when_allowed(self, toss_client_cls):
+        toss_client_cls.return_value.stock_warnings.return_value = [{"warningType": "LIQUIDATION_TRADING"}]
+        result = validate_price_rows("A", [["20260827", 0, 0, 0, 105, 0]], date(2026, 8, 27), allow_external_lookup=True)
+        self.assertEqual("invalid_ohlc(경고:LIQUIDATION_TRADING)", result["reason"])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_does_not_look_up_warnings_by_default(self, toss_client_cls):
+        result = validate_price_rows("A", [["20260827", 0, 0, 0, 105, 0]], date(2026, 8, 27))
+        self.assertEqual("invalid_ohlc", result["reason"])
+        toss_client_cls.assert_not_called()
 
     def test_checked_prices_returns_only_valid_rows(self):
         with tempfile.TemporaryDirectory() as directory:

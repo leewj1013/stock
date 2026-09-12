@@ -15,6 +15,7 @@ def validate_price_rows(
     reference_close: int | None = None,
     reference_source: str = "",
     now: datetime | None = None,
+    allow_external_lookup: bool = False,
 ) -> dict[str, Any]:
     now = now or datetime.now()
     expected_day = expected_day or now.date()
@@ -36,6 +37,18 @@ def validate_price_rows(
                 status, reasons = "quarantined", ["close_source_mismatch"]
         except (TypeError, ValueError, IndexError):
             status, reasons = "invalid", ["unparseable_price"]
+    if status != "valid" and allow_external_lookup:
+        # Turn a bare "invalid_ohlc" into "invalid_ohlc(경고:LIQUIDATION_TRADING)"
+        # when Toss confirms a real cause, instead of leaving it as a guess.
+        # Gated so point-in-time backtests (backtest_data.py's caller) never
+        # make a live call for a historical day.
+        from .toss_client import TossClient
+        try:
+            active = sorted({row["warningType"] for row in TossClient().stock_warnings(ticker)})
+        except Exception:
+            active = []
+        if active:
+            reasons = [f"{reasons[0]}(경고:{','.join(active)})"]
     result = {
         "created_at": now.isoformat(timespec="seconds"), "ticker": ticker,
         "price_date": price_day.isoformat() if price_day else "", "source": source,
