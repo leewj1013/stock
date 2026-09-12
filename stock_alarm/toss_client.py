@@ -186,3 +186,15 @@ def blocking_warnings_for(symbol: str) -> set[str]:
     except Exception:
         return set()
 
+
+def all_warnings_for(symbol: str) -> set[str]:
+    """All active stock_warnings() types (blocking and info-only alike),
+    tolerating any failure the same way blocking_warnings_for() does. Lets a
+    caller show OVERHEATED/INVESTMENT_WARNING/VI_* as information without a
+    second Toss call -- split the result against BLOCKING_STOCK_WARNINGS
+    locally instead of calling blocking_warnings_for() separately."""
+    try:
+        return {row["warningType"] for row in TossClient().stock_warnings(symbol)}
+    except Exception:
+        return set()
+

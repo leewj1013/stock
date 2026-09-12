@@ -99,7 +99,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         pass
     market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
     market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
-    from .toss_client import blocking_warnings_for
+    from .toss_client import all_warnings_for, BLOCKING_STOCK_WARNINGS
     latest_checks = {}
     for row in recent_position_checks(1000, path):
         latest_checks.setdefault(row.get("ticker"), row)
@@ -112,7 +112,9 @@ def trader_payload(profile: str = "aggressive") -> dict:
         stop_pct = float(check.get("dynamic_stop_loss_pct") or -5)
         stop_price = round(float(holding.get("average_price") or 0) * (1 + stop_pct / 100))
         distance = check.get("distance_ma20_pct")
-        blocking = blocking_warnings_for(str(holding.get("ticker") or ""))
+        active_warnings = all_warnings_for(str(holding.get("ticker") or ""))
+        blocking = active_warnings & BLOCKING_STOCK_WARNINGS
+        non_blocking = active_warnings - BLOCKING_STOCK_WARNINGS
         if blocking:
             watch_state = f"종목 경고: {','.join(sorted(blocking))}"
         elif holding.get("position_status") == "partial":
@@ -123,6 +125,8 @@ def trader_payload(profile: str = "aggressive") -> dict:
             watch_state = "손절선 근접"
         elif distance is not None and float(distance) <= 2:
             watch_state = "20일선 주의"
+        elif non_blocking:
+            watch_state = f"종목 주의: {','.join(sorted(non_blocking))}"
         else:
             watch_state = "정상 보유"
         holding.update({

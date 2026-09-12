@@ -3,7 +3,7 @@ import unittest
 import urllib.parse
 from unittest.mock import patch
 
-from stock_alarm.toss_client import TossClient, blocking_warnings_for, candles_to_naver_rows
+from stock_alarm.toss_client import TossClient, all_warnings_for, blocking_warnings_for, candles_to_naver_rows
 
 
 class FakeResponse:
@@ -121,6 +121,19 @@ class TossClientTest(unittest.TestCase):
     def test_blocking_warnings_for_tolerates_missing_credentials(self):
         with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}, clear=False):
             self.assertEqual(set(), blocking_warnings_for("033340"))
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_all_warnings_for_includes_non_blocking_flags(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": [{"warningType": "OVERHEATED"}]}),
+        ]
+        with patch.dict("os.environ", {"TOSS_CLIENT_ID": "id", "TOSS_CLIENT_SECRET": "secret"}):
+            self.assertEqual({"OVERHEATED"}, all_warnings_for("033340"))
+
+    def test_all_warnings_for_tolerates_missing_credentials(self):
+        with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}, clear=False):
+            self.assertEqual(set(), all_warnings_for("033340"))
 
     @patch("stock_alarm.toss_client.urllib.request.urlopen")
     def test_market_calendar_kr(self, urlopen):
