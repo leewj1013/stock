@@ -83,6 +83,12 @@ def _evaluate_position(
     """
     ticker = position["ticker"].strip()
     entry_price = int(float(position["entry_price"]))
+    # price_rows is only ever passed explicitly by the point-in-time backtest
+    # (validation_backtest.py); the live path always leaves it None and fetches
+    # naver_rows() itself. Reused here to gate the live-only Toss warning
+    # lookup below -- a backtest simulating a past day must never ask Toss
+    # for *today's* warning status.
+    is_live = price_rows is None
     rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=90), end_day)
     if len(rows) < 20 or entry_price <= 0:
         return None
@@ -97,6 +103,14 @@ def _evaluate_position(
     atr_stop_multiplier = float(policy.get("stop_atr_multiplier", env_float("SELL_ATR_MULTIPLIER", 2)))
     stop_loss_pct = -max(abs(fixed_stop_pct), atr20_pct * atr_stop_multiplier)
     reasons: list[str] = []
+    if is_live:
+        from .toss_client import blocking_warnings_for
+        blocking = blocking_warnings_for(ticker)
+        if blocking:
+            # Holding through a liquidation-trading/investment-risk
+            # designation is riskier than any price-based reason to stay in,
+            # so this fires regardless of stop-loss/take-profit state.
+            reasons.append(f"종목 경고 발생: {','.join(sorted(blocking))}")
     stop_triggered = return_pct <= stop_loss_pct
     if stop_triggered:
         reasons.append(f"손절 기준 {stop_loss_pct:.1f}% 이탈")

@@ -66,6 +66,24 @@ class SellCheckTest(unittest.TestCase):
         alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100", "entry_date": "2026-07-01"}, date(2026, 7, 24))
         self.assertIn("보유 후 기대수익 미달", alert.reason)
 
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 0, 0, 110, 1]] * 20)
+    def test_check_position_force_sells_on_a_serious_stock_warning(self, _rows, _name, _warnings):
+        # A stock warning must override even a profitable, otherwise-quiet
+        # position -- holding through liquidation trading is riskier than
+        # any price-based reason to stay in.
+        alert = check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24))
+        self.assertIn("종목 경고 발생: LIQUIDATION_TRADING", alert.reason)
+
+    @patch("stock_alarm.toss_client.blocking_warnings_for")
+    @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
+    @patch("stock_alarm.sell_check.naver_rows", return_value=[[20260701, 0, 0, 0, 110, 1]] * 20)
+    def test_check_position_does_not_call_toss_when_backtest_supplies_price_rows(self, naver_rows, _name, warnings):
+        rows = [[20260701, 0, 0, 0, 110, 1]] * 20
+        check_position({"ticker": "005930", "name": "Samsung", "entry_price": "100"}, date(2026, 7, 24), price_rows=rows)
+        warnings.assert_not_called()
+
     @patch("stock_alarm.sell_check.stock_name", return_value="Samsung")
     @patch("stock_alarm.sell_check.naver_rows")
     def test_atr_can_widen_fixed_stop(self, naver_rows, _name):
