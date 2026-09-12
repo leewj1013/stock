@@ -260,6 +260,7 @@ def evaluate_naver_candidate(
     # for price_momentum_pct below, on top of the shorter windows (MA20, ATR)
     # everything else here only ever reads from the tail of `rows`.
     rows = price_rows if price_rows is not None else naver_rows(ticker, end_day - timedelta(days=140), end_day)
+    used_toss_rows = False
     if price_rows is None and external_lookup and len(rows) < 21:
         # Naver came back empty/too-short (seen this session: SSL timeouts,
         # zero-filled placeholder rows) -- try Toss's official candles once
@@ -270,11 +271,24 @@ def evaluate_naver_candidate(
             fallback_rows = candles_to_naver_rows(TossClient().candles(ticker, count=140).get("candles", []))
         except Exception:
             fallback_rows = []
-        rows = fallback_rows or rows
+        if fallback_rows:
+            rows, used_toss_rows = fallback_rows, True
     if len(rows) < 21:
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": "insufficient_history"})
     from .data_quality import validate_price_rows
-    quality = validate_price_rows(ticker, rows, end_day, allow_external_lookup=external_lookup)
+    reference_close, reference_source = None, ""
+    if price_rows is None and external_lookup and not used_toss_rows:
+        # Cross-check naver's close against Toss's independent candle feed
+        # on every live evaluation, not just when naver fails outright --
+        # catches a wrong-but-well-formed naver row (mismatched split/adjust,
+        # stale cache) that would otherwise pass validate_price_rows() clean.
+        from .toss_client import latest_close_for
+        reference_close = latest_close_for(ticker)
+        reference_source = "toss" if reference_close else ""
+    quality = validate_price_rows(
+        ticker, rows, end_day, allow_external_lookup=external_lookup,
+        reference_close=reference_close, reference_source=reference_source,
+    )
     if record_quality:
         from .data_store import record_price_quality
         record_price_quality(quality)

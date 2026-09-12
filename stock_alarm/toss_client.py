@@ -198,3 +198,14 @@ def all_warnings_for(symbol: str) -> set[str]:
     except Exception:
         return set()
 
+
+def latest_close_for(symbol: str) -> int | None:
+    """Most recent daily close from Toss, tolerating any failure as "unknown"
+    -- used to cross-check naver_rows() against an independent price source
+    without ever blocking on a Toss outage."""
+    try:
+        candles = TossClient().candles(symbol, count=1).get("candles", [])
+        return int(float(candles[-1]["closePrice"])) if candles else None
+    except Exception:
+        return None
+

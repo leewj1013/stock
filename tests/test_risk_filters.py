@@ -86,6 +86,29 @@ class RiskFiltersTest(unittest.TestCase):
         self.assertEqual("insufficient_history", result.values["rejection_reasons"])
         toss_client_cls.assert_not_called()
 
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value=set())
+    @patch("stock_alarm.toss_client.latest_close_for", return_value=250)
+    @patch("stock_alarm.app.naver_rows")
+    def test_flags_a_close_mismatch_against_toss_as_quarantined(self, naver_rows, _close, _warnings):
+        naver_rows.return_value = [[20260701 + index, 0, 100, 100, 100, 100] for index in range(21)]
+        result = evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 22), 0, 1.5, record_quality=True)
+        self.assertIn("price_quarantined:close_source_mismatch", result.values["rejection_reasons"])
+
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value=set())
+    @patch("stock_alarm.toss_client.latest_close_for")
+    @patch("stock_alarm.app.naver_rows")
+    def test_does_not_cross_check_close_when_toss_supplied_the_rows(self, naver_rows, close, _warnings):
+        naver_rows.return_value = []
+        with patch("stock_alarm.toss_client.TossClient") as toss_client_cls:
+            toss_client_cls.return_value.candles.return_value = {
+                "candles": [
+                    {"timestamp": f"2026-07-{day:02d}T09:00:00+09:00", "openPrice": "100", "highPrice": "100", "lowPrice": "100", "closePrice": "100", "volume": "100"}
+                    for day in range(1, 22)
+                ],
+            }
+            evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 21), 0, 1.5)
+        close.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

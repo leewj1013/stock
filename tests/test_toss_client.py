@@ -3,7 +3,7 @@ import unittest
 import urllib.parse
 from unittest.mock import patch
 
-from stock_alarm.toss_client import TossClient, all_warnings_for, blocking_warnings_for, candles_to_naver_rows
+from stock_alarm.toss_client import TossClient, all_warnings_for, blocking_warnings_for, candles_to_naver_rows, latest_close_for
 
 
 class FakeResponse:
@@ -134,6 +134,19 @@ class TossClientTest(unittest.TestCase):
     def test_all_warnings_for_tolerates_missing_credentials(self):
         with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}, clear=False):
             self.assertEqual(set(), all_warnings_for("033340"))
+
+    @patch("stock_alarm.toss_client.urllib.request.urlopen")
+    def test_latest_close_for_reads_the_most_recent_candle(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "token", "expires_in": 86400}),
+            FakeResponse({"result": {"candles": [{"closePrice": "70500"}]}}),
+        ]
+        with patch.dict("os.environ", {"TOSS_CLIENT_ID": "id", "TOSS_CLIENT_SECRET": "secret"}):
+            self.assertEqual(70500, latest_close_for("033340"))
+
+    def test_latest_close_for_tolerates_missing_credentials(self):
+        with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}, clear=False):
+            self.assertIsNone(latest_close_for("033340"))
 
     @patch("stock_alarm.toss_client.urllib.request.urlopen")
     def test_market_calendar_kr(self, urlopen):
