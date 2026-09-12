@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, reason_summary, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -188,6 +188,31 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual("1", rows["3일"]["completed"])
         self.assertEqual("50.0", rows["3일"]["percent"])
         self.assertEqual("0", rows["20일"]["completed"])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_market_calendar_state_parses_todays_regular_hours(self, toss_client_cls):
+        toss_client_cls.return_value.market_calendar_kr.return_value = {
+            "today": {"date": "2026-09-12", "integrated": {"regularMarket": {
+                "startTime": "2026-09-12T09:00:00+09:00", "endTime": "2026-09-12T15:30:00+09:00",
+            }}},
+        }
+        state = market_calendar_state()
+        self.assertTrue(state["connected"])
+        self.assertTrue(state["open"])
+        self.assertEqual("09:00", state["start_time"])
+        self.assertEqual("15:30", state["end_time"])
+
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_market_calendar_state_handles_a_holiday(self, toss_client_cls):
+        toss_client_cls.return_value.market_calendar_kr.return_value = {"today": {"date": "2026-09-13", "integrated": None}}
+        state = market_calendar_state()
+        self.assertTrue(state["connected"])
+        self.assertFalse(state["open"])
+
+    def test_real_account_state_reports_not_connected_without_credentials(self):
+        with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}):
+            state = real_account_state()
+        self.assertFalse(state["connected"])
 
     def test_tracking_status_renders_as_a_pill(self):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))

@@ -99,6 +99,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         pass
     market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
     market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
+    from .toss_client import blocking_warnings_for
     latest_checks = {}
     for row in recent_position_checks(1000, path):
         latest_checks.setdefault(row.get("ticker"), row)
@@ -111,7 +112,10 @@ def trader_payload(profile: str = "aggressive") -> dict:
         stop_pct = float(check.get("dynamic_stop_loss_pct") or -5)
         stop_price = round(float(holding.get("average_price") or 0) * (1 + stop_pct / 100))
         distance = check.get("distance_ma20_pct")
-        if holding.get("position_status") == "partial":
+        blocking = blocking_warnings_for(str(holding.get("ticker") or ""))
+        if blocking:
+            watch_state = f"종목 경고: {','.join(sorted(blocking))}"
+        elif holding.get("position_status") == "partial":
             watch_state = "1차 익절 완료"
         elif check.get("decision") == "SELL":
             watch_state = "매도조건 충족"
@@ -192,13 +196,38 @@ class DashboardHandler(BaseHTTPRequestHandler):
     handed to the Cloudflare tunnel (see REMOTE_PORT above).
     """
 
+    def _cors(self) -> None:
+        # Same-origin access via http://127.0.0.1:PORT/ (open_dashboard.bat)
+        # never involves CORS at all, so this handler historically sent no
+        # CORS headers. Opening dashboard.html directly (file://) is
+        # cross-origin with Origin: null, and browsers then withhold the
+        # response from JS without this header -- the dashboard's trader
+        # panel silently renders its empty initial state instead. HOST
+        # already binds to loopback only, so this stays narrowly scoped to
+        # file:// rather than reflecting arbitrary origins.
+        if self.headers.get("Origin", "") == "null":
+            self.send_header("Access-Control-Allow-Origin", "null")
+            self.send_header("Vary", "Origin")
+
     def _json(self, status: int, body: dict) -> None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self._cors()
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        if self.headers.get("Origin", "") != "null":
+            self.send_error(403)
+            return
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)

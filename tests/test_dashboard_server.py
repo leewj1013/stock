@@ -48,6 +48,26 @@ class DashboardServerTest(unittest.TestCase):
 
         self.assertEqual("항공화물운송과물류", payload["holdings"][0]["sector"])
 
+    @patch("stock_alarm.toss_client.blocking_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.dashboard_server.recent_equity_trend", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
+    @patch("stock_alarm.dashboard_server.recent_price_quality", return_value=[])
+    @patch("stock_alarm.dashboard_server.active_strategy_version", return_value={})
+    @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
+    @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
+    @patch("stock_alarm.dashboard_server.virtual_trader_state")
+    @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
+    def test_trader_payload_flags_a_holding_with_an_active_stock_warning(self, _prices, state, *_mocks):
+        state.return_value = {
+            "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
+            "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
+        }
+
+        payload = trader_payload()
+
+        self.assertEqual("종목 경고: LIQUIDATION_TRADING", payload["holdings"][0]["watch_state"])
+
     def test_profile_db_path_falls_back_to_aggressive_for_unknown_names(self):
         self.assertEqual(profile_db_path("aggressive"), profile_db_path("not-a-real-profile"))
         self.assertNotEqual(profile_db_path("aggressive"), profile_db_path("neutral"))

@@ -54,6 +54,7 @@ NUMERIC_COLUMNS = {
     "return_3d_pct",
     "return_5d_pct",
     "entry_price",
+    "average_price",
     "selected",
     "holding_days",
     "distance_ma20_pct",
@@ -101,6 +102,7 @@ STATUS_PILL_CLASSES = {"추적 중": "pill-accent", "매도 알림": "pill-dange
 TRACKING_STATUS_DISPLAY = {"추적 중": "진행 중", "성과 수집 중": "진행 중", "매도 알림": "완료 (매도)", "성과 완료": "완료 (기간만료)"}
 LABELS = {
     "stockAlarm Dashboard": "국내주식 알림 대시보드",
+    "실제 계좌": "실제 계좌",
     "generated": "생성 시각",
     "Issues": "문제",
     "Today run details": "오늘 실행 상세",
@@ -173,6 +175,8 @@ LABELS = {
     "return_3d_pct": "3일 수익률",
     "return_5d_pct": "5일 수익률",
     "entry_price": "진입가",
+    "average_price": "평균매수가",
+    "account_type": "계좌 유형",
     "Candidate rejection summary": "후보 탈락 사유 요약",
     "Recent position checks": "최근 전체 보유종목 판단",
     "started_at": "시작시각",
@@ -285,6 +289,10 @@ DISPLAY_VALUES = {
     "reference_unavailable": "비교가격 확인 불가",
     "notifier returned false": "알림 전송 실패",
     "stock_alarm": "stockAlarm",
+    "BROKERAGE": "종합매매",
+    "OVERSEAS_DERIVATIVES": "해외파생",
+    "PENSION_SAVINGS": "연금저축",
+    "RESHORING_INVESTMENT": "RIA",
     "kospi_buy_hold": "KOSPI 매수후보유",
     "equal_weight_buy_hold": "동일가중 매수후보유",
     "momentum": "단순 모멘텀",
@@ -326,6 +334,7 @@ NAV_ICONS = {
     "list": '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     "chart": '<path d="M6 20V14M12 20V6M18 20v-8"/>',
     "settings": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
+    "wallet": '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16" cy="14" r="1"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
 }
@@ -596,6 +605,71 @@ def position_summary_rows(limit: int | None = None) -> list[dict[str, str]]:
             "dynamic_stop_loss_pct": check.get("dynamic_stop_loss_pct", ""),
         })
     return rows
+
+
+def market_calendar_state() -> dict:
+    """Today's official KR market hours (Toss market-calendar), display-only
+    -- not wired into is_trading_day()/is_market_alert_time(), which keep
+    using their existing Naver-based check for now."""
+    try:
+        from .toss_client import TossClient
+        today = TossClient().market_calendar_kr().get("today", {})
+        integrated = today.get("integrated")
+        regular = (integrated or {}).get("regularMarket")
+        return {
+            "connected": True, "date": today.get("date", ""), "open": bool(integrated),
+            "start_time": regular.get("startTime", "")[11:16] if regular else "",
+            "end_time": regular.get("endTime", "")[11:16] if regular else "",
+        }
+    except Exception as error:
+        return {"connected": False, "reason": str(error)}
+
+
+def real_account_state() -> dict:
+    """Live read-only snapshot from the connected Toss Securities account.
+
+    Mockup-stage: rendered synchronously into the static HTML like the rest
+    of this file, not client-fetched like the virtual trader tab. Any
+    failure (missing keys, network, empty account) degrades to a
+    "not connected" state rather than breaking the whole dashboard.
+    """
+    try:
+        from .toss_client import TossClient
+        client = TossClient()
+        accounts = client.accounts()
+        if not accounts:
+            return {"connected": False, "reason": "연결된 계좌 없음"}
+        account_seq = accounts[0]["accountSeq"]
+        holdings = client.holdings(account_seq)
+        buying_power = client.buying_power(account_seq)
+        cash = int(float(buying_power.get("cashBuyingPower") or 0))
+        # Mockup scope: 국내 주식만 (해외주식 제외). Sum from the KR items
+        # directly rather than the overview's krw total -- same number today,
+        # but this way it can't silently include a KR-denominated instrument
+        # that isn't a plain domestic stock.
+        domestic_items = [item for item in holdings.get("items", []) if item.get("marketCountry") == "KR"]
+        market_value = int(sum(float((item.get("marketValue") or {}).get("amount") or 0) for item in domestic_items))
+        profit_loss = int(sum(float((item.get("profitLoss") or {}).get("amount") or 0) for item in domestic_items))
+        rows = [
+            {
+                "name": item.get("name", ""),
+                "ticker": item.get("symbol", ""),
+                "quantity": item.get("quantity", ""),
+                "average_price": item.get("averagePurchasePrice", ""),
+                "current_price": item.get("lastPrice", ""),
+                "valuation": (item.get("marketValue") or {}).get("amount", ""),
+                "profit_loss": (item.get("profitLoss") or {}).get("amount", ""),
+                "return_pct": str(round(float((item.get("profitLoss") or {}).get("rate") or 0) * 100, 2)),
+            }
+            for item in domestic_items
+        ]
+        return {
+            "connected": True, "account_type": accounts[0].get("accountType", ""),
+            "cash": cash, "market_value": market_value, "profit_loss": profit_loss,
+            "total_equity": cash + market_value, "holdings": rows,
+        }
+    except Exception as error:
+        return {"connected": False, "reason": str(error)}
 
 
 def profile_selection_rows() -> list[dict[str, str]]:
@@ -994,8 +1068,30 @@ def render() -> str:
   <div class="pager" id="trader-sales-pager" data-page-size="15"></div>
 </section>
 """
+    real_account = real_account_state()
+    real_account_tab = f"""
+<div class="home-heading"><div><h2>실제 계좌</h2><p class="muted">토스증권 API로 연결된 실제 증권 계좌입니다 (조회 전용, 자동 매매 없음, 국내주식만 표시).</p></div><span class="system-pill {'ok' if real_account['connected'] else 'bad'}">{'연결됨 · ' + display_value(real_account.get('account_type', '')) if real_account['connected'] else '연결 안 됨'}</span></div>
+{f'''<div class="trader-account-grid">
+  <div class="trader-balance primary"><span>총자산</span><strong>{real_account['total_equity']:,}원</strong></div>
+  <div class="trader-balance"><span>주문 가능 현금</span><strong>{real_account['cash']:,}원</strong></div>
+  <div class="trader-balance"><span>주식 평가액</span><strong>{real_account['market_value']:,}원</strong></div>
+  <div class="trader-balance"><span>평가손익</span><strong>{real_account['profit_loss']:+,}원</strong></div>
+</div>
+{user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct"], "보유 중인 종목이 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
+"""
+    market_calendar = market_calendar_state()
+    market_calendar_card = (
+        f'<section class="home-operation"><h2>오늘 장 운영 정보</h2><div class="operation-grid">'
+        f'<div><span>날짜</span><b>{e(market_calendar["date"])}</b></div>'
+        f'<div><span>개장 여부</span><b>{"개장" if market_calendar["open"] else "휴장"}</b></div>'
+        f'<div><span>정규장 시작</span><b>{e(market_calendar["start_time"] or "-")}</b></div>'
+        f'<div><span>정규장 종료</span><b>{e(market_calendar["end_time"] or "-")}</b></div>'
+        f'</div></section>'
+        if market_calendar["connected"] else ""
+    )
     system_tab = f"""
 <div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'경고 ' + str(issue_count) + '건' if issue_count else '모든 작업 정상'}</span></div>
+{market_calendar_card}
 <section class="learning-status"><h2>데이터 학습 준비</h2><div class="progress-heading"><b>20일 성과 표본 {progress['current']} / {progress['target']}</b><span>{progress['percent']}%</span></div><div class="progress-track"><span style="width:{progress['percent']}%"></span></div><p class="muted">최소 300개가 쌓이면 강화된 검증 절차를 통해 가중치 승격 여부를 판단합니다.</p></section>
 {table("데이터 축적 현황", data_accumulation_rows(), ["metric", "value", "status"])}
 {table("표본 진행 현황", sample_progress_rows(), ["horizon", "completed", "total", "percent"])}
@@ -1052,8 +1148,8 @@ def render() -> str:
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:var(--bg-surface);color:var(--text-primary);border-radius:14px;padding:16px;box-shadow:0 1px 4px var(--shadow-color);border:1px solid var(--border)}} .highlight b{{display:block;color:var(--text-strong)}} .highlight span{{display:block;color:var(--text-primary);font-size:24px;font-weight:800;margin-top:8px}}
 .tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;width:200px;position:fixed;top:118px;left:max(24px,calc((100vw - 1648px)/2 + 24px));z-index:20;background:var(--bg-accent-card);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;gap:10px;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-on-accent-muted)}} .tab-label:hover{{background:var(--hover-overlay)}} .tab-label svg{{flex-shrink:0}}
-.tab-panel{{display:none;margin-left:228px;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
-#tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-system:checked~#system-panel{{display:block}}
+.tab-panel{{display:none;margin-left:228px;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-real-account:checked~.tab-labels label[for="tab-real-account"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
+#tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-real-account:checked~#real-account-panel,#tab-system:checked~#system-panel{{display:block}}
 section{{min-width:0;background:var(--bg-section);border:1px solid var(--section-border);border-radius:12px;padding:20px;margin:20px 0;box-shadow:0 1px 4px var(--shadow-color);overflow-x:auto;overflow-y:hidden}} section h2{{margin:0 0 16px}}
 details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid var(--section-border)}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
@@ -1089,16 +1185,19 @@ li{{margin:4px 0}}
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-tracking" name="tabs" type="radio">
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
+<input class="tab-input" id="tab-real-account" name="tabs" type="radio">
 <input class="tab-input" id="tab-system" name="tabs" type="radio">
 <div class="tab-labels" role="tablist" aria-label="대시보드 화면">
 <label class="tab-label" for="tab-stocks" role="tab" tabindex="0">{nav_icon("home")}홈</label>
 <label class="tab-label" for="tab-tracking" role="tab" tabindex="0">{nav_icon("list")}추천 추적</label>
 <label class="tab-label" for="tab-trader" role="tab" tabindex="0">{nav_icon("chart")}가상 트레이더</label>
+<label class="tab-label" for="tab-real-account" role="tab" tabindex="0">{nav_icon("wallet")}실제 계좌</label>
 <label class="tab-label" for="tab-system" role="tab" tabindex="0">{nav_icon("settings")}시스템 관리</label>
 </div>
 <div class="tab-panel" id="stocks-panel" role="tabpanel">{stock_tab}</div>
 <div class="tab-panel" id="tracking-panel" role="tabpanel">{tracking_tab}</div>
 <div class="tab-panel" id="trader-panel" role="tabpanel">{trader_tab}</div>
+<div class="tab-panel" id="real-account-panel" role="tabpanel">{real_account_tab}</div>
 <div class="tab-panel" id="system-panel" role="tabpanel">{system_tab}</div>
 </div>
 <script>
@@ -1185,7 +1284,7 @@ function renderSales() {{
     if(!sales.length) body.innerHTML='<tr><td colspan="10" class="muted">아직 매도 내역이 없습니다.</td></tr>';
     pager.textContent=""; const pages=Math.ceil(sales.length/pageSize); if(pages<=1)return;
     const add=(label,target,active=false)=>{{const button=document.createElement("button");button.type="button";button.textContent=label;button.className=active?"active":"";button.onclick=()=>{{page=Math.max(0,Math.min(target,pages-1));draw();}};pager.appendChild(button);}};
-    add("‹",page-1); const block=Math.floor(page/5)*5; for(let index=block;index<Math.min(block+5,pages);index++)add(String(index+1),index,index===page); add("›",page+1);
+    add("«",0); add("‹",page-1); const block=Math.floor(page/5)*5; for(let index=block;index<Math.min(block+5,pages);index++)add(String(index+1),index,index===page); add("›",page+1); add("»",pages-1);
   }};
   draw();
 }}
@@ -1310,6 +1409,7 @@ document.querySelectorAll("section").forEach((section) => {{
     rows.forEach((row, index) => row.style.display = Math.floor(index / pageSize) === currentPage ? "" : "none");
     pager.querySelectorAll("button.page-number").forEach(button => {{ const target=Number(button.dataset.page); button.hidden=Math.floor(target/5)!==Math.floor(currentPage/5); button.classList.toggle("active", target===currentPage); }});
   }};
+  const first=document.createElement("button"); first.type="button"; first.textContent="«"; first.addEventListener("click",()=>show(0)); pager.appendChild(first);
   const prev=document.createElement("button"); prev.type="button"; prev.textContent="‹"; prev.addEventListener("click",()=>show(currentPage-1)); pager.appendChild(prev);
   for (let page = 0; page < pageCount; page++) {{
     const button = document.createElement("button");
@@ -1320,6 +1420,7 @@ document.querySelectorAll("section").forEach((section) => {{
     pager.appendChild(button);
   }}
   const next=document.createElement("button"); next.type="button"; next.textContent="›"; next.addEventListener("click",()=>show(currentPage+1)); pager.appendChild(next);
+  const last=document.createElement("button"); last.type="button"; last.textContent="»"; last.addEventListener("click",()=>show(pageCount-1)); pager.appendChild(last);
   show(0);
 }});
 </script>
