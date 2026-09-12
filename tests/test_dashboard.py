@@ -43,8 +43,8 @@ class DashboardTest(unittest.TestCase):
     def test_render_has_virtual_trader_and_five_page_pager(self, _recommendations):
         html = render()
         self.assertLess(html.index(">홈</label>"), html.index(">추천 추적</label>"))
-        self.assertLess(html.index(">추천 추적</label>"), html.index(">가상 트레이더</label>"))
-        self.assertLess(html.index(">가상 트레이더</label>"), html.index(">시스템 관리</label>"))
+        self.assertLess(html.index(">추천 추적</label>"), html.index(">가상 트레이더<"))
+        self.assertLess(html.index(">가상 트레이더<"), html.index(">시스템 관리</label>"))
         self.assertIn("추천 추적 내역", html)
         self.assertIn("stockAlarm.virtualTrader.v1", html)
         self.assertIn("trader-total-equity", html)
@@ -228,6 +228,24 @@ class DashboardTest(unittest.TestCase):
         state = real_account_state()
 
         self.assertEqual("종목 경고: LIQUIDATION_TRADING", state["holdings"][0]["watch_state"])
+
+    @patch.dict("os.environ", {})
+    @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
+    @patch("stock_alarm.toss_client.all_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.toss_client.TossClient")
+    def test_nav_badge_shows_the_real_account_warning_count(self, toss_client_cls, _warnings, _recommendations):
+        toss_client_cls.return_value.accounts.return_value = [{"accountSeq": 1, "accountType": "BROKERAGE"}]
+        toss_client_cls.return_value.holdings.return_value = {"items": [
+            {"symbol": "005930", "name": "Samsung", "marketCountry": "KR", "quantity": 10,
+             "averagePurchasePrice": 70000, "lastPrice": 71000,
+             "marketValue": {"amount": 710000}, "profitLoss": {"amount": 10000, "rate": 0.014}},
+        ]}
+        toss_client_cls.return_value.buying_power.return_value = {"cashBuyingPower": "0"}
+
+        html = render()
+
+        self.assertIn('실제 계좌<span class="nav-badge">1</span>', html)
+        self.assertIn('id="nav-badge-trader" hidden', html)
 
     def test_tracking_status_renders_as_a_pill(self):
         self.assertIn("status-pill pill-accent", cell("추적 중", "tracking_status"))

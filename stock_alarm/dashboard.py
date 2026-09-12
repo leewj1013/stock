@@ -1082,6 +1082,7 @@ def render() -> str:
 </section>
 """
     real_account = real_account_state()
+    real_account_warning_count = sum(1 for row in real_account.get("holdings", []) if str(row.get("watch_state", "")).startswith("종목"))
     real_account_tab = f"""
 <div class="home-heading"><div><h2>실제 계좌</h2><p class="muted">토스증권 API로 연결된 실제 증권 계좌입니다 (조회 전용, 자동 매매 없음, 국내주식만 표시).</p></div><span class="system-pill {'ok' if real_account['connected'] else 'bad'}">{'연결됨 · ' + display_value(real_account.get('account_type', '')) if real_account['connected'] else '연결 안 됨'}</span></div>
 {f'''<div class="trader-account-grid">
@@ -1168,6 +1169,7 @@ details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
 .ok{{color:var(--success-text);font-weight:600}} .warn{{color:var(--warn-text);font-weight:600}} .bad{{color:var(--danger-text);font-weight:600}} .pos{{color:var(--pos);font-weight:700}} .neg{{color:var(--neg);font-weight:700}} .zero{{color:var(--zero);font-weight:600}}
 .status-pill{{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap}} .status-pill.pill-accent{{background:var(--accent-bg);color:var(--accent-text)}} .status-pill.pill-danger{{background:var(--danger-bg);color:var(--danger-text)}} .status-pill.pill-neutral{{background:var(--pill-neutral-bg);color:var(--text-secondary)}}
+.nav-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:999px;background:var(--danger-bg);color:var(--danger-text);font-size:11px;font-weight:700}} .nav-badge[hidden]{{display:none}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .trader-balance span{{display:block;color:var(--text-on-accent-muted)}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text-primary)}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:var(--bg-accent-card);color:var(--text-on-accent);cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
@@ -1203,8 +1205,8 @@ li{{margin:4px 0}}
 <div class="tab-labels" role="tablist" aria-label="대시보드 화면">
 <label class="tab-label" for="tab-stocks" role="tab" tabindex="0">{nav_icon("home")}홈</label>
 <label class="tab-label" for="tab-tracking" role="tab" tabindex="0">{nav_icon("list")}추천 추적</label>
-<label class="tab-label" for="tab-trader" role="tab" tabindex="0">{nav_icon("chart")}가상 트레이더</label>
-<label class="tab-label" for="tab-real-account" role="tab" tabindex="0">{nav_icon("wallet")}실제 계좌</label>
+<label class="tab-label" for="tab-trader" role="tab" tabindex="0">{nav_icon("chart")}가상 트레이더<span class="nav-badge" id="nav-badge-trader" hidden></span></label>
+<label class="tab-label" for="tab-real-account" role="tab" tabindex="0">{nav_icon("wallet")}실제 계좌{f'<span class="nav-badge">{real_account_warning_count}</span>' if real_account_warning_count else ''}</label>
 <label class="tab-label" for="tab-system" role="tab" tabindex="0">{nav_icon("settings")}시스템 관리</label>
 </div>
 <div class="tab-panel" id="stocks-panel" role="tabpanel">{stock_tab}</div>
@@ -1365,6 +1367,9 @@ function renderTrader(message="") {{
     values.forEach((value,index)=>{{const cell=document.createElement("td");cell.textContent=value;if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";row.appendChild(cell);}}); body.appendChild(row);
   }});
   if (!body.children.length) body.innerHTML='<tr><td colspan="10" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
+  const warningCount=(trader.holdings||[]).filter(item=>(item.watch_state||"").startsWith("종목")).length;
+  const navBadge=document.getElementById("nav-badge-trader");
+  navBadge.textContent=warningCount; navBadge.hidden=!warningCount;
   renderSales();
   document.getElementById("buy-button").disabled = remoteMode || !(trader.cash > 0 && traderCandidates.length) || risk.status === "halted";
   if(message) document.getElementById("trader-message").textContent=message;
