@@ -10,6 +10,8 @@ $ensureDashboardPath = Join-Path $projectRoot "scripts\ensure_dashboard_server.p
 $dashboardServerAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$ensureDashboardPath`""
 $collectWarningsPath = Join-Path $projectRoot "scripts\collect_stock_warnings.ps1"
 $collectWarningsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$collectWarningsPath`""
+$shadowTraderPath = Join-Path $projectRoot "scripts\run_shadow_trader.ps1"
+$shadowTraderAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$shadowTraderPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -148,3 +150,8 @@ Register-ScheduledTask -TaskName "stockAlarmDashboardServer" -Xml $dashboardServ
 # archive -- so this has to be collected going forward, once a day after
 # close, to eventually check whether avoiding warned stocks helps returns.
 Register-ScheduledTask -TaskName "stockAlarmCollectStockWarnings" -Action $collectWarningsAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "16:10") -Settings $taskSettings -Description "Snapshot today's active Toss stock warnings for the recommend universe (point-in-time collection)" -Force
+# Shadow mode (step A of the real-account auto-trading rollout): log what
+# BUY/SELL orders the real account WOULD have received today, sized against
+# its real cash/holdings, without ever placing a real order. Runs after the
+# daily recommendation (16:00) so today's virtual_trades already exist.
+Register-ScheduledTask -TaskName "stockAlarmShadowTrader" -Action $shadowTraderAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "16:15") -Settings $taskSettings -Description "Log hypothetical real-account orders for review (shadow mode, no real orders placed)" -Force

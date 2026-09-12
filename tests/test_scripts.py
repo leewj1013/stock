@@ -134,6 +134,19 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.point_in_time_collect", script)
         self.assertIn("--sources stock_warning", script)
 
+    def test_register_task_registers_daily_shadow_trader(self):
+        with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("stockAlarmShadowTrader", script)
+        self.assertIn("run_shadow_trader.ps1", script)
+
+    def test_shadow_trader_script_runs_the_shadow_trader_module(self):
+        with open("scripts/run_shadow_trader.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn("stock_alarm.shadow_trader", script)
+
     def test_issue_alert_macro(self):
         with open("issue_alert.bat", encoding="utf-8-sig") as file:
             batch = file.read()

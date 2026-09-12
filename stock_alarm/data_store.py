@@ -282,6 +282,19 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             ON candidate_snapshots(ticker, evaluated_at);
         CREATE INDEX IF NOT EXISTS idx_position_checks_ticker_time
             ON position_checks(ticker, checked_at);
+        CREATE TABLE IF NOT EXISTS shadow_orders (
+            shadow_order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            price INTEGER NOT NULL DEFAULT 0,
+            cost INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_shadow_orders_time ON shadow_orders(created_at);
         """
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(strategy_runs)")}
