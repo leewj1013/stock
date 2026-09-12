@@ -294,6 +294,20 @@ class DashboardTest(unittest.TestCase):
         self.assertIn('실제 계좌<span class="nav-badge">1</span>', html)
         self.assertIn('id="nav-badge-trader" hidden', html)
 
+    @patch("stock_alarm.dashboard.health_lines", return_value=[])
+    @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
+    @patch("stock_alarm.dashboard.recent_shadow_orders")
+    def test_shadow_order_log_renders_translated_columns(self, shadow_orders, _recommendations, _health):
+        shadow_orders.return_value = [
+            {"created_at": "2026-09-12T16:15:00", "ticker": "005930", "name": "Samsung", "side": "BUY",
+             "order_type": "MARKET", "quantity": 10, "price": 70000, "cost": 700000, "reason": "recommendation"},
+        ]
+
+        html = render()
+
+        self.assertIn("섀도 주문 로그", html)
+        self.assertIn("매수", html)
+
     def test_watch_state_pill_class_matches_by_prefix_despite_the_ticker_suffix(self):
         self.assertEqual("pill-danger", watch_state_pill_class("종목 경고: LIQUIDATION_TRADING"))
         self.assertEqual("pill-warn", watch_state_pill_class("종목 주의: OVERHEATED"))

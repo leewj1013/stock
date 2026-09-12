@@ -11,7 +11,7 @@ from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
 from .data_store import (
     latest_portfolio_risk, latest_profile_selections, recent_position_checks, recent_price_quality, recent_runs,
-    recent_sell_outcomes, recent_virtual_trades, rejection_summary,
+    recent_sell_outcomes, recent_shadow_orders, recent_virtual_trades, rejection_summary,
 )
 from .health import lines as health_lines
 from .positions_check import active_position_tickers
@@ -95,6 +95,8 @@ NUMERIC_COLUMNS = {
     "filled_price",
     "filled_amount",
     "commission_amount",
+    "price",
+    "cost",
 }
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at", "ordered_at"}
@@ -215,6 +217,8 @@ LABELS = {
     "commission_rate": "수수료율",
     "start_date": "적용 시작일",
     "end_date": "적용 종료일",
+    "price": "가격",
+    "cost": "예상금액",
     "Candidate rejection summary": "후보 탈락 사유 요약",
     "Recent position checks": "최근 전체 보유종목 판단",
     "started_at": "시작시각",
@@ -1179,6 +1183,15 @@ def render() -> str:
 """
     real_account = real_account_state()
     real_account_warning_count = sum(1 for row in real_account.get("holdings", []) if str(row.get("watch_state", "")).startswith("종목"))
+    shadow_order_rows = [
+        {
+            "created_at": row.get("created_at", ""), "ticker": row.get("ticker", ""), "name": row.get("name", ""),
+            "order_side": row.get("side", ""), "order_type": row.get("order_type", ""),
+            "order_quantity": row.get("quantity", ""), "price": row.get("price", ""), "cost": row.get("cost", ""),
+            "reason": row.get("reason", ""),
+        }
+        for row in recent_shadow_orders(30)
+    ]
     real_account_tab = f"""
 <div class="home-heading"><div><h2>실제 계좌</h2><p class="muted">토스증권 API로 연결된 실제 증권 계좌입니다 (조회 전용, 자동 매매 없음, 국내주식만 표시).</p></div><span class="system-pill {'ok' if real_account['connected'] else 'bad'}">{'연결됨 · ' + display_value(real_account.get('account_type', '')) if real_account['connected'] else '연결 안 됨'}</span></div>
 {f'''<div class="trader-account-grid">
@@ -1190,6 +1203,7 @@ def render() -> str:
 {user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct", "watch_state"], "보유 중인 종목이 없습니다.")}
 {user_table("최근 주문 내역", real_account["orders"], ["ordered_at", "ticker", "order_side", "order_type", "order_status", "order_quantity", "filled_price", "filled_amount", "commission_amount"], "최근 체결/취소된 주문이 없습니다.")}
 {user_table("수수료율", real_account["commissions"], ["commission_rate", "start_date", "end_date"], "수수료율 정보를 확인할 수 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
+{user_table("섀도 주문 로그 (관찰 전용 · 실제 주문 없음)", shadow_order_rows, ["created_at", "ticker", "name", "order_side", "order_type", "order_quantity", "price", "cost", "reason"], "자동매매가 켜져 있었다면 나갔을 주문을 계산만 해서 기록합니다. 아직 기록된 항목이 없습니다.")}
 """
     market_calendar = market_calendar_state()
     market_calendar_card = (

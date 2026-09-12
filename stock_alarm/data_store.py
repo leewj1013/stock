@@ -931,6 +931,10 @@ def recent_price_quality(limit: int = 100, path: str = DB_PATH) -> list[dict[str
     return query_rows("SELECT * FROM price_quality ORDER BY quality_id DESC LIMIT ?", (limit,), path)
 
 
+def recent_shadow_orders(limit: int = 100, path: str = DB_PATH) -> list[dict[str, Any]]:
+    return query_rows("SELECT * FROM shadow_orders ORDER BY shadow_order_id DESC LIMIT ?", (limit,), path)
+
+
 def upsert_recommendation_outcomes(rows: Iterable[dict[str, Any]], path: str = DB_PATH) -> None:
     columns = [
         "pick_date", "ticker", "name", "strategy_version", "score", "factors_json", "entry_date", "entry_price",
