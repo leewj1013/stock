@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -43,6 +44,17 @@ class IssueAlertTest(unittest.TestCase):
     @patch("stock_alarm.issue_alert.send_notification")
     def test_run_skips_when_market_closed(self, send, issues, _trading, _env):
         self.assertEqual("market_closed", run())
+        issues.assert_not_called()
+        send.assert_not_called()
+
+    @patch.dict(os.environ, {"ISSUE_ALERT_ENABLED": "0"})
+    @patch("stock_alarm.issue_alert.load_env")
+    @patch("stock_alarm.issue_alert.is_trading_day")
+    @patch("stock_alarm.issue_alert.issue_rows")
+    @patch("stock_alarm.issue_alert.send_notification")
+    def test_run_skips_entirely_when_disabled(self, send, issues, trading, _env):
+        self.assertEqual("disabled", run())
+        trading.assert_not_called()
         issues.assert_not_called()
         send.assert_not_called()
 

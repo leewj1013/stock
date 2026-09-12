@@ -20,6 +20,25 @@ class StrategyLearningTest(unittest.TestCase):
         run()
         load_env.assert_called_once()
 
+    @patch("stock_alarm.notifier.send_notification")
+    @patch("stock_alarm.strategy_learning.learn", return_value={"status": "insufficient_data", "sample_count": 0})
+    @patch("stock_alarm.strategy_learning.sync_outcomes")
+    @patch("stock_alarm.strategy_learning.load_env")
+    def test_run_does_not_notify_while_still_waiting_on_samples(self, _load_env, _sync, _learn, send):
+        # "전략 학습보류" would otherwise repeat every run for months until the
+        # 300-sample minimum is reached -- pure noise, unlike an actual
+        # promote/reject/rollback decision.
+        run()
+        send.assert_not_called()
+
+    @patch("stock_alarm.notifier.send_notification")
+    @patch("stock_alarm.strategy_learning.learn", return_value={"status": "rejected", "sample_count": 300})
+    @patch("stock_alarm.strategy_learning.sync_outcomes")
+    @patch("stock_alarm.strategy_learning.load_env")
+    def test_run_still_notifies_for_a_real_decision(self, _load_env, _sync, _learn, send):
+        run()
+        send.assert_called_once()
+
     @patch("stock_alarm.app.naver_rows", return_value=[])
     @patch("stock_alarm.strategy_learning.query_rows", return_value=[])
     def test_sync_outcomes_caps_benchmark_lookup_to_today(self, _query_rows, naver_rows):

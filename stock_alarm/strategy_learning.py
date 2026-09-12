@@ -17,11 +17,16 @@ from .data_store import (
     save_strategy_version,
     upsert_recommendation_outcomes,
 )
+from .statistical_validation import newey_west_mean_test
 
 
 FACTORS = ("volume_score", "trading_value_score", "trend_score", "relative_strength_score", "news_score", "disclosure_score", "financial_score")
 DEFAULT_WEIGHTS = {factor: 1.0 for factor in FACTORS}
 RETURN_WEIGHTS = (("return_1d_pct", 0.2), ("return_3d_pct", 0.3), ("return_5d_pct", 0.3), ("return_10d_pct", 0.2))
+# objective() blends horizons up to 10 trading days, so two picks within 10
+# sessions of each other can share return-window overlap; lag = horizon - 1
+# matches the convention newey_west_mean_test's own docstring documents.
+RETURN_HAC_LAG = 9
 
 
 def active_weights(path: str = DB_PATH) -> dict[str, float]:
@@ -128,35 +133,26 @@ def _drawdown(values: list[float]) -> float:
     return round(worst, 4)
 
 
-def return_distribution_p_value(proposed: list[float], baseline: list[float]) -> float:
-    """One-sided Mann-Whitney U test for proposed returns being higher.
+def return_distribution_p_value(proposed: list[float], baseline: list[float], lag: int = RETURN_HAC_LAG) -> float:
+    """One-sided test for proposed's mean return being higher than baseline's.
 
-    This dependency-free non-parametric test is intentionally conservative for
-    the paper-trading promotion gate. Ties use average ranks and tie correction.
+    Both groups can hold autocorrelated 1/3/5/10-day forward returns from
+    overlapping pick windows (adjacent picks within `lag` sessions share
+    part of their return window). A rank test that assumes independent
+    observations -- the previous Mann-Whitney implementation -- understates
+    its own p-value here. Each group's mean instead gets a Newey-West
+    (Bartlett HAC) standard error, and the two are combined with a standard
+    two-sample z test.
     """
     if not proposed or not baseline:
         return 1.0
-    tagged = [(float(value), 0) for value in proposed] + [(float(value), 1) for value in baseline]
-    tagged.sort(key=lambda item: item[0])
-    rank_sum = 0.0
-    tie_sizes = []
-    index = 0
-    while index < len(tagged):
-        end = index + 1
-        while end < len(tagged) and tagged[end][0] == tagged[index][0]:
-            end += 1
-        average_rank = (index + 1 + end) / 2
-        rank_sum += average_rank * sum(group == 0 for _value, group in tagged[index:end])
-        tie_sizes.append(end - index)
-        index = end
-    n1, n2 = len(proposed), len(baseline)
-    u = rank_sum - n1 * (n1 + 1) / 2
-    total = n1 + n2
-    tie_term = sum(size ** 3 - size for size in tie_sizes)
-    variance = n1 * n2 / 12 * ((total + 1) - tie_term / max(total * (total - 1), 1))
-    if variance <= 0:
-        return 1.0
-    z = (u - n1 * n2 / 2 - 0.5) / math.sqrt(variance)
+    proposed_stat = newey_west_mean_test(proposed, lag, "two-sided")
+    baseline_stat = newey_west_mean_test(baseline, lag, "two-sided")
+    diff = (proposed_stat["mean"] or 0.0) - (baseline_stat["mean"] or 0.0)
+    pooled_se = math.sqrt((proposed_stat["standard_error"] or 0.0) ** 2 + (baseline_stat["standard_error"] or 0.0) ** 2)
+    if pooled_se == 0:
+        return 0.0 if diff > 0 else 1.0
+    z = diff / pooled_se
     return round(max(0.0, min(1.0, 0.5 * math.erfc(z / math.sqrt(2)))), 8)
 
 
@@ -189,7 +185,12 @@ def _ranked_returns(validation: list[tuple[dict, float]], weights: dict[str, flo
         score = sum(float(factors.get(factor, 0)) * weights[factor] for factor in FACTORS)
         scored.append((score, str(row.get("pick_date") or ""), str(row.get("ticker") or ""), float(value)))
     scored.sort(reverse=True)
-    return [value for _score, _date, _ticker, value in scored[: max(1, len(scored) // 2)]]
+    selected = scored[: max(1, len(scored) // 2)]
+    # Chronological order, not score order -- return_distribution_p_value's HAC
+    # correction only reflects real overlap between adjacent elements if
+    # "adjacent" means "close in time", not "similarly scored".
+    selected.sort(key=lambda item: (item[1], item[2]))
+    return [value for _score, _date, _ticker, value in selected]
 
 
 def _fold_summary(index: int, baseline_values: list[float], proposed_values: list[float], alpha: float, validation_count: int | None = None) -> dict:
@@ -356,8 +357,12 @@ def run() -> dict:
     load_env()
     sync_outcomes()
     result = learn()
-    from .notifier import send_notification
-    send_notification(decision_message(result), event_type="strategy_change")
+    # "still waiting on samples" is expected to repeat for months until the
+    # 300-sample minimum is reached -- not worth a notification every run.
+    # Actual decisions (promoted/rejected/rolled_back) still notify.
+    if result.get("status") != "insufficient_data":
+        from .notifier import send_notification
+        send_notification(decision_message(result), event_type="strategy_change")
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return result
 

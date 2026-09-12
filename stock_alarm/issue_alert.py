@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from .app import is_trading_day, load_env, write_error_log
 from .dashboard import issue_rows
 from .notifier import send_notification
@@ -15,6 +17,8 @@ def message(rows: list[dict[str, str]]) -> str:
 
 def run() -> str:
     load_env()
+    if os.environ.get("ISSUE_ALERT_ENABLED", "1") != "1":
+        return "disabled"
     if not is_trading_day():
         return "market_closed"
     text = message(issue_rows())
