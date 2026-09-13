@@ -1389,9 +1389,9 @@ function renderCompare(name, state) {{
   document.getElementById(`${{prefix}}-orders`).textContent=`매수 ${{state.today_buys||0}} · 매도 ${{state.today_sells||0}}`;
 }}
 async function loadComparison() {{
-  for(const name of Object.keys(profileLabels)) {{
-    try {{ renderCompare(name, await traderRequest("/api/trader", {{}}, name)); }} catch(error) {{ renderCompare(name, null); }}
-  }}
+  await Promise.all(Object.keys(profileLabels).map(name =>
+    traderRequest("/api/trader", {{}}, name).then(state => renderCompare(name, state), () => renderCompare(name, null))
+  ));
 }}
 function renderSales() {{
   const summary=trader.sale_summary || {{}};
@@ -1534,7 +1534,7 @@ function loadTrader() {{
 profileButtons.forEach(button=>button.addEventListener("click", () => {{
   if(button.dataset.profile===currentProfile) return;
   currentProfile=button.dataset.profile; localStorage.setItem("stockAlarm.traderProfile", currentProfile);
-  syncProfileButtons(); loadTrader(); loadComparison();
+  syncProfileButtons(); loadTrader();
 }}));
 syncProfileButtons();
 loadTrader();

@@ -6,6 +6,7 @@ import html
 import os
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
@@ -65,14 +66,18 @@ def prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
     })
     holding_tickers = [row["ticker"] for row in virtual_trader_state(path=path)["holdings"]]
     today = date.today()
-    for ticker in holding_tickers:
+
+    def fetch(ticker: str) -> tuple[str, list] | None:
         try:
-            rows = naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60)
-            if rows:
-                price_map[ticker] = int(rows[-1][4])
+            return ticker, naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60)
         except (OSError, ValueError, TypeError):
             # Keep the most recent report/recommendation price if Naver is temporarily unavailable.
-            continue
+            return None
+
+    with ThreadPoolExecutor(max_workers=max(len(holding_tickers), 1)) as pool:
+        for result in pool.map(fetch, holding_tickers):
+            if result and result[1]:
+                price_map[result[0]] = int(result[1][-1][4])
     return price_map
 
 
@@ -99,10 +104,29 @@ def trader_payload(profile: str = "aggressive") -> dict:
         pass
     market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
     market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
-    from .toss_client import all_warnings_for, BLOCKING_STOCK_WARNINGS
+    from .toss_client import BLOCKING_STOCK_WARNINGS, TossClient
     latest_checks = {}
     for row in recent_position_checks(1000, path):
         latest_checks.setdefault(row.get("ticker"), row)
+    holding_ticker_list = [str(holding.get("ticker") or "") for holding in state["holdings"]]
+
+    def fetch_warnings(ticker: str) -> set[str]:
+        try:
+            return {row["warningType"] for row in toss_client.stock_warnings(ticker)}
+        except Exception:
+            return set()
+
+    try:
+        toss_client = TossClient()
+        toss_client.access_token()  # prime the token cache before fanning out concurrently
+    except Exception:
+        toss_client = None
+    if toss_client is None:
+        warnings_by_ticker = dict.fromkeys(holding_ticker_list, set())
+    else:
+        with ThreadPoolExecutor(max_workers=max(len(holding_ticker_list), 1)) as pool:
+            warnings_by_ticker = dict(zip(holding_ticker_list, pool.map(fetch_warnings, holding_ticker_list)))
+
     for holding in state["holdings"]:
         check = latest_checks.get(holding.get("ticker"), {})
         try:
@@ -112,7 +136,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         stop_pct = float(check.get("dynamic_stop_loss_pct") or -5)
         stop_price = round(float(holding.get("average_price") or 0) * (1 + stop_pct / 100))
         distance = check.get("distance_ma20_pct")
-        active_warnings = all_warnings_for(str(holding.get("ticker") or ""))
+        active_warnings = warnings_by_ticker.get(str(holding.get("ticker") or ""), set())
         blocking = active_warnings & BLOCKING_STOCK_WARNINGS
         non_blocking = active_warnings - BLOCKING_STOCK_WARNINGS
         if blocking:

@@ -48,7 +48,7 @@ class DashboardServerTest(unittest.TestCase):
 
         self.assertEqual("항공화물운송과물류", payload["holdings"][0]["sector"])
 
-    @patch("stock_alarm.toss_client.all_warnings_for", return_value={"LIQUIDATION_TRADING"})
+    @patch("stock_alarm.toss_client.TossClient")
     @patch("stock_alarm.dashboard_server.recent_equity_trend", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
@@ -58,17 +58,18 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
     @patch("stock_alarm.dashboard_server.virtual_trader_state")
     @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
-    def test_trader_payload_flags_a_holding_with_an_active_stock_warning(self, _prices, state, *_mocks):
+    def test_trader_payload_flags_a_holding_with_an_active_stock_warning(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
         state.return_value = {
             "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
             "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
         }
+        toss_client_cls.return_value.stock_warnings.return_value = [{"warningType": "LIQUIDATION_TRADING"}]
 
         payload = trader_payload()
 
         self.assertEqual("종목 경고: LIQUIDATION_TRADING", payload["holdings"][0]["watch_state"])
 
-    @patch("stock_alarm.toss_client.all_warnings_for", return_value={"OVERHEATED"})
+    @patch("stock_alarm.toss_client.TossClient")
     @patch("stock_alarm.dashboard_server.recent_equity_trend", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
@@ -78,11 +79,12 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
     @patch("stock_alarm.dashboard_server.virtual_trader_state")
     @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
-    def test_trader_payload_shows_a_non_blocking_warning_as_info_only(self, _prices, state, *_mocks):
+    def test_trader_payload_shows_a_non_blocking_warning_as_info_only(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
         state.return_value = {
             "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
             "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
         }
+        toss_client_cls.return_value.stock_warnings.return_value = [{"warningType": "OVERHEATED"}]
 
         payload = trader_payload()
 
