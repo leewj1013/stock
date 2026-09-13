@@ -34,9 +34,16 @@ class DashboardTest(unittest.TestCase):
         rows = [{"name": "first"}, {"name": "second"}]
         self.assertEqual(rows, sort_table_rows(rows, ["name"]))
 
-    def test_table_pager_shows_total_row_count(self):
+    def test_table_shows_total_row_count_on_the_title_line(self):
         html = table("T", [{"name": str(index)} for index in range(19)], ["name"])
-        self.assertIn("총 19건", html)
+        self.assertIn("<span class='table-count'>총 19건</span></div>", html)
+        self.assertLess(html.index("총 19건"), html.index("<table>"))
+        self.assertIn("<div class='pager' data-page-size='15'></div>", html)
+
+    def test_table_omits_the_count_when_it_fits_on_one_page(self):
+        html = table("T", [{"name": str(index)} for index in range(15)], ["name"])
+        self.assertNotIn("table-count", html)
+        self.assertNotIn("pager", html)
 
     @patch.dict(os.environ, {})
     @patch("stock_alarm.dashboard.today_recommendation_rows", return_value=[])
