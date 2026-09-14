@@ -78,7 +78,21 @@ SELL_ALERTS_PATH = "logs/sell_alerts.csv"
 # friends end up unset with no exception logged anywhere. Anchor to this file's
 # location instead so env loading works regardless of caller's cwd.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+
+
+def workspace_root(project_root: str = PROJECT_ROOT) -> str:
+    # Scheduled tasks run a copy of this package outside the workspace
+    # (scripts/deploy_secure_runtime.ps1), which has no .env of its own --
+    # follow its workspace.path back so non-secret settings still load.
+    # utf-8-sig: PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM.
+    try:
+        with open(os.path.join(project_root, "workspace.path"), encoding="utf-8-sig") as file:
+            return file.read().strip() or project_root
+    except OSError:
+        return project_root
+
+
+DEFAULT_ENV_PATH = os.path.join(workspace_root(), ".env")
 
 
 def load_env(path: str | None = None) -> None:

@@ -70,18 +70,25 @@ def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
     if not todays_trades:
         return []
     state = real_account_state()
-    if not state.get("connected") or state.get("cash", 0) <= 0:
+    # Before any real deposit the account's cash sizes every order to zero;
+    # this lets the sizing logic be reviewed against a hypothetical balance
+    # instead. Real holdings still constrain it (open costs, correlation/sector).
+    assumed_capital = int(env_float("SHADOW_TRADER_ASSUMED_CAPITAL", 0))
+    if assumed_capital <= 0 and (not state.get("connected") or state.get("cash", 0) <= 0):
         return []
     breadth = naver_market_up_ratio(date.today())
     market_limit = market_exposure_limit_pct(breadth)
     regime_multiplier = float(PROFILES["aggressive"]["regime_exposure_multiplier"].get(current_market_regime(date.today()), 1.0))
     exposure_limit = market_limit * regime_multiplier
-    cash = int(state["cash"])
+    cash = assumed_capital if assumed_capital > 0 else int(state["cash"])
     open_costs = {
         str(row.get("ticker") or ""): int(float(row.get("average_price") or 0)) * int(float(row.get("quantity") or 0))
         for row in state.get("holdings", [])
     }
-    account_equity = int(state["total_equity"])
+    if assumed_capital > 0:
+        account_equity = cash + int(sum(float(row.get("valuation") or 0) for row in state.get("holdings", [])))
+    else:
+        account_equity = int(state["total_equity"])
     portfolio_budget = max(0, int(account_equity * exposure_limit / 100) - sum(open_costs.values()))
     min_fill_ratio = max(0.0, min(1.0, env_float("VIRTUAL_TRADER_MIN_FILL_RATIO", 0.5)))
     max_position_pct = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30)))
@@ -89,7 +96,11 @@ def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
         {"ticker": row["ticker"], "name": row.get("name", ""), "close": row["price"], "allocation_pct": row["allocation_pct"]}
         for row in todays_trades
     ]
-    return _size_buy_orders(candidates, cash, open_costs, account_equity, max_position_pct, min_fill_ratio, portfolio_budget)
+    orders = _size_buy_orders(candidates, cash, open_costs, account_equity, max_position_pct, min_fill_ratio, portfolio_budget)
+    if assumed_capital > 0:
+        for order in orders:
+            order["reason"] = f"recommendation (가정금액 {assumed_capital:,}원)"
+    return orders
 
 
 def compute_shadow_sell_orders() -> list[dict]:

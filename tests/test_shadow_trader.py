@@ -66,6 +66,27 @@ class ShadowTraderTest(unittest.TestCase):
         self.assertEqual("BUY", orders[0]["side"])
         self.assertGreater(orders[0]["quantity"], 0)
 
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.dashboard.real_account_state")
+    @patch("stock_alarm.data_store.recent_virtual_trades")
+    def test_assumed_capital_sizes_orders_before_any_real_deposit(self, recent_trades, real_state, _breadth, _regime):
+        recent_trades.return_value = [
+            {"created_at": "2026-09-14T13:45:43", "ticker": "010140", "name": "Samsung Heavy", "price": 22300, "allocation_pct": 10.0},
+        ]
+        real_state.return_value = {"connected": True, "cash": 450, "total_equity": 450, "holdings": []}
+        with patch("stock_alarm.shadow_trader.date") as fake_date:
+            fake_date.today.return_value = __import__("datetime").date(2026, 9, 14)
+            with patch.dict(os.environ, {}):
+                os.environ.pop("SHADOW_TRADER_ASSUMED_CAPITAL", None)
+                self.assertEqual([], compute_shadow_buy_orders(path=self.path))
+            with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "10000000"}):
+                orders = compute_shadow_buy_orders(path=self.path)
+
+        self.assertEqual(1, len(orders))
+        self.assertEqual(44, orders[0]["quantity"])
+        self.assertIn("가정금액 10,000,000원", orders[0]["reason"])
+
     @patch("stock_alarm.data_store.recent_virtual_trades", return_value=[])
     def test_compute_shadow_buy_orders_returns_nothing_without_todays_virtual_trades(self, _trades):
         self.assertEqual([], compute_shadow_buy_orders(path=self.path))

@@ -3,10 +3,20 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stock_alarm.app import DEFAULT_ENV_PATH, load_env, save_env_value
+from stock_alarm.app import DEFAULT_ENV_PATH, load_env, save_env_value, workspace_root
 
 
 class LoadEnvTest(unittest.TestCase):
+    def test_deployed_runtime_follows_workspace_path_back_to_the_workspace(self):
+        with tempfile.TemporaryDirectory() as runtime, tempfile.TemporaryDirectory() as workspace:
+            with open(os.path.join(runtime, "workspace.path"), "w", encoding="utf-8-sig") as file:
+                file.write(workspace)
+            self.assertEqual(workspace, workspace_root(runtime))
+
+    def test_workspace_root_is_the_project_itself_without_a_marker(self):
+        with tempfile.TemporaryDirectory() as project:
+            self.assertEqual(project, workspace_root(project))
+
     def test_default_env_path_is_anchored_to_repo_root_not_cwd(self):
         # "python -m stock_alarm.<module>" only guarantees the package is
         # importable, not that the process's cwd is the repo root. A relative
