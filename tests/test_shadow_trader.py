@@ -70,6 +70,27 @@ class ShadowTraderTest(unittest.TestCase):
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
     @patch("stock_alarm.dashboard.real_account_state")
     @patch("stock_alarm.data_store.recent_virtual_trades")
+    def test_shadow_buy_rechecks_constraints_against_real_holdings(self, recent_trades, real_state, _breadth, _regime):
+        recent_trades.return_value = [
+            {"created_at": "2026-09-12T16:00:00", "ticker": "000660", "name": "SK hynix", "price": 150000, "allocation_pct": 10.0},
+        ]
+        real_state.return_value = {
+            "connected": True, "cash": 1_000_000, "total_equity": 2_000_000,
+            "holdings": [{"ticker": "005930", "name": "Samsung", "quantity": 10, "average_price": 100000, "current_price": 100000, "valuation": 1_000_000}],
+        }
+        with patch("stock_alarm.app.correlation_limited_allocations", return_value=[50.0, 0.0]) as limited, \
+             patch("stock_alarm.app.sector_limited_allocations", side_effect=lambda picks, allocations, **kwargs: allocations), \
+             patch("stock_alarm.shadow_trader.date") as fake_date:
+            fake_date.today.return_value = __import__("datetime").date(2026, 9, 12)
+            orders = compute_shadow_buy_orders(path=self.path)
+
+        self.assertEqual([], orders)
+        self.assertEqual({"005930"}, limited.call_args.kwargs["locked_tickers"])
+
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.dashboard.real_account_state")
+    @patch("stock_alarm.data_store.recent_virtual_trades")
     def test_assumed_capital_sizes_orders_before_any_real_deposit(self, recent_trades, real_state, _breadth, _regime):
         recent_trades.return_value = [
             {"created_at": "2026-09-14T13:45:43", "ticker": "010140", "name": "Samsung Heavy", "price": 22300, "allocation_pct": 10.0},

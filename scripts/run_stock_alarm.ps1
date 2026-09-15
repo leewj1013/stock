@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$runtimeRoot = Split-Path -Parent $PSScriptRoot
+$workspaceMarker = Join-Path $runtimeRoot "workspace.path"
+$projectRoot = if (Test-Path -LiteralPath $workspaceMarker) { (Get-Content -LiteralPath $workspaceMarker -Raw).Trim() } else { $runtimeRoot }
 Set-Location $projectRoot
 $env:PYTHONIOENCODING = "utf-8"
 $mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }
@@ -20,8 +22,8 @@ $stderr = Join-Path $projectRoot "logs\task.err.log"
 "" | Set-Content -Path $stderr -Encoding utf8
 "`n[$(Get-Date -Format s)] MODE $mode" | Out-File -FilePath $stdout -Append -Encoding utf8
 
-if (Test-Path ".venv\Scripts\python.exe") {
-    $python = ".venv\Scripts\python.exe"
+if (Test-Path (Join-Path $runtimeRoot ".venv\Scripts\python.exe")) {
+    $python = Join-Path $runtimeRoot ".venv\Scripts\python.exe"
 } else {
     $command = Get-Command python -ErrorAction SilentlyContinue
     if (-not $command) {
@@ -32,8 +34,9 @@ if (Test-Path ".venv\Scripts\python.exe") {
     }
     $python = $command.Source
 }
+$runner = Join-Path $runtimeRoot "stock_alarm\isolated_runner.py"
 
-cmd.exe /d /c "`"$python`" -m stock_alarm.run_gate $mode 1>> `"$stdout`" 2>> `"$stderr`""
+& $python -I $runner stock_alarm.run_gate $mode 1>> $stdout 2>> $stderr
 if ($LASTEXITCODE -eq 2) {
     "[$(Get-Date -Format s)] SKIP $mode" | Out-File -FilePath $stdout -Append -Encoding utf8
     exit 0
@@ -44,10 +47,10 @@ if ($LASTEXITCODE -ne 0) {
 
 function RunStep($name, $module) {
     "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
-    cmd.exe /d /c "`"$python`" -m $module 1>> `"$stdout`" 2>> `"$stderr`""
+    & $python -I $runner $module 1>> $stdout 2>> $stderr
     if ($LASTEXITCODE -ne 0) {
         $code = $LASTEXITCODE
-        cmd.exe /d /c "`"$python`" -m stock_alarm.failure_alert $name $code 1>> `"$stdout`" 2>> `"$stderr`""
+        & $python -I $runner stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
         exit $code
     }
     "[$(Get-Date -Format s)] DONE $name" | Out-File -FilePath $stdout -Append -Encoding utf8
@@ -55,10 +58,10 @@ function RunStep($name, $module) {
 
 function RunOptionalStep($name, $module) {
     "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
-    cmd.exe /d /c "`"$python`" -m $module 1>> `"$stdout`" 2>> `"$stderr`""
+    & $python -I $runner $module 1>> $stdout 2>> $stderr
     if ($LASTEXITCODE -ne 0) {
         $code = $LASTEXITCODE
-        cmd.exe /d /c "`"$python`" -m stock_alarm.failure_alert $name $code 1>> `"$stdout`" 2>> `"$stderr`""
+        & $python -I $runner stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
         "[$(Get-Date -Format s)] WARN $name exit=$code" | Out-File -FilePath $stdout -Append -Encoding utf8
         return
     }

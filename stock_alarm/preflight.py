@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from .secret_check import scan as scan_secrets
 from .positions_check import validate_positions
 from .watchlist_check import validate_watchlist
 from .git_check import validate_ignores
+
+
+class EnvironmentIsolatedResult(unittest.TextTestResult):
+    """Restore process environment after every test, including failing tests."""
+
+    def startTest(self, test) -> None:  # noqa: N802
+        self._environment_before_test = dict(os.environ)
+        super().startTest(test)
+
+    def stopTest(self, test) -> None:  # noqa: N802
+        try:
+            os.environ.clear()
+            os.environ.update(self._environment_before_test)
+        finally:
+            super().stopTest(test)
 
 
 def main() -> int:
@@ -14,7 +32,14 @@ def main() -> int:
     secrets = scan_secrets()
     git_errors = validate_ignores()
     tests = unittest.defaultTestLoader.discover("tests")
-    result = unittest.TextTestRunner(verbosity=1).run(tests)
+    # unittest does not load tests/conftest.py. Keep its direct-discovery path
+    # just as isolated as pytest so a test cannot load the real credentials or
+    # leak a workspace setting into the next test.
+    from . import app
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        missing_env = os.path.join(temporary_directory, "missing.env")
+        with patch.object(app, "DEFAULT_ENV_PATH", missing_env), patch.object(app, "DEFAULT_SECURE_ENV_PATH", missing_env):
+            result = unittest.TextTestRunner(verbosity=1, resultclass=EnvironmentIsolatedResult).run(tests)
 
     if errors:
         print("watchlist ok=False")

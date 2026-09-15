@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 
 
 DEFAULT_BASE_URL = "https://openapi.tossinvest.com"
+ALLOWED_API_HOST = "openapi.tossinvest.com"
 
 # Warning types serious enough to block a new recommendation or force-exit an
 # existing holding. OVERHEATED/INVESTMENT_WARNING/VI_* are common and often
@@ -22,6 +24,39 @@ class TossApiError(RuntimeError):
         self.status = status
         self.code = code
         super().__init__(f"Toss API error status={status or 'network'} code={code}: {message}")
+
+
+def validated_base_url(value: str) -> str:
+    """Return the one production Toss origin credentials may be sent to."""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("invalid TOSS_API_BASE_URL") from error
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() != ALLOWED_API_HOST
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        raise ValueError(f"TOSS_API_BASE_URL must be https://{ALLOWED_API_HOST}")
+    return DEFAULT_BASE_URL
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        raise TossApiError(code, "redirect-blocked", "Toss API redirects are not allowed")
+
+
+_URL_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+
+
+def _urlopen(request: urllib.request.Request, timeout: float):
+    return _URL_OPENER.open(request, timeout=timeout)
 
 
 class TossClient:
@@ -41,33 +76,39 @@ class TossClient:
                  base_url: str | None = None, timeout: float = 10.0):
         self.client_id = client_id or os.environ.get("TOSS_CLIENT_ID", "")
         self.client_secret = client_secret or os.environ.get("TOSS_CLIENT_SECRET", "")
-        self.base_url = (base_url or os.environ.get("TOSS_API_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self.base_url = validated_base_url(base_url or os.environ.get("TOSS_API_BASE_URL") or DEFAULT_BASE_URL)
         self.timeout = timeout
         self._access_token = ""
         self._expires_at = 0.0
+        self._token_lock = threading.Lock()
+        self._rate_lock = threading.Lock()
+        self._last_request_at: dict[str, float] = {}
         if not self.client_id or not self.client_secret:
             raise ValueError("TOSS_CLIENT_ID and TOSS_CLIENT_SECRET are required")
 
     def access_token(self) -> str:
         if self._access_token and time.time() < self._expires_at - 60:
             return self._access_token
-        payload = urllib.parse.urlencode({
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-        }).encode()
-        request = urllib.request.Request(
-            f"{self.base_url}/oauth2/token", data=payload, method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "stockAlarm/1.0"},
-        )
-        body = self._open_json(request)
-        token = str(body.get("access_token") or "")
-        if not token:
-            raise TossApiError(200, "invalid-token-response", "access_token is missing")
-        expires_in = max(1, int(body.get("expires_in") or 0))
-        self._access_token = token
-        self._expires_at = time.time() + expires_in
-        return token
+        with self._token_lock:
+            if self._access_token and time.time() < self._expires_at - 60:
+                return self._access_token
+            payload = urllib.parse.urlencode({
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }).encode()
+            request = urllib.request.Request(
+                f"{self.base_url}/oauth2/token", data=payload, method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "stockAlarm/1.0"},
+            )
+            body = self._open_json(request)
+            token = str(body.get("access_token") or "")
+            if not token:
+                raise TossApiError(200, "invalid-token-response", "access_token is missing")
+            expires_in = max(1, int(body.get("expires_in") or 0))
+            self._access_token = token
+            self._expires_at = time.time() + expires_in
+            return token
 
     def prices(self, symbols: list[str]) -> list[dict]:
         cleaned = [symbol.strip() for symbol in symbols if symbol and symbol.strip()]
@@ -166,26 +207,46 @@ class TossClient:
         if account_seq is not None:
             headers["X-Tossinvest-Account"] = str(account_seq)
         request = urllib.request.Request(f"{self.base_url}{path}", method="GET", headers=headers)
+        if path.startswith("/api/v1/candles"):
+            group, per_second = "candles", 20
+        elif path.startswith("/api/v1/prices"):
+            group, per_second = "market-data", 15
+        else:
+            group, per_second = "stock", 5
+        with self._rate_lock:
+            wait = 1 / per_second - (time.monotonic() - self._last_request_at.get(group, 0.0))
+            if wait > 0:
+                time.sleep(wait)
+            self._last_request_at[group] = time.monotonic()
         return self._open_json(request)
 
     def _open_json(self, request: urllib.request.Request) -> dict:
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
+        for attempt in range(3):
             try:
-                payload = json.loads(error.read().decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                payload = {}
-            detail = payload.get("error", payload)
-            if isinstance(detail, dict):
-                code = str(detail.get("code") or detail.get("error") or "http-error")
-                message = str(detail.get("message") or detail.get("error_description") or error.reason)
-            else:
-                code, message = "http-error", str(error.reason)
-            raise TossApiError(error.code, code, message) from None
-        except urllib.error.URLError as error:
-            raise TossApiError(None, "network-error", str(error.reason)) from None
+                with _urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as error:
+                if error.code == 429 and attempt < 2:
+                    try:
+                        retry_after = float(error.headers.get("Retry-After", "1"))
+                    except (TypeError, ValueError):
+                        retry_after = 1.0
+                    time.sleep(max(0.1, min(5.0, retry_after)) * (2 ** attempt))
+                    continue
+                try:
+                    payload = json.loads(error.read().decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    payload = {}
+                detail = payload.get("error", payload)
+                if isinstance(detail, dict):
+                    code = str(detail.get("code") or detail.get("error") or "http-error")
+                    message = str(detail.get("message") or detail.get("error_description") or error.reason)
+                else:
+                    code, message = "http-error", str(error.reason)
+                raise TossApiError(error.code, code, message) from None
+            except urllib.error.URLError as error:
+                raise TossApiError(None, "network-error", str(error.reason)) from None
+        raise TossApiError(429, "rate-limit", "retry limit exceeded")
 
 
 def candles_to_naver_rows(candles: list[dict]) -> list[list]:
@@ -206,13 +267,39 @@ def candles_to_naver_rows(candles: list[dict]) -> list[list]:
     return rows
 
 
+_shared_client: TossClient | None = None
+_shared_client_key: tuple[str, str, str] | None = None
+_shared_client_lock = threading.Lock()
+
+
+def shared_client() -> TossClient:
+    global _shared_client, _shared_client_key
+    key = (
+        os.environ.get("TOSS_CLIENT_ID", ""),
+        os.environ.get("TOSS_CLIENT_SECRET", ""),
+        os.environ.get("TOSS_API_BASE_URL", DEFAULT_BASE_URL),
+    )
+    with _shared_client_lock:
+        if _shared_client is None or _shared_client_key != key:
+            _shared_client = TossClient()
+            _shared_client_key = key
+        return _shared_client
+
+
+def reset_shared_client() -> None:
+    global _shared_client, _shared_client_key
+    with _shared_client_lock:
+        _shared_client = None
+        _shared_client_key = None
+
+
 def blocking_warnings_for(symbol: str) -> set[str]:
     """TossClient().blocking_warnings(), tolerating any failure (missing
     TOSS_CLIENT_ID/SECRET, network, rate limit) as "no warning known" --
     callers use this to gate recommendations/holdings, and a Toss outage
     must not block the whole recommendation or sell-check run."""
     try:
-        return TossClient().blocking_warnings(symbol)
+        return shared_client().blocking_warnings(symbol)
     except Exception:
         return set()
 
@@ -224,7 +311,7 @@ def all_warnings_for(symbol: str) -> set[str]:
     second Toss call -- split the result against BLOCKING_STOCK_WARNINGS
     locally instead of calling blocking_warnings_for() separately."""
     try:
-        return {row["warningType"] for row in TossClient().stock_warnings(symbol)}
+        return {row["warningType"] for row in shared_client().stock_warnings(symbol)}
     except Exception:
         return set()
 
@@ -234,8 +321,7 @@ def latest_close_for(symbol: str) -> int | None:
     -- used to cross-check naver_rows() against an independent price source
     without ever blocking on a Toss outage."""
     try:
-        candles = TossClient().candles(symbol, count=1).get("candles", [])
+        candles = shared_client().candles(symbol, count=1).get("candles", [])
         return int(float(candles[-1]["closePrice"])) if candles else None
     except Exception:
         return None
-

@@ -1,2 +1,3 @@
-pykrx>=1.0.48
-
+# Direct dependency. Runtime/CI installs use requirements.lock so the complete
+# transitive graph is reproducible; update both files together after review.
+pykrx==1.2.8

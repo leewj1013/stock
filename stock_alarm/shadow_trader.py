@@ -96,6 +96,29 @@ def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
         {"ticker": row["ticker"], "name": row.get("name", ""), "close": row["price"], "allocation_pct": row["allocation_pct"]}
         for row in todays_trades
     ]
+    if state.get("holdings"):
+        from .app import Pick, correlation_limited_allocations, sector_limited_allocations
+        candidate_tickers = {str(row["ticker"]) for row in candidates}
+        existing_rows = [row for row in state["holdings"] if str(row.get("ticker") or "") not in candidate_tickers]
+        existing = [
+            Pick(
+                str(row["ticker"]), str(row.get("name") or row["ticker"]),
+                int(float(row.get("current_price") or row.get("average_price") or 0)), 0, 0, 0,
+            )
+            for row in existing_rows
+        ]
+        proposed = [Pick(str(row["ticker"]), str(row.get("name") or row["ticker"]), int(row["close"]), 0, 0, 0) for row in candidates]
+        existing_allocations = [float(row.get("valuation") or 0) / account_equity * 100 for row in existing_rows]
+        allocations = existing_allocations + [float(row["allocation_pct"]) for row in candidates]
+        locked = {pick.ticker for pick in existing}
+        allocations = correlation_limited_allocations(existing + proposed, allocations, locked_tickers=locked)
+        sector_cap = env_float("SECTOR_GROUP_MAX_PCT", 100)
+        if sector_cap < 100:
+            allocations = sector_limited_allocations(
+                existing + proposed, allocations, locked_tickers=locked, group_cap_override=sector_cap,
+            )
+        for row, allocation in zip(candidates, allocations[len(existing):]):
+            row["allocation_pct"] = allocation
     orders = _size_buy_orders(candidates, cash, open_costs, account_equity, max_position_pct, min_fill_ratio, portfolio_budget)
     if assumed_capital > 0:
         for order in orders:

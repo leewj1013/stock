@@ -53,6 +53,25 @@
   - [Purged & Embargoed Cross-Validation, Explained](https://quantmemo.com/concepts/purged-embargoed-cv) — 왜 표준 k-fold가 금융에서 새는지 (라벨 구간 중첩 → IID 가정 붕괴)
   - López de Prado, "Advances in Financial Machine Learning" (2018) **ch.7 Cross-Validation in Finance** — purged K-fold 원전, CPCV까지
 
+### [적용됨 2026-09-10] 라이브 승격 게이트가 Mann-Whitney → Newey-West HAC로 교체됨
+
+이 저장소에 이미 `newey_west_mean_test`(Bartlett HAC, `statistical_validation.py:65`)와 `benjamini_hochberg`(`statistical_validation.py:98`)가 구현돼 있었고, `benchmark_comparison.py`는 둘 다 쓰는데 **라이브 승격 게이트(`strategy_learning.py`)만 쓰지 않았다.**
+
+문제: `objective()`가 1/3/5/10일 수익률을 섞어 쓰므로, 10거래일 이내에 나온 픽들은 수익률 계산 구간이 겹쳐 자기상관이 생긴다. 기존 `return_distribution_p_value`는 Mann-Whitney U 검정으로 관측이 독립이라고 가정했다 — purging이 막는 "정보 누출"과는 다른 문제로, 순서를 섞어도 사라지지 않는다.
+
+**조치**: `return_distribution_p_value`를 Newey-West HAC 기반 이표본 z검정으로 교체했다(시그니처는 그대로라 `profile_weight_learning.py`·`profile_weight_validation.py`·`weight_variant_backtest.py`의 기존 호출부는 무수정으로 함께 개선됨). lag는 `RETURN_HAC_LAG=9`(최장 horizon 10일 − 1, `newey_west_mean_test` 자체 docstring의 관례). `_ranked_returns`가 선택된 표본을 점수순이 아니라 **날짜순**으로 반환하도록 함께 고쳤다 — HAC의 lag 구조는 "가까운 원소가 실제로 시간상 가까울 때"만 의미가 있다.
+
+**검증**: AR(1) 자기상관을 주입한 합성 데이터(각 군 60건, 200회 반복)로 두 검정의 오탐률을 비교.
+
+| | 실제 차이 없음일 때 오탐률(명목 5%) | 약한 신호(평균차 0.15) 검출률 |
+|---|---|---|
+| Mann-Whitney (구) | **22.0%** — 명목의 4배 이상 | 28.5% |
+| Newey-West HAC (신) | **12.5%** | 12.5% |
+
+개선은 뚜렷하지만 완전하지 않다 — 12.5%도 명목 5%보다 여전히 높다. Bartlett 커널과 고정 lag는 근사치이고, 검증 폴드가 60건 수준으로 작아 HAC 표준오차 추정 자체에도 잡음이 있다. **이 검정을 표본이 늘어도 재검증 없이 무한정 신뢰하면 안 된다** — §1 "표본크기와 검출력" 항목과 함께 본다.
+
+**적용 안 한 것**: `benjamini_hochberg`는 붙이지 않았다. `learn()`은 폴드마다 같은 가중치 제안 하나를 반복 검증하는 구조라 folds가 "여러 가설"이 아니라 "한 가설의 강건성 확인"에 가깝고, 이미 전 폴드 통과를 요구하는 게 FDR보다 보수적인 기준이다. FDR이 실제로 맞는 자리는 여러 파라미터 변형을 비교하는 `weight_variant_backtest.py`인데, 거기는 아직 안 쓴다 — 별도 판단 필요.
+
 ### Look-ahead·생존편향
 - 개념: 백테스트 시점에 알 수 없었던 정보(사후 수정된 재무제표, 상장폐지로 사라진 종목)가 들어가면 실전에서 재현되지 않는 성과가 나온다.
 - 걸리는 곳: `stock_alarm/point_in_time_store.py` — PIT 저장소로 이미 대응 중. 다만 종목 유니버스가 현재 상장 종목 기준이면 생존편향은 남는다.

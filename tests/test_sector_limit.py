@@ -1,3 +1,4 @@
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -32,6 +33,7 @@ class SectorLimitTest(unittest.TestCase):
         picks = [SimpleNamespace(ticker="A"), SimpleNamespace(ticker="B")]
         self.assertEqual(sector_limited_allocations(picks, [10, 10], group_cap_override=100), [10, 10])
 
+    @patch.dict(os.environ, {"RISK_MAX_EXPOSURE_PCT": "70"})
     @patch("stock_alarm.data_store.virtual_buy")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.5)
     @patch("stock_alarm.app.sector_limited_allocations")
@@ -73,6 +75,25 @@ class SectorLimitTest(unittest.TestCase):
         candidates = virtual_buy.call_args.args[0]
         self.assertEqual(50.0, candidates[0]["portfolio_limit_pct"])
 
+    @patch.dict(os.environ, {"RISK_MAX_EXPOSURE_PCT": "70"})
+    @patch("stock_alarm.data_store.virtual_buy")
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.app.correlation_limited_allocations", side_effect=lambda picks, allocations: allocations)
+    @patch("stock_alarm.app.allocation_percentages", return_value=[10.0])
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, ""))
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"cash": 1_000_000, "holdings": [], "total_equity": 1_000_000})
+    def test_default_profile_never_buys_past_the_risk_exposure_limit(
+        self, _state, _allowed, _allocations, _correlation, _breadth, _regime, virtual_buy,
+    ):
+        pick = Pick("005930", "Samsung", 100, 0, 0, 0)
+
+        auto_buy_virtual_trader([pick])
+
+        candidates = virtual_buy.call_args.args[0]
+        self.assertEqual(70.0, candidates[0]["portfolio_limit_pct"])
+
+    @patch.dict(os.environ, {"RISK_MAX_EXPOSURE_PCT": "70"})
     @patch("stock_alarm.data_store.virtual_buy")
     @patch("stock_alarm.app.current_market_regime", return_value="sideways")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
@@ -88,8 +109,9 @@ class SectorLimitTest(unittest.TestCase):
         auto_buy_virtual_trader([pick], regime_exposure_multiplier={"sideways": 0.5})
 
         candidates = virtual_buy.call_args.args[0]
-        self.assertEqual(50.0, candidates[0]["portfolio_limit_pct"])
+        self.assertEqual(35.0, candidates[0]["portfolio_limit_pct"])
 
+    @patch.dict(os.environ, {"RISK_MAX_EXPOSURE_PCT": "70"})
     @patch("stock_alarm.data_store.virtual_buy")
     @patch("stock_alarm.app.current_market_regime", return_value="bull")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
@@ -105,7 +127,7 @@ class SectorLimitTest(unittest.TestCase):
         auto_buy_virtual_trader([pick], regime_exposure_multiplier={"sideways": 0.5})
 
         candidates = virtual_buy.call_args.args[0]
-        self.assertEqual(100.0, candidates[0]["portfolio_limit_pct"])
+        self.assertEqual(70.0, candidates[0]["portfolio_limit_pct"])
 
     @patch.dict("os.environ", {"RISK_MAX_EXPOSURE_PCT": "70"})
     @patch("stock_alarm.data_store.virtual_buy")

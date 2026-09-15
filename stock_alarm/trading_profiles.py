@@ -32,7 +32,7 @@ PROFILES = {
         "sell_alerts_log": "logs/sell_alerts_neutral.csv",
         "notify": False,
         "sector_cap_pct": 30.0,
-        "exposure_limit_pct": 100.0,
+        "exposure_limit_pct": 50.0,
         "min_position_pct": 10.0,
         "max_position_pct": 20.0,
         "sell_policy": {"stop_loss_pct": 3.0, "take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0},

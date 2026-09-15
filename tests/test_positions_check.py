@@ -14,9 +14,9 @@ class PositionsCheckTest(unittest.TestCase):
         return file.name
 
     def test_accepts_valid_positions(self):
-        path = self.write_temp("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n")
+        path = self.write_temp("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n0015N0,Aromatica,10300,2026-09-09\n")
         self.assertEqual([], validate_positions(path))
-        self.assertEqual(1, position_count(path))
+        self.assertEqual(2, position_count(path))
 
     def test_accepts_reentry_for_same_ticker(self):
         path = self.write_temp(

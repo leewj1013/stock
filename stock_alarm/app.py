@@ -8,6 +8,7 @@ import traceback
 import urllib.parse
 import urllib.request
 import time as time_module
+import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
@@ -93,38 +94,120 @@ def workspace_root(project_root: str = PROJECT_ROOT) -> str:
 
 
 DEFAULT_ENV_PATH = os.path.join(workspace_root(), ".env")
+DEFAULT_SECURE_ENV_PATH = os.path.join(
+    os.path.expanduser("~"),
+    ".stockAlarmSecure",
+    "secrets.env",
+)
+
+# Credentials are deliberately kept outside the developer workspace.  The
+# workspace is writable by development tools, while the secure file is
+# provisioned with a user/SYSTEM-only ACL by scripts/migrate_secrets.ps1.
+SENSITIVE_ENV_KEYS = {
+    "ALPHA_VANTAGE_API_KEY",
+    "DART_API_KEY",
+    "DASHBOARD_LOCAL_TOKEN",
+    "DASHBOARD_LOCAL_USERNAME",
+    "DASHBOARD_LOCAL_PASSWORD_HASH",
+    "DASHBOARD_REMOTE_TOKEN",
+    "KAKAO_ACCESS_TOKEN",
+    "KAKAO_JAVASCRIPT_KEY",
+    "KAKAO_NATIVE_APP_KEY",
+    "KAKAO_REFRESH_TOKEN",
+    "KAKAO_REST_API_KEY",
+    "KRX_API_KEY",
+    "KRX_ID",
+    "KRX_PW",
+    "NAVER_ACCESS_KEY_ID",
+    "NAVER_HUB_CLIENT_ID",
+    "NAVER_HUB_CLIENT_SECRET",
+    "NAVER_SECRET_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "TOSS_CLIENT_ID",
+    "TOSS_CLIENT_SECRET",
+}
+
+
+def secure_env_path() -> str:
+    return os.environ.get("STOCK_ALARM_SECURE_ENV_PATH") or DEFAULT_SECURE_ENV_PATH
+
+
+def _load_env_file(path: str, *, override: bool, skip_sensitive: bool = False) -> None:
+    try:
+        with open(path, encoding="utf-8") as file:
+            for raw in file:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if skip_sensitive and key in SENSITIVE_ENV_KEYS:
+                    continue
+                if override:
+                    os.environ[key] = value.strip()
+                else:
+                    os.environ.setdefault(key, value.strip())
+    except (FileNotFoundError, PermissionError):
+        return
 
 
 def load_env(path: str | None = None) -> None:
-    path = path or DEFAULT_ENV_PATH
     os.makedirs(".cache/matplotlib", exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", os.path.abspath(".cache/matplotlib"))
-    if not os.path.exists(path):
+    if path is not None:
+        _load_env_file(path, override=False)
         return
-    with open(path, encoding="utf-8") as file:
-        for raw in file:
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
+    _load_env_file(DEFAULT_ENV_PATH, override=False, skip_sensitive=True)
+    # The protected file is authoritative for credentials, so a stale value
+    # left in the developer environment cannot silently override it.
+    _load_env_file(secure_env_path(), override=True)
 
 
-def save_env_value(key: str, value: str, path: str | None = None) -> None:
-    path = path or DEFAULT_ENV_PATH
-    lines = []
-    found = False
+def save_env_values(values: dict[str, str], path: str | None = None, *, remove_keys: set[str] | None = None) -> None:
+    protected_default = path is None and any(key in SENSITIVE_ENV_KEYS for key in values)
+    if protected_default and any(key not in SENSITIVE_ENV_KEYS for key in values):
+        raise ValueError("sensitive and non-sensitive settings must be saved separately")
+    path = path or (secure_env_path() if protected_default else DEFAULT_ENV_PATH)
+    if protected_default and not os.path.exists(path):
+        raise RuntimeError("protected credential store is missing; run scripts/migrate_secrets.ps1 first")
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    lines: list[str] = []
+    found: set[str] = set()
+    remove_keys = remove_keys or set()
     if os.path.exists(path):
         with open(path, encoding="utf-8") as file:
             lines = file.readlines()
-    for index, raw in enumerate(lines):
-        if raw.strip().startswith(f"{key}="):
-            lines[index] = f"{key}={value}\n"
-            found = True
-    if not found:
-        lines.append(f"{key}={value}\n")
-    with open(path, "w", encoding="utf-8") as file:
-        file.writelines(lines)
+    output: list[str] = []
+    for raw in lines:
+        current_key = raw.split("=", 1)[0].strip() if "=" in raw and not raw.lstrip().startswith("#") else ""
+        if current_key in remove_keys:
+            continue
+        if current_key in values:
+            output.append(f"{current_key}={values[current_key]}\n")
+            found.add(current_key)
+        else:
+            output.append(raw)
+    for key, value in values.items():
+        if key not in found:
+            output.append(f"{key}={value}\n")
+    descriptor, temporary_path = tempfile.mkstemp(prefix=".stockalarm-env-", dir=os.path.dirname(os.path.abspath(path)), text=True)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.writelines(output)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def save_env_value(key: str, value: str, path: str | None = None) -> None:
+    save_env_values({key: value}, path)
 
 
 def yyyymmdd(day: date) -> str:
@@ -308,12 +391,6 @@ def evaluate_naver_candidate(
         record_price_quality(quality)
     if record_quality and quality["status"] != "valid":
         return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": f"price_{quality['status']}:{quality['reason']}"})
-    if external_lookup:
-        from .toss_client import blocking_warnings_for
-        blocking = blocking_warnings_for(ticker)
-        if blocking:
-            return CandidateEvaluation(ticker, name, {**base, "rejection_reasons": f"stock_warning:{','.join(sorted(blocking))}"})
-
     closes = [int(row[4]) for row in rows[-20:]]
     highs = [int(row[2]) for row in rows[-10:]]
     lows = [int(row[3]) for row in rows[-10:]]
@@ -378,6 +455,11 @@ def evaluate_naver_candidate(
     }
     if rejections:
         return CandidateEvaluation(ticker, name, values)
+    if external_lookup:
+        from .toss_client import blocking_warnings_for
+        blocking = blocking_warnings_for(ticker)
+        if blocking:
+            return CandidateEvaluation(ticker, name, {**values, "rejection_reasons": f"stock_warning:{','.join(sorted(blocking))}"})
     name = stock_name(ticker, name)
     volume_score, trading_value_score, trend_score = calculate_score_parts(close, ma20, volume_ratio, trading_value, atr20_pct)
     news_score = news_bonus(name) if external_lookup else 0.0
@@ -666,6 +748,13 @@ def market_exposure_limit_pct(up_ratio: float) -> float:
     return 100.0 if up_ratio >= 0.60 else 40.0 if up_ratio >= 0.45 else 10.0
 
 
+def effective_exposure_limit_pct(up_ratio: float, profile_limit_pct: float | None = None, regime_multiplier: float = 1.0) -> float:
+    """Combine market, account-risk and optional profile caps in one place."""
+    risk_limit = env_float("RISK_MAX_EXPOSURE_PCT", 70)
+    profile_limit = risk_limit if profile_limit_pct is None else max(0.0, min(100.0, float(profile_limit_pct)))
+    return max(0.0, min(market_exposure_limit_pct(up_ratio), profile_limit) * max(0.0, float(regime_multiplier)))
+
+
 def watchlist_market_up_ratio(end_day: date) -> float:
     moves = []
     for ticker in configured_stocks():
@@ -890,7 +979,11 @@ def top_picks(picks: list[Pick], top_n: int) -> list[Pick]:
 
 def profile_total_score(values: dict, weights: dict[str, float]) -> float:
     from .trading_profiles import CATEGORY_VALUE_KEYS
-    return round(sum(float(values.get(CATEGORY_VALUE_KEYS[category], 50.0) or 50.0) * weight for category, weight in weights.items()), 2)
+    def category_value(category: str) -> float:
+        value = values.get(CATEGORY_VALUE_KEYS[category])
+        return 50.0 if value is None else float(value)
+
+    return round(sum(category_value(category) * weight for category, weight in weights.items()), 2)
 
 
 def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, top_n: int, path: str | None = None) -> list[Pick]:
@@ -1410,12 +1503,10 @@ def auto_buy_virtual_trader(
         limited = sector_limited_allocations(combined, existing_allocations + allocations, locked_tickers={pick.ticker for pick in existing}, group_cap_override=sector_cap)
         allocations = limited[len(existing):]
     breadth = naver_market_up_ratio(date.today())
-    market_limit = market_exposure_limit_pct(breadth)
-    profile_limit = 100.0 if exposure_limit_override is None else max(0.0, min(100.0, float(exposure_limit_override)))
     regime_multiplier = 1.0
     if regime_exposure_multiplier:
         regime_multiplier = float(regime_exposure_multiplier.get(current_market_regime(date.today()), 1.0))
-    exposure_limit = min(market_limit, profile_limit) * regime_multiplier
+    exposure_limit = effective_exposure_limit_pct(breadth, exposure_limit_override, regime_multiplier)
     candidates = [
         {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": round(allocation * scale, 2),
          "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}

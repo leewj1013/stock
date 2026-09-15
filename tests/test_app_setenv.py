@@ -15,8 +15,9 @@ class AppSetEnvTest(unittest.TestCase):
             # at a throwaway file here instead of chdir-ing, so this test can't
             # ever write into the real project .env.
             env_path = os.path.join(directory, ".env")
+            open(env_path, "w", encoding="utf-8").close()
             with patch.object(sys, "argv", ["app_setenv", "DART_API_KEY"]), \
-                 patch("stock_alarm.app.DEFAULT_ENV_PATH", env_path), \
+                 patch("stock_alarm.app.DEFAULT_SECURE_ENV_PATH", env_path), \
                  patch.dict(os.environ, {"STOCK_ALARM_SETENV_VALUE": "secret"}, clear=False):
                 main()
 

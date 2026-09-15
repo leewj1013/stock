@@ -27,7 +27,8 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.failure_alert", script)
         self.assertIn("stock_alarm.run_gate $mode", script)
         self.assertIn("SKIP $mode", script)
-        self.assertIn("cmd.exe /d /c", script)
+        self.assertIn("-I $runner", script)
+        self.assertIn("stock_alarm\\isolated_runner.py", script)
         self.assertIn("MODE $mode", script)
         self.assertIn("Set-Content -Path $stderr", script)
         self.assertIn('$env:NO_CACHE = "1"', script)
@@ -47,6 +48,8 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("'sell</Arguments>'", script)
         self.assertIn('New-ScheduledTaskAction -Execute "wscript.exe"', script)
         self.assertIn("run_powershell_hidden.vbs", script)
+        self.assertIn("deploy_secure_runtime.ps1", script)
+        self.assertIn("current_runtime.path", script)
         self.assertIn("-WakeToRun", script)
         self.assertIn("-StartWhenAvailable", script)
         self.assertIn("<WakeToRun>true</WakeToRun>", script)
@@ -95,6 +98,9 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("stock_alarm.dashboard_server", ensure_script)
         self.assertIn("http://127.0.0.1:$port/", script)
         self.assertIn("Start-Process", script)
+        self.assertNotIn("Set-Clipboard", script)
+        self.assertNotIn("DASHBOARD_LOCAL_USERNAME", script)
+        self.assertNotIn("DASHBOARD_LOCAL_PASSWORD_HASH", script)
 
     def test_ensure_dashboard_server_script_checks_port_before_launching(self):
         with open("scripts/ensure_dashboard_server.ps1", encoding="utf-8-sig") as file:

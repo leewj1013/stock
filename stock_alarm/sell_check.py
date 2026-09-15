@@ -66,6 +66,20 @@ def active_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
     return list(latest.values())
 
 
+def virtual_holding_positions(state: dict) -> list[dict[str, str]]:
+    """Convert one profile's actual virtual holdings into sell-check inputs."""
+    return [
+        {
+            "ticker": str(holding["ticker"]),
+            "name": str(holding.get("name") or holding["ticker"]),
+            "entry_price": str(holding["average_price"]),
+            "entry_date": str(holding.get("first_entry_at") or ""),
+        }
+        for holding in state.get("holdings", [])
+        if holding.get("ticker") and float(holding.get("average_price") or 0) > 0
+    ]
+
+
 def _evaluate_position(
     position: dict[str, str],
     end_day: date,
@@ -433,6 +447,8 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
 def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict]:
     from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
     state = virtual_trader_state(path=profile["db_path"])
+    if profile.get("sell_alerts_log") != SELL_ALERTS_LOG:
+        positions = virtual_holding_positions(state)
     quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
     sell_policy = profile["sell_policy"]
     if sell_policy and sell_policy.get("disable_take_profit_in_regimes"):

@@ -274,35 +274,6 @@ class SellCheckTest(unittest.TestCase):
         self.assertIsNone(calls["logs/sell_alerts.csv"])
         self.assertEqual({"stop_loss_pct": 3.0, "take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0}, calls["logs/sell_alerts_neutral.csv"])
 
-    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=False)
-    def test_run_skips_when_market_closed(self, _trading):
-        self.assertEqual("market_closed", run())
-
-    @patch("stock_alarm.sell_check.write_error_log")
-    @patch("stock_alarm.data_store.virtual_sell", return_value={})
-    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
-    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"holdings": []})
-    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
-    @patch("stock_alarm.data_store.finish_run")
-    @patch("stock_alarm.data_store.start_run", return_value="test-run")
-    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
-    @patch("stock_alarm.sell_check.read_positions", return_value=[])
-    @patch("stock_alarm.sell_check.write_log")
-    def test_neutral_profile_failure_does_not_fail_the_primary_run(self, _write, _positions, _trading, start_run, finish_run, _day, _state, _position_states, _sell, write_error_log):
-        # A bug in the comparison-only neutral profile must not mark the
-        # aggressive account's own sell_check run as failed.
-        def find_alerts_side_effect(*args, **kwargs):
-            if args[6] == "logs/sell_alerts_neutral.csv":
-                raise RuntimeError("boom")
-            return []
-
-        with patch("stock_alarm.sell_check.find_alerts", side_effect=find_alerts_side_effect):
-            result = run()
-
-        self.assertEqual("no_alerts", result)
-        finish_run.assert_called_once_with("test-run")
-        write_error_log.assert_called_once()
-
     @patch("stock_alarm.sell_check.current_market_regime", return_value="bull")
     @patch("stock_alarm.data_store.virtual_sell", return_value={})
     @patch("stock_alarm.data_store.virtual_position_states", return_value={})
@@ -331,6 +302,61 @@ class SellCheckTest(unittest.TestCase):
                                      sell_policy={"disable_take_profit_in_regimes": ["bull"], "market_regime": "sideways"})
         self.assertIsNone(in_bull)
         self.assertEqual("take_profit_1", in_sideways.stage)
+
+    @patch("stock_alarm.sell_check.current_market_regime", return_value="sideways")
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.data_store.virtual_trader_state")
+    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.sell_check.read_positions", return_value=[{"ticker": "005930", "name": "Samsung", "entry_price": "70000", "entry_date": "2026-07-01"}])
+    @patch("stock_alarm.sell_check.write_log")
+    def test_neutral_profile_checks_its_own_virtual_holdings(
+        self, _write, _positions, _trading, _start, _finish, _day, virtual_state, _position_states, _sell, _regime,
+    ):
+        virtual_state.side_effect = [
+            {"holdings": [{"ticker": "005930", "name": "Samsung", "average_price": 70000, "first_entry_at": "2026-07-01T09:00:00", "quantity": 1}]},
+            {"holdings": [{"ticker": "000660", "name": "SK hynix", "average_price": 150000, "first_entry_at": "2026-07-02T09:00:00", "quantity": 2}]},
+            {"holdings": []},
+            {"holdings": []},
+        ]
+        with patch("stock_alarm.sell_check.find_alerts", return_value=[]) as find_alerts_mock:
+            run()
+
+        neutral_positions = find_alerts_mock.call_args_list[1].args[0]
+        self.assertEqual(["000660"], [row["ticker"] for row in neutral_positions])
+        self.assertEqual("150000", neutral_positions[0]["entry_price"])
+
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=False)
+    def test_run_skips_when_market_closed(self, _trading):
+        self.assertEqual("market_closed", run())
+
+    @patch("stock_alarm.sell_check.write_error_log")
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"holdings": []})
+    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.sell_check.read_positions", return_value=[])
+    @patch("stock_alarm.sell_check.write_log")
+    def test_neutral_profile_failure_does_not_fail_the_primary_run(self, _write, _positions, _trading, start_run, finish_run, _day, _state, _position_states, _sell, write_error_log):
+        # A bug in the comparison-only neutral profile must not mark the
+        # aggressive account's own sell_check run as failed.
+        def find_alerts_side_effect(*args, **kwargs):
+            if args[6] == "logs/sell_alerts_neutral.csv":
+                raise RuntimeError("boom")
+            return []
+
+        with patch("stock_alarm.sell_check.find_alerts", side_effect=find_alerts_side_effect):
+            result = run()
+
+        self.assertEqual("no_alerts", result)
+        finish_run.assert_called_once_with("test-run")
+        write_error_log.assert_called_once()
 
 
 if __name__ == "__main__":

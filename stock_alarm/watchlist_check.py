@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import csv
 import os
-import re
 
 from stock_alarm.app import WATCHLIST_PATH
+from stock_alarm.ticker import is_valid_kr_ticker
 
 
 def validate_watchlist(path: str = WATCHLIST_PATH) -> list[str]:
@@ -15,7 +15,7 @@ def validate_watchlist(path: str = WATCHLIST_PATH) -> list[str]:
         for line_no, row in enumerate(csv.DictReader(file), start=2):
             ticker = (row.get("ticker") or "").strip()
             name = (row.get("name") or "").strip()
-            if not re.fullmatch(r"\d{6}", ticker):
+            if not is_valid_kr_ticker(ticker):
                 errors.append(f"line {line_no}: invalid ticker {ticker!r}")
             if not name:
                 errors.append(f"line {line_no}: empty name")

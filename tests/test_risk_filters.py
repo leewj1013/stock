@@ -55,7 +55,8 @@ class RiskFiltersTest(unittest.TestCase):
     @patch("stock_alarm.toss_client.blocking_warnings_for", return_value={"LIQUIDATION_TRADING"})
     @patch("stock_alarm.app.naver_rows")
     def test_rejects_a_candidate_under_liquidation_trading(self, naver_rows, _warnings):
-        naver_rows.return_value = [[20260701 + index, 0, 100, 100, 100, 100] for index in range(21)]
+        naver_rows.return_value = [[20260701 + index, 100, 101, 99, 100, 100] for index in range(20)]
+        naver_rows.return_value.append([20260721, 100, 104, 99, 103, 200])
         result = evaluate_naver_candidate("005930", "Samsung", date(2026, 7, 22), 0, 1.5)
         self.assertEqual("stock_warning:LIQUIDATION_TRADING", result.values["rejection_reasons"])
 

@@ -14,7 +14,7 @@ class WatchlistCheckTest(unittest.TestCase):
         return file.name
 
     def test_accepts_valid_watchlist(self):
-        path = self.write_temp("ticker,name\n005930,Samsung\n000660,SK Hynix\n")
+        path = self.write_temp("ticker,name\n005930,Samsung\n000660,SK Hynix\n0015N0,Aromatica\n")
         self.assertEqual([], validate_watchlist(path))
 
     def test_rejects_bad_rows(self):

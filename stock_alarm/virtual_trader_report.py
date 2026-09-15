@@ -55,9 +55,19 @@ def toss_reference_price(ticker: str) -> int | None:
     if not (os.environ.get("TOSS_CLIENT_ID") and os.environ.get("TOSS_CLIENT_SECRET")):
         return None
     try:
-        from .toss_client import TossClient
-        prices = TossClient().prices([ticker])
+        from .toss_client import shared_client
+        prices = shared_client().prices([ticker])
         return int(float(prices[0]["lastPrice"])) if prices else None
+    except Exception:
+        return None
+
+
+def pykrx_reference_close(ticker: str, day: date | None = None) -> int | None:
+    day = day or date.today()
+    try:
+        from pykrx import stock
+        frame = stock.get_market_ohlcv_by_date(day.strftime("%Y%m%d"), day.strftime("%Y%m%d"), ticker)
+        return int(frame.iloc[-1, 3]) if not frame.empty else None
     except Exception:
         return None
 
@@ -65,15 +75,6 @@ def toss_reference_price(ticker: str) -> int | None:
 def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
     today = date.today()
     tickers = [holding["ticker"] for holding in virtual_trader_state(path=path)["holdings"]]
-    def pykrx_reference_close(ticker: str) -> int | None:
-        if datetime.now().time() < datetime.strptime("15:40", "%H:%M").time():
-            return None
-        try:
-            from pykrx import stock
-            frame = stock.get_market_ohlcv_by_date(today.strftime("%Y%m%d"), today.strftime("%Y%m%d"), ticker)
-            return int(frame.iloc[-1, 3]) if not frame.empty else None
-        except Exception:
-            return None
     def reference_close(ticker: str) -> int | None:
         # KRX's after-hours single-price session (시간외단일가, 16:00~18:00) can
         # legitimately move the traded price well past the regular session's
@@ -84,7 +85,9 @@ def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
             toss_price = toss_reference_price(ticker)
             if toss_price is not None:
                 return toss_price
-        return pykrx_reference_close(ticker)
+        if datetime.now().time() < datetime.strptime("15:40", "%H:%M").time():
+            return None
+        return pykrx_reference_close(ticker, today)
     prices, _checks = checked_prices(
         tickers,
         lambda ticker: naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60),

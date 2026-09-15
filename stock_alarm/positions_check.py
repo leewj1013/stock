@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import csv
 import os
-import re
 from datetime import date
 from math import isfinite
 
 from .app import POSITIONS_PATH
 from .sell_check import read_positions
+from .ticker import is_valid_kr_ticker
 
 
 def validate_positions(path: str = POSITIONS_PATH) -> list[str]:
@@ -18,7 +18,7 @@ def validate_positions(path: str = POSITIONS_PATH) -> list[str]:
         name = (row.get("name") or "").strip()
         entry_price = (row.get("entry_price") or "").strip()
         entry_date = (row.get("entry_date") or "").strip()
-        if not re.fullmatch(r"\d{6}", ticker):
+        if not is_valid_kr_ticker(ticker):
             errors.append(f"line {line_no}: invalid ticker {ticker!r}")
         if not name:
             errors.append(f"line {line_no}: empty name")
@@ -33,7 +33,7 @@ def validate_positions(path: str = POSITIONS_PATH) -> list[str]:
             date.fromisoformat(entry_date)
         except ValueError:
             errors.append(f"line {line_no}: invalid entry_date {entry_date!r}")
-        if re.fullmatch(r"\d{6}", ticker) and parsed_price is not None and isfinite(parsed_price) and parsed_price > 0 and entry_date:
+        if is_valid_kr_ticker(ticker) and parsed_price is not None and isfinite(parsed_price) and parsed_price > 0 and entry_date:
             key = (ticker, entry_date, parsed_price)
             if key in seen_positions:
                 errors.append(f"line {line_no}: duplicate position {ticker} {entry_date} {parsed_price:g}")

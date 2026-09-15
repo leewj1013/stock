@@ -5,10 +5,15 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, display_value, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, dashboard_logo_data_uri, display_value, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
 
 
 class DashboardTest(unittest.TestCase):
+    def test_dashboard_logo_is_embedded_as_portable_png(self):
+        logo = dashboard_logo_data_uri()
+        self.assertTrue(logo.startswith("data:image/png;base64,"))
+        self.assertGreater(len(logo), 1000)
+
     def test_escape(self):
         self.assertEqual("&lt;x&gt;", e("<x>"))
 
@@ -58,6 +63,10 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("item.average_price", html)
         self.assertIn("item.current_price", html)
         self.assertIn("Math.floor(currentPage/5)", html)
+        self.assertIn('const remoteTokenOriginKey = "stockAlarm.remoteTokenOrigin"', html)
+        self.assertIn('remoteTokenOrigin === traderApiBase', html)
+        self.assertIn('redirect:"error"', html)
+        self.assertIn('parsed.protocol !== "https:"', html)
 
     @patch("stock_alarm.dashboard.recent_virtual_trades")
     @patch("stock_alarm.dashboard.latest_position_rows", return_value=[])

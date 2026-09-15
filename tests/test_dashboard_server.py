@@ -4,7 +4,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import RemoteReadOnlyHandler, allowed_origin, prices, profile_db_path, remote_setup_page, trader_payload, valid_remote_token
+from stock_alarm.dashboard_server import DashboardHandler, RemoteReadOnlyHandler, allowed_local_origin, allowed_origin, prices, profile_db_path, remote_setup_page, trader_payload, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
@@ -14,6 +14,16 @@ class DashboardServerTest(unittest.TestCase):
         with patch.dict("os.environ", {"DASHBOARD_REMOTE_TOKEN": "secret"}):
             self.assertTrue(valid_remote_token("Bearer secret"))
             self.assertFalse(valid_remote_token("Bearer wrong"))
+
+    def test_remote_origin_uses_the_value_loaded_after_module_import(self):
+        with patch.dict("os.environ", {"DASHBOARD_REMOTE_ORIGIN": "https://configured.example"}, clear=False):
+            self.assertEqual("https://configured.example", allowed_origin("https://configured.example"))
+            self.assertEqual("", allowed_origin("https://leewj1013.github.io"))
+
+    def test_local_write_origin_rejects_file_and_untrusted_web_pages(self):
+        self.assertTrue(allowed_local_origin("http://127.0.0.1:8765"))
+        self.assertFalse(allowed_local_origin("null"))
+        self.assertFalse(allowed_local_origin("https://evil.example"))
 
     @patch("stock_alarm.dashboard_server.os.environ", {"DASHBOARD_REMOTE_TOKEN": "secret"})
     @patch("builtins.open", side_effect=OSError)
@@ -161,6 +171,61 @@ class RemoteReadOnlyHandlerTest(unittest.TestCase):
 
     def test_writes_are_rejected(self):
         self.assertEqual(403, self._request("/api/trader/buy", method="POST"))
+
+
+class DashboardHandlerLocalTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardHandler)
+        cls.base_url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+        import threading
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join()
+
+    def _request(self, path="/", headers=None, method="GET", data=None):
+        request = urllib.request.Request(self.base_url + path, headers=headers or {}, method=method, data=data)
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, response.headers
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers
+
+    @patch("stock_alarm.dashboard_server.render", return_value="<html>ok</html>")
+    def test_local_dashboard_opens_without_auth_and_sets_security_headers(self, render_mock):
+        status, headers = self._request()
+        self.assertEqual(200, status)
+        self.assertEqual("no-store", headers.get("Cache-Control"))
+        self.assertEqual("DENY", headers.get("X-Frame-Options"))
+        render_mock.assert_called_once()
+
+    @patch("stock_alarm.dashboard_server.virtual_deposit")
+    def test_local_write_rejects_missing_origin(self, deposit_mock):
+        status, _headers = self._request(
+            "/api/trader/deposit",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+            data=b'{"amount":1000}',
+        )
+        self.assertEqual(403, status)
+        deposit_mock.assert_not_called()
+
+    @patch("stock_alarm.dashboard_server.trader_payload", return_value={"cash": 1000})
+    @patch("stock_alarm.dashboard_server.virtual_deposit")
+    def test_local_write_accepts_same_origin_without_auth(self, deposit_mock, _payload):
+        origin = "http://127.0.0.1:8765"
+        status, _headers = self._request(
+            "/api/trader/deposit",
+            headers={"Origin": origin, "Content-Type": "application/json"},
+            method="POST",
+            data=b'{"amount":1000}',
+        )
+        self.assertEqual(200, status)
+        deposit_mock.assert_called_once()
 
 
 if __name__ == "__main__":

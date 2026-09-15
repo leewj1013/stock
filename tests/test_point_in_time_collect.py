@@ -91,9 +91,9 @@ class PointInTimeCollectTest(unittest.TestCase):
         collect_stock_warnings_mock.assert_called_once()
         self.assertEqual("005930", collect_stock_warnings_mock.call_args.args[0])
 
-    @patch("stock_alarm.toss_client.TossClient")
-    def test_collect_stock_warnings_stores_active_warnings(self, toss_client_cls):
-        toss_client_cls.return_value.stock_warnings.return_value = [
+    @patch("stock_alarm.toss_client.shared_client")
+    def test_collect_stock_warnings_stores_active_warnings(self, shared_client):
+        shared_client.return_value.stock_warnings.return_value = [
             {"warningType": "LIQUIDATION_TRADING", "startDate": "2026-09-01", "endDate": None},
         ]
         with tempfile.TemporaryDirectory() as tmp, closing(connect(Path(tmp) / "pit.sqlite3")) as db:
@@ -103,11 +103,12 @@ class PointInTimeCollectTest(unittest.TestCase):
         self.assertEqual(1, records)
         self.assertEqual([("033340", "LIQUIDATION_TRADING", "2026-09-01")], [tuple(row) for row in stored])
 
-    @patch("stock_alarm.toss_client.TossClient")
-    def test_collect_stock_warnings_tolerates_a_toss_failure(self, toss_client_cls):
-        toss_client_cls.side_effect = ValueError("missing credentials")
+    @patch("stock_alarm.toss_client.shared_client")
+    def test_collect_stock_warnings_preserves_a_toss_failure(self, shared_client):
+        shared_client.side_effect = ValueError("missing credentials")
         with tempfile.TemporaryDirectory() as tmp, closing(connect(Path(tmp) / "pit.sqlite3")) as db:
-            self.assertEqual(0, collect_stock_warnings("033340", db))
+            with self.assertRaisesRegex(ValueError, "missing credentials"):
+                collect_stock_warnings("033340", db)
 
 
 if __name__ == "__main__":

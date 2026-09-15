@@ -100,6 +100,11 @@ reports/dashboard.html
 open_dashboard.bat
 ```
 
+`open_dashboard.bat`을 실행하면 로그인 없이 바로 접속합니다. 전체 대시보드와
+가상계좌 쓰기 API는 `127.0.0.1`에만 바인딩되며, 입금·매수 요청은 동일 출처
+`Origin` 검사를 통과해야 합니다. 외부 원격 연결은 별도의 읽기 전용 포트와 토큰
+보호를 계속 사용합니다.
+
 ### GitHub Pages에서 로컬 DB 실시간 조회
 
 원격 연결은 읽기 전용입니다. 입금·수동매수·브라우저 계좌 이전은 로컬 대시보드에서만 허용됩니다. Cloudflare 터널은 `DASHBOARD_REMOTE_PORT`(기본 8766)만 외부로 연결하며, 전체 대시보드·`/remote-setup`·매수/입금 API가 있는 `DASHBOARD_PORT`(기본 8765)는 터널에 절대 연결되지 않습니다 — 터널을 거치는 요청은 실제 발신지와 무관하게 로컬 접속처럼 보이므로, 두 포트를 분리하는 것 자체가 보안 경계입니다.
@@ -108,7 +113,7 @@ open_dashboard.bat
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_remote_dashboard.ps1
 ```
 
-출력된 `https://...trycloudflare.com` 주소와 `.env`의 `DASHBOARD_REMOTE_TOKEN`을 GitHub Pages의 `로컬 DB 실시간 연결` 입력란에 입력합니다. API 주소는 브라우저 로컬 저장소에, 토큰은 현재 탭의 세션 저장소에만 보관됩니다.
+출력된 `https://...trycloudflare.com` 주소와 보호 저장소의 `DASHBOARD_REMOTE_TOKEN`을 GitHub Pages의 `로컬 DB 실시간 연결` 입력란에 입력합니다. API 주소는 브라우저 로컬 저장소에, 토큰은 현재 탭의 세션 저장소에만 보관됩니다. 토큰은 입력한 API의 정확한 HTTPS origin에 묶이며 주소가 바뀌면 즉시 삭제되고, 리다이렉트에는 전달되지 않습니다.
 
 주소 입력과 토큰 복사를 도와주는 로컬 설정 화면을 열려면 다음 스크립트를 실행합니다.
 
@@ -221,8 +226,8 @@ DB는 `data/stock_alarm_neutral.db`로 완전히 분리되어 있습니다.
 
 ```text
 NOTIFIER=telegram
-TELEGRAM_BOT_TOKEN=텔레그램_봇_토큰
-TELEGRAM_CHAT_ID=텔레그램_CHAT_ID
+TELEGRAM_BOT_TOKEN=<telegram-bot-token>
+TELEGRAM_CHAT_ID=<telegram-chat-id>
 DATA_SOURCE=naver
 KOREAN_STOCK_NAMES=1
 AUTO_TRACK_PICKS=1
@@ -265,12 +270,24 @@ OpenDART 키가 없어도 기본 추천, 텔레그램, 시황 요약, 대시보�
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
+.\.venv\Scripts\python -m pip install -r requirements.lock
 Copy-Item .env.example .env
 Copy-Item data\positions.example.csv data\positions.csv
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate_secrets.ps1
 ```
 
-그 다음 `.env`에 텔레그램 값을 입력하세요.
+`migrate_secrets.ps1`은 `.env`의 API 키·토큰을
+`%USERPROFILE%\.stockAlarmSecure\secrets.env`로 옮기고 현재 Windows 사용자·SYSTEM·관리자만
+읽을 수 있도록 ACL을 제한합니다. 이후 비밀값은 그 파일에서 관리하고 `.env`에는
+비민감 설정만 둡니다. 의존성은 정확한 버전의 `requirements.lock`으로 설치하며,
+GitHub Actions도 커밋 SHA로 고정된 액션과 잠금 파일을 사용합니다.
+
+예약작업을 등록할 때는 `register_daily_task.ps1`이 소스·스크립트·가상환경을
+`%USERPROFILE%\.stockAlarmSecure\runtime-*`에 복사해 같은 ACL로 잠근 뒤, 모든 예약작업을
+그 보호 런타임으로 연결합니다. 보호된 실행기는 Python `-I` 격리 모드로 패키지를
+불러오되 DB·로그·보고서는 기존 프로젝트 폴더를 계속 사용합니다. 코드 변경 후에는
+예약작업이 검토된 새 코드를 사용하도록 등록 스크립트를 다시 실행해야 합니다.
+기존 버전 런타임은 자동 삭제하지 않아 문제가 생기면 작업 경로를 되돌릴 수 있습니다.
 
 기존 DB를 새 스키마로 올릴 때는 다음 명령을 한 번 실행합니다. 마이그레이션은 여러 번 실행해도 안전하며, 평상시에는 앱 시작 시에도 자동 적용됩니다.
 

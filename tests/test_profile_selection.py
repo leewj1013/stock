@@ -25,6 +25,10 @@ class ProfileTotalScoreTest(unittest.TestCase):
         weights = {"profitability": 1.0}
         self.assertEqual(50.0, profile_total_score({}, weights))
 
+    def test_real_zero_category_value_is_not_replaced_with_neutral_fifty(self):
+        weights = {"profitability": 1.0}
+        self.assertEqual(0.0, profile_total_score({"profitability_score": 0.0}, weights))
+
 
 class SelectForProfileTest(unittest.TestCase):
     @patch("stock_alarm.app.open_recommended_tickers", return_value=set())

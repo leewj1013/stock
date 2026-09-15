@@ -8,7 +8,7 @@ End If
 
 Set shell = CreateObject("WScript.Shell")
 scriptPath = WScript.Arguments(0)
-command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & scriptPath & """"
+command = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & scriptPath & """"
 
 For index = 1 To WScript.Arguments.Count - 1
     command = command & " " & WScript.Arguments(index)

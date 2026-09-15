@@ -1,16 +1,19 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$scriptPath = Join-Path $projectRoot "scripts\run_stock_alarm.ps1"
-$hiddenLauncherPath = Join-Path $projectRoot "scripts\run_powershell_hidden.vbs"
+& (Join-Path $PSScriptRoot "deploy_secure_runtime.ps1") | Out-Host
+$runtimePointer = Join-Path $env:USERPROFILE ".stockAlarmSecure\current_runtime.path"
+$runtimeRoot = (Get-Content -LiteralPath $runtimePointer -Raw).Trim()
+$scriptPath = Join-Path $runtimeRoot "scripts\run_stock_alarm.ps1"
+$hiddenLauncherPath = Join-Path $runtimeRoot "scripts\run_powershell_hidden.vbs"
 $openAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$scriptPath`" open"
 $dailyAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$scriptPath`" daily"
-$maintenancePath = Join-Path $projectRoot "scripts\run_db_maintenance.ps1"
+$maintenancePath = Join-Path $runtimeRoot "scripts\run_db_maintenance.ps1"
 $maintenanceAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$maintenancePath`""
-$ensureDashboardPath = Join-Path $projectRoot "scripts\ensure_dashboard_server.ps1"
+$ensureDashboardPath = Join-Path $runtimeRoot "scripts\ensure_dashboard_server.ps1"
 $dashboardServerAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$ensureDashboardPath`""
-$collectWarningsPath = Join-Path $projectRoot "scripts\collect_stock_warnings.ps1"
+$collectWarningsPath = Join-Path $runtimeRoot "scripts\collect_stock_warnings.ps1"
 $collectWarningsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$collectWarningsPath`""
-$shadowTraderPath = Join-Path $projectRoot "scripts\run_shadow_trader.ps1"
+$shadowTraderPath = Join-Path $runtimeRoot "scripts\run_shadow_trader.ps1"
 $shadowTraderAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$shadowTraderPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)

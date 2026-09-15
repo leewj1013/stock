@@ -213,12 +213,9 @@ def collect_stock_warnings(ticker: str, db) -> int:
     avoiding warned stocks actually helps returns (see the profile category
     score / news signal validations already done in validation_backtest.py).
     """
-    from .toss_client import TossClient
+    from .toss_client import shared_client
     now = iso_utc(datetime.now(KST))
-    try:
-        warnings = TossClient().stock_warnings(ticker)
-    except Exception:
-        return 0
+    warnings = shared_client().stock_warnings(ticker)
     for warning in warnings:
         db.execute(
             "INSERT OR REPLACE INTO stock_warning_snapshots(ticker,warning_type,start_date,end_date,available_at,collected_at,source) VALUES(?,?,?,?,?,?,?)",

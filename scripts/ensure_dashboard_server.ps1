@@ -1,10 +1,12 @@
 $ErrorActionPreference = "Stop"
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$runtimeRoot = Split-Path -Parent $PSScriptRoot
+$workspaceMarker = Join-Path $runtimeRoot "workspace.path"
+$projectRoot = if (Test-Path -LiteralPath $workspaceMarker) { (Get-Content -LiteralPath $workspaceMarker -Raw).Trim() } else { $runtimeRoot }
 Set-Location $projectRoot
 $env:PYTHONIOENCODING = "utf-8"
 
-if (Test-Path ".venv\Scripts\pythonw.exe") {
-    $python = ".venv\Scripts\pythonw.exe"
+if (Test-Path (Join-Path $runtimeRoot ".venv\Scripts\pythonw.exe")) {
+    $python = Join-Path $runtimeRoot ".venv\Scripts\pythonw.exe"
 } else {
     $command = Get-Command python -ErrorAction SilentlyContinue
     if (-not $command) {
@@ -15,10 +17,11 @@ if (Test-Path ".venv\Scripts\pythonw.exe") {
     }
     $python = $command.Source
 }
+$runner = Join-Path $runtimeRoot "stock_alarm\isolated_runner.py"
 
 $port = if ($env:DASHBOARD_PORT) { $env:DASHBOARD_PORT } else { "8765" }
 $existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue
 if (-not $existing) {
-    Start-Process -FilePath $python -ArgumentList "-m", "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
+    Start-Process -FilePath $python -ArgumentList "-I", $runner, "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
     Start-Sleep -Seconds 2
 }

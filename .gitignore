@@ -1,8 +1,11 @@
 .env
 .env.bak*
+secrets.env
 data/positions.csv
 data/stock_alarm.db
 data/stock_alarm_neutral.db
+data/stock_alarm_exp_*.db
+scripts/*.bak-*
 data/backups/
 data/registry-backup/
 data/stock_alarm.db-shm

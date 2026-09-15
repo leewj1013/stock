@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
-from .app import load_env, naver_rows, write_error_log
+from .app import effective_exposure_limit_pct, load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
@@ -35,9 +35,15 @@ REMOTE_PORT = int(os.environ.get("DASHBOARD_REMOTE_PORT", "8766"))
 REMOTE_ORIGIN = os.environ.get("DASHBOARD_REMOTE_ORIGIN", "https://leewj1013.github.io").rstrip("/")
 
 
+def allowed_local_origin(origin: str) -> bool:
+    port = int(os.environ.get("DASHBOARD_PORT", str(PORT)))
+    return origin.rstrip("/") in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+
+
 def allowed_origin(origin: str) -> str:
     clean = origin.rstrip("/")
-    if clean == REMOTE_ORIGIN or clean.startswith("http://127.0.0.1:") or clean.startswith("http://localhost:"):
+    configured = os.environ.get("DASHBOARD_REMOTE_ORIGIN", REMOTE_ORIGIN).rstrip("/")
+    if clean == configured or clean.startswith("http://127.0.0.1:") or clean.startswith("http://localhost:"):
         return clean
     return ""
 
@@ -99,11 +105,14 @@ def trader_payload(profile: str = "aggressive") -> dict:
     breadth = None
     try:
         with open(MARKET_BREADTH_CACHE_PATH, encoding="utf-8") as file:
-            breadth = float(json.load(file).get("up_ratio"))
+            snapshot = json.load(file)
+            if snapshot.get("as_of_date") == date.today().isoformat():
+                breadth = float(snapshot.get("up_ratio"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
-    market_limit = 70 if breadth is not None and breadth >= .60 else 40 if breadth is not None and breadth >= .45 else 10 if breadth is not None else None
-    market_mode = "공격" if market_limit == 70 else "중립" if market_limit == 40 else "방어" if market_limit == 10 else "데이터 대기"
+    profile_config = PROFILES.get(profile, PROFILES["aggressive"])
+    market_limit = effective_exposure_limit_pct(breadth, profile_config["exposure_limit_pct"]) if breadth is not None else None
+    market_mode = "공격" if breadth is not None and breadth >= .60 else "중립" if breadth is not None and breadth >= .45 else "방어" if breadth is not None else "데이터 대기"
     from .toss_client import BLOCKING_STOCK_WARNINGS, TossClient
     latest_checks = {}
     for row in recent_position_checks(1000, path):
@@ -217,12 +226,14 @@ def remote_setup_page() -> str:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    """Full local admin UI: dashboard page, remote-setup page (which prints the
-    remote token in cleartext), and every trader write route. Deliberately has
-    no auth of its own -- it is only ever reachable by whoever is sitting at
-    this machine, because HOST binds to 127.0.0.1 and this port is never
-    handed to the Cloudflare tunnel (see REMOTE_PORT above).
-    """
+    """Loopback-only dashboard and virtual-account write API."""
+
+    def _security_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
 
     def _cors(self) -> None:
         # Same-origin access via http://127.0.0.1:PORT/ (open_dashboard.bat)
@@ -232,7 +243,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # response from JS without this header -- the dashboard's trader
         # panel silently renders its empty initial state instead. HOST
         # already binds to loopback only, so this stays narrowly scoped to
-        # file:// rather than reflecting arbitrary origins.
+        # file:// rather than reflecting arbitrary origins. This is read-only:
+        # do_POST explicitly rejects Origin:null, so a downloaded HTML file
+        # cannot mutate the virtual account.
         if self.headers.get("Origin", "") == "null":
             self.send_header("Access-Control-Allow-Origin", "null")
             self.send_header("Vary", "Origin")
@@ -241,13 +254,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self._security_headers()
         self._cors()
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        if self.headers.get("Origin", "") != "null":
+        if not allowed_local_origin(self.headers.get("Origin", "")):
             self.send_error(403)
             return
         self.send_response(204)
@@ -268,6 +282,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._security_headers()
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -276,8 +291,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = remote_setup_page().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+            self._security_headers()
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -286,6 +300,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            origin = self.headers.get("Origin", "")
+            if not allowed_local_origin(origin):
+                self._json(403, {"error": "허용되지 않은 요청 출처입니다."})
+                return
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
@@ -333,6 +351,10 @@ class RemoteReadOnlyHandler(BaseHTTPRequestHandler):
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         self._cors()
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -368,7 +390,11 @@ class RemoteReadOnlyHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    global PORT, REMOTE_PORT, REMOTE_ORIGIN
     load_env()
+    PORT = int(os.environ.get("DASHBOARD_PORT", str(PORT)))
+    REMOTE_PORT = int(os.environ.get("DASHBOARD_REMOTE_PORT", str(REMOTE_PORT)))
+    REMOTE_ORIGIN = os.environ.get("DASHBOARD_REMOTE_ORIGIN", REMOTE_ORIGIN).rstrip("/")
     remote_server = ThreadingHTTPServer((HOST, REMOTE_PORT), RemoteReadOnlyHandler)
     threading.Thread(target=remote_server.serve_forever, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)

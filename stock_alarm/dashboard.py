@@ -1,10 +1,12 @@
 ﻿from __future__ import annotations
 
+import base64
 import html
 import json
 import os
 import csv
 from datetime import datetime
+from functools import lru_cache
 from statistics import mean
 
 from .app import load_env, performance_penalty, write_error_log
@@ -20,6 +22,7 @@ from .sell_check import position_was_alerted
 
 
 OUT_PATH = "reports/dashboard.html"
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "stockalarm-logo.png")
 PAGE_SIZE = 15
 NUMERIC_COLUMNS = {
     "close",
@@ -98,6 +101,13 @@ NUMERIC_COLUMNS = {
     "price",
     "cost",
 }
+
+
+@lru_cache(maxsize=1)
+def dashboard_logo_data_uri() -> str:
+    """Embed the project logo so the generated dashboard remains one portable HTML file."""
+    with open(LOGO_PATH, "rb") as file:
+        return "data:image/png;base64," + base64.b64encode(file.read()).decode("ascii")
 RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at", "ordered_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
@@ -1126,6 +1136,7 @@ def status_class(value: str) -> str:
 
 
 def render() -> str:
+    logo_data_uri = dashboard_logo_data_uri()
     checks = "".join(f"<li>{e(line)}</li>" for line in daily_check_lines())
     task_log = "".join(f"<li>{e(line)}</li>" for line in tail_text("logs/task.out.log", 10))
     task_errors = tail_text("logs/task.err.log", 10) or ["none"]
@@ -1298,7 +1309,9 @@ def render() -> str:
 --danger-bg:#3f1d1d;--danger-border:#7f1d1d;--danger-text:#fca5a5;
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
 --warn-text:#fbbf24;--warn-bg:#3a2e0a;--warn-border:#78350f;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
---shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}}}
+--shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}
+:root:not([data-theme="light"]) .dashboard-logo{{filter:brightness(0) invert(1);opacity:.92}}
+}}
 :root[data-theme="light"]{{color-scheme:light}}
 :root[data-theme="dark"]{{color-scheme:dark;
 --bg-page:#0b0f17;--bg-surface:#171b26;--bg-surface-alt:#1c2130;--bg-accent-card:#1e293b;--bg-section:#0b0f17;--section-border:transparent;
@@ -1309,10 +1322,11 @@ def render() -> str:
 --success-bg:#14291d;--success-border:#14532d;--success-text:#86efac;
 --warn-text:#fbbf24;--warn-bg:#3a2e0a;--warn-border:#78350f;--pos:#34d399;--neg:#f87171;--zero:#94a3b8;
 --shadow-color:rgba(0,0,0,.5);--table-border:#2d3444;--table-header-bg:#1c2130;--details-bg:var(--bg-page);--track-bg:#2d3444;--pill-neutral-bg:#232a3b;--pager-active-bg:#3a4254}}
+:root[data-theme="dark"] .dashboard-logo{{filter:brightness(0) invert(1);opacity:.92}}
 *{{box-sizing:border-box}} html{{overflow-x:hidden;overflow-y:scroll;scrollbar-gutter:stable}} body{{font-family:Segoe UI,Malgun Gothic,sans-serif;margin:24px;padding-top:110px;background:var(--bg-page);color:var(--text-primary);line-height:1.5}} .dashboard-header,.tabs{{max-width:1600px;margin-left:auto;margin-right:auto}}
 .dashboard-header{{position:fixed;top:0;left:0;right:0;z-index:30;background:var(--bg-page);padding:12px 24px;border-bottom:1px solid var(--section-border);will-change:transform;backface-visibility:hidden;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}}
 .theme-toggle{{display:flex;background:var(--bg-surface-alt);border-radius:999px;padding:3px;gap:2px;flex-shrink:0}} .theme-toggle-btn{{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:999px;background:transparent;color:var(--text-secondary);cursor:pointer}} .theme-toggle-btn[aria-pressed="true"]{{background:var(--bg-surface);color:var(--text-primary);box-shadow:0 1px 2px var(--shadow-color)}}
-.dashboard-header h1{{margin:0}} .dashboard-meta{{margin-top:8px;color:var(--text-muted)}} h2{{line-height:1.3}} .muted{{color:var(--text-muted);overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
+.dashboard-brand{{display:inline-flex;align-items:center;padding:2px 8px 2px 4px;line-height:0}} .dashboard-logo{{display:block;height:48px;width:auto;max-width:260px;object-fit:contain}} .dashboard-meta{{margin-top:6px;color:var(--text-muted)}} h2{{line-height:1.3}} .muted{{color:var(--text-muted);overflow-wrap:anywhere}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:22px 0}}
 .card{{min-width:0;background:var(--bg-surface);border-radius:12px;padding:16px;box-shadow:0 1px 4px var(--shadow-color)}} .card span{{display:block;font-size:24px;margin-top:8px;overflow-wrap:anywhere}}
 .home-heading{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:22px 0 10px}} .home-heading h2{{margin:0 0 4px;font-size:24px}} .home-heading p{{margin:0}} .system-pill{{padding:8px 12px;border-radius:999px;background:var(--bg-surface);border:1px solid var(--border-strong);white-space:nowrap}} .system-pill.ok{{background:var(--success-bg);border-color:var(--success-border)}} .system-pill.bad{{background:var(--danger-bg);border-color:var(--danger-border)}}
 .profile-compare-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0 24px}} .profile-compare-card{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .profile-compare-label{{display:block;color:var(--text-on-accent-muted);font-size:13px}} .profile-compare-heading{{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}} .profile-compare-card strong{{display:block;font-size:clamp(22px,2vw,28px);margin:10px 0;overflow-wrap:anywhere}} .sparkline{{flex-shrink:0;overflow:visible}} .profile-compare-stats{{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;color:var(--text-on-accent-muted)}} .profile-compare-stats b{{font-weight:700}}
@@ -1348,7 +1362,7 @@ li{{margin:4px 0}}
 <body>
 <header class="dashboard-header">
 <div>
-<h1>{e(display_label("stockAlarm Dashboard"))}</h1>
+<a class="dashboard-brand" href="#" aria-label="stockAlarm 대시보드 홈"><img class="dashboard-logo" src="{logo_data_uri}" alt="stockAlarm"></a>
 <div class="dashboard-meta">{e(display_label("generated"))} {e(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</div>
 </div>
 <div class="theme-toggle" role="radiogroup" aria-label="테마 선택">
@@ -1379,10 +1393,25 @@ li{{margin:4px 0}}
 const traderCandidates = {trader_candidates};
 const traderKey = "stockAlarm.virtualTrader.v1";
 const remoteMode = !(["file:","http:"].includes(location.protocol) && ["","127.0.0.1","localhost"].includes(location.hostname));
-const requestedRemoteApi = remoteMode ? (new URLSearchParams(location.search).get("api") || "") : "";
-if(requestedRemoteApi.startsWith("https://")) localStorage.setItem("stockAlarm.remoteApiUrl", requestedRemoteApi.endsWith("/") ? requestedRemoteApi.slice(0,-1) : requestedRemoteApi);
-let traderApiBase = remoteMode ? (localStorage.getItem("stockAlarm.remoteApiUrl") || "") : (location.protocol === "file:" ? "http://127.0.0.1:8765" : "");
+const remoteTokenOriginKey = "stockAlarm.remoteTokenOrigin";
+function canonicalRemoteOrigin(value) {{
+  try {{
+    const parsed = new URL(value);
+    if(parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash || !["", "/"].includes(parsed.pathname)) return "";
+    return parsed.origin;
+  }} catch(_error) {{ return ""; }}
+}}
+const requestedRemoteApi = remoteMode ? canonicalRemoteOrigin(new URLSearchParams(location.search).get("api") || "") : "";
+const storedRemoteApi = remoteMode ? canonicalRemoteOrigin(localStorage.getItem("stockAlarm.remoteApiUrl") || "") : "";
+if(requestedRemoteApi && requestedRemoteApi !== storedRemoteApi) {{
+  localStorage.setItem("stockAlarm.remoteApiUrl", requestedRemoteApi);
+  sessionStorage.removeItem("stockAlarm.remoteToken");
+  sessionStorage.removeItem(remoteTokenOriginKey);
+}}
+let traderApiBase = remoteMode ? (requestedRemoteApi || storedRemoteApi) : (location.protocol === "file:" ? "http://127.0.0.1:8765" : "");
 let remoteToken = remoteMode ? (sessionStorage.getItem("stockAlarm.remoteToken") || "") : "";
+let remoteTokenOrigin = remoteMode ? (sessionStorage.getItem(remoteTokenOriginKey) || "") : "";
+if(remoteMode && remoteTokenOrigin !== traderApiBase) {{ remoteToken=""; remoteTokenOrigin=""; sessionStorage.removeItem("stockAlarm.remoteToken"); sessionStorage.removeItem(remoteTokenOriginKey); }}
 let currentProfile = localStorage.getItem("stockAlarm.traderProfile") || "aggressive";
 let trader = {{cash:0, holdings:[]}};
 const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
@@ -1406,10 +1435,10 @@ async function traderRequest(path, options={{}}, profileOverride=null) {{
   if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
   const profile = profileOverride || currentProfile;
   const headers={{"Content-Type":"application/json", ...(options.headers||{{}})}};
-  if(remoteMode && remoteToken) headers.Authorization=`Bearer ${{remoteToken}}`;
+  if(remoteMode && remoteToken && remoteTokenOrigin === traderApiBase) headers.Authorization=`Bearer ${{remoteToken}}`;
   const url = `${{path}}${{path.includes("?") ? "&" : "?"}}profile=${{encodeURIComponent(profile)}}`;
   const requestBody = options.method === "POST" ? JSON.stringify({{...(options.body ? JSON.parse(options.body) : {{}}), profile}}) : options.body;
-  const response = await fetch(`${{traderApiBase}}${{url}}`, {{...options, headers, body: requestBody}});
+  const response = await fetch(`${{traderApiBase}}${{url}}`, {{...options, headers, body: requestBody, redirect:"error"}});
   const body = await response.json();
   if(!response.ok) throw new Error(body.error || "요청을 처리하지 못했습니다.");
   return body;
@@ -1558,12 +1587,11 @@ if(remoteMode) {{
   document.getElementById("remote-api-url").value=traderApiBase;
   document.getElementById("remote-api-token").value=remoteToken;
   document.getElementById("remote-connect-button").addEventListener("click", async () => {{
-    const enteredUrl=document.getElementById("remote-api-url").value.trim();
-    const url=enteredUrl.endsWith("/") ? enteredUrl.slice(0,-1) : enteredUrl;
+    const url=canonicalRemoteOrigin(document.getElementById("remote-api-url").value.trim());
     const token=document.getElementById("remote-api-token").value.trim();
-    if(!url.startsWith("https://") || !token) return renderTrader("HTTPS API 주소와 접속 토큰을 입력해 주세요.");
-    traderApiBase=url; remoteToken=token;
-    localStorage.setItem("stockAlarm.remoteApiUrl",url); sessionStorage.setItem("stockAlarm.remoteToken",token);
+    if(!url || !token) return renderTrader("경로가 없는 HTTPS API 주소와 접속 토큰을 입력해 주세요.");
+    traderApiBase=url; remoteToken=token; remoteTokenOrigin=url;
+    localStorage.setItem("stockAlarm.remoteApiUrl",url); sessionStorage.setItem("stockAlarm.remoteToken",token); sessionStorage.setItem(remoteTokenOriginKey,url);
     try {{ trader=await traderRequest("/api/trader"); renderTrader("로컬 DB에 읽기 전용으로 연결했습니다."); }} catch(error) {{ renderTrader(error.message); }}
   }});
 }}
