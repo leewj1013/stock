@@ -7,6 +7,12 @@ from stock_alarm.virtual_trader_report import current_prices, risk_reason_lines,
 
 
 class VirtualTraderReportTest(unittest.TestCase):
+    def setUp(self):
+        # run() also records the core-satellite comparison; keep it off real data.
+        tracker = patch("stock_alarm.core_satellite_tracker.run")
+        tracker.start()
+        self.addCleanup(tracker.stop)
+
     def _state(self):
         return {"holdings": [], "total_equity": 100_000, "holdings_value": 0}
 

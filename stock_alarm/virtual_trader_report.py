@@ -135,6 +135,11 @@ def run() -> dict:
         )
         if name == "aggressive":
             primary_result = {**result, "risk": risk}
+    try:
+        from .core_satellite_tracker import run as record_core_satellite
+        record_core_satellite()
+    except Exception as error:  # comparison-only record must not fail the report
+        print(f"core_satellite failed {error!r}")
     return primary_result
 
 
