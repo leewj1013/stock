@@ -152,7 +152,7 @@ def run(fold_count: int = 4, report_dir: Path = REPORT_DIR) -> dict:
     baseline_trades, _ = baseline_engine.run(partial_profit=True)
     results = [
         validate_profile(name, fold_count=fold_count, alpha=alpha, baseline_trades=baseline_trades)
-        for name in PROFILES
+        for name, profile in PROFILES.items() if not profile.get("comparison_only")
     ]
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / "PROFILE_WEIGHT_VALIDATION.md").write_text(build_report(results), encoding="utf-8")

@@ -44,6 +44,28 @@ PROFILES = {
     },
 }
 
+# Forward A/B experiment: two comparison-only accounts that start together
+# with the same balance and buy exactly what "aggressive" picks, so the only
+# difference between them is the exit/risk-release rule. exp_candidate runs
+# the best backtested variant -- no take-profit when the previous session was
+# a bull regime, and a drawdown halt that re-opens buys at 30% size after 20
+# trading days instead of locking the account in cash. comparison_only keeps
+# them out of weight learning/validation.
+PROFILES["exp_control"] = {
+    **PROFILES["aggressive"],
+    "db_path": "data/stock_alarm_exp_control.db",
+    "sell_alerts_log": "logs/sell_alerts_exp_control.csv",
+    "notify": False,
+    "comparison_only": True,
+}
+PROFILES["exp_candidate"] = {
+    **PROFILES["exp_control"],
+    "db_path": "data/stock_alarm_exp_candidate.db",
+    "sell_alerts_log": "logs/sell_alerts_exp_candidate.csv",
+    "sell_policy": {"disable_take_profit_in_regimes": ["bull"]},
+    "risk_release": {"mode": "cooldown", "cooldown_days": 20, "reentry_scale": 0.3},
+}
+
 CATEGORY_VALUE_KEYS = {
     "profitability": "profitability_score",
     "growth": "growth_score",

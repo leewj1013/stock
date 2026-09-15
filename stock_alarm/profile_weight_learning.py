@@ -140,7 +140,7 @@ def run(fold_count: int = 4, validation_size: int = 60, report_dir: Path = REPOR
     rows = BacktestEngine(DATA_DIR, report_dir).category_training_rows()
     results = {
         name: learn_profile_weights(rows, profile["scoring_weights"], fold_count=fold_count, validation_size=validation_size)
-        for name, profile in PROFILES.items()
+        for name, profile in PROFILES.items() if not profile.get("comparison_only")
     }
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / "PROFILE_WEIGHT_LEARNING.md").write_text(build_report(results), encoding="utf-8")

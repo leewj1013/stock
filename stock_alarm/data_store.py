@@ -452,9 +452,9 @@ def virtual_deposit(amount: int, path: str = DB_PATH) -> dict[str, Any]:
     return virtual_trader_state(path=path)
 
 
-def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH) -> dict[str, Any]:
+def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_release_policy: dict | None = None) -> dict[str, Any]:
     from .portfolio_risk import new_buys_allowed
-    allowed, reason = new_buys_allowed(path)
+    allowed, reason = new_buys_allowed(path, risk_release_policy)
     if not allowed:
         raise ValueError(f"new virtual buys halted: {reason}")
     valid = [

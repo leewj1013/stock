@@ -51,7 +51,7 @@ class SectorLimitTest(unittest.TestCase):
         auto_buy_virtual_trader([pick], path="data/stock_alarm_neutral.db", sector_cap_override=30.0)
 
         state.assert_called_with(path="data/stock_alarm_neutral.db")
-        _allowed.assert_called_with(path="data/stock_alarm_neutral.db")
+        _allowed.assert_called_with(path="data/stock_alarm_neutral.db", release_policy=None)
         sector_limit.assert_called_once()
         self.assertEqual(30.0, sector_limit.call_args.kwargs["group_cap_override"])
         virtual_buy.assert_called_once()
@@ -106,6 +106,25 @@ class SectorLimitTest(unittest.TestCase):
 
         candidates = virtual_buy.call_args.args[0]
         self.assertEqual(100.0, candidates[0]["portfolio_limit_pct"])
+
+    @patch.dict("os.environ", {"RISK_MAX_EXPOSURE_PCT": "70"})
+    @patch("stock_alarm.data_store.virtual_buy")
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
+    @patch("stock_alarm.app.correlation_limited_allocations", side_effect=lambda picks, allocations: allocations)
+    @patch("stock_alarm.app.allocation_percentages", return_value=[10.0])
+    @patch("stock_alarm.portfolio_risk.buy_allocation_scale", return_value=(0.3, "drawdown_cooldown_reentry"))
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, "drawdown_cooldown_reentry"))
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"cash": 1_000_000, "holdings": [], "total_equity": 1_000_000})
+    def test_cooldown_reentry_scales_allocations_and_forwards_the_release_policy(
+        self, _state, _allowed, _scale, _allocations, _correlation, _breadth, _regime, virtual_buy,
+    ):
+        policy = {"mode": "cooldown", "cooldown_days": 20, "reentry_scale": 0.3}
+
+        auto_buy_virtual_trader([Pick("005930", "Samsung", 100, 0, 0, 0)], risk_release_policy=policy)
+
+        self.assertEqual(3.0, virtual_buy.call_args.args[0][0]["allocation_pct"])
+        self.assertEqual(policy, virtual_buy.call_args.kwargs["risk_release_policy"])
 
 
 if __name__ == "__main__":

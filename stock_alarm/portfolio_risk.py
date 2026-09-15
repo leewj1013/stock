@@ -86,8 +86,39 @@ def snapshot(state: dict, path: str = DB_PATH, now: datetime | None = None, expo
     return row
 
 
-def new_buys_allowed(path: str = DB_PATH) -> tuple[bool, str]:
+def drawdown_episode_days(path: str = DB_PATH) -> int:
+    """Distinct snapshot days in the current unbroken run of drawdown_limit halts."""
+    days: set[str] = set()
+    rows = query_rows("SELECT created_at, reason FROM portfolio_risk_snapshots ORDER BY snapshot_id DESC LIMIT 5000", path=path)
+    for row in rows:
+        if "drawdown_limit" not in str(row.get("reason") or ""):
+            break
+        days.add(str(row.get("created_at") or "")[:10])
+    return len(days)
+
+
+def buy_allocation_scale(path: str = DB_PATH, release_policy: dict | None = None) -> tuple[float, str]:
+    """New-buy permission as a size multiplier (1.0 open, 0.0 blocked).
+
+    With release_policy {"mode": "cooldown", "cooldown_days": N, "reentry_scale": s},
+    a halt caused only by drawdown_limit re-opens buys at size s once it has
+    lasted N snapshot days -- the live counterpart of
+    risk_release_policy.ExperimentalRiskController's cooldown mode. A drawdown
+    halt otherwise releases only by recovering to 90% of a never-decaying peak,
+    which an all-cash account can't do. Daily/weekly/exposure halts still block.
+    """
     risk = latest_portfolio_risk(path)
-    if risk.get("status") == "halted":
-        return False, str(risk.get("reason") or "portfolio_risk_limit")
-    return True, ""
+    if risk.get("status") != "halted":
+        return 1.0, ""
+    reason = str(risk.get("reason") or "portfolio_risk_limit")
+    policy = release_policy or {}
+    if policy.get("mode") != "cooldown" or set(filter(None, reason.split(","))) != {"drawdown_limit"}:
+        return 0.0, reason
+    if drawdown_episode_days(path) >= int(policy.get("cooldown_days", 20)):
+        return float(policy.get("reentry_scale", 0.3)), "drawdown_cooldown_reentry"
+    return 0.0, reason
+
+
+def new_buys_allowed(path: str = DB_PATH, release_policy: dict | None = None) -> tuple[bool, str]:
+    scale, reason = buy_allocation_scale(path, release_policy)
+    return scale > 0, reason

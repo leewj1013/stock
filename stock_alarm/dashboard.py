@@ -569,7 +569,7 @@ def actionable_issue_rows() -> list[dict[str, str]]:
             rows.append({"source": "가격 데이터", "item": ticker, "status": display_value(row.get("reason") or "invalid")})
 
     from .trading_profiles import PROFILES
-    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
+    labels = {"aggressive": "적극투자형", "neutral": "위험중립형", "exp_control": "비교(현재 규칙)", "exp_candidate": "비교(후보 규칙)"}
     for name, profile in PROFILES.items():
         risk = latest_portfolio_risk(profile["db_path"])
         if risk.get("status") == "halted":
@@ -784,7 +784,7 @@ def real_account_state() -> dict:
 
 
 def profile_selection_rows() -> list[dict[str, str]]:
-    labels = {"aggressive": "적극투자형", "neutral": "위험중립형"}
+    labels = {"aggressive": "적극투자형", "neutral": "위험중립형", "exp_control": "비교(현재 규칙)", "exp_candidate": "비교(후보 규칙)"}
     return [{**row, "profile": labels.get(row.get("profile"), row.get("profile"))} for row in latest_profile_selections()]
 
 

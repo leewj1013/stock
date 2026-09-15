@@ -1386,17 +1386,19 @@ def auto_buy_virtual_trader(
     min_position_pct_override: float | None = None,
     max_position_pct_override: float | None = None,
     regime_exposure_multiplier: dict[str, float] | None = None,
+    risk_release_policy: dict | None = None,
 ) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
     from .data_store import virtual_buy, virtual_trader_state
-    from .portfolio_risk import new_buys_allowed
+    from .portfolio_risk import buy_allocation_scale, new_buys_allowed
     state = virtual_trader_state(path=path)
     if state.get("cash", 0) <= 0:
         return None
-    allowed, _reason = new_buys_allowed(path=path)
+    allowed, _reason = new_buys_allowed(path=path, release_policy=risk_release_policy)
     if not allowed:
         return None
+    scale = buy_allocation_scale(path=path, release_policy=risk_release_policy)[0] if risk_release_policy else 1.0
     allocations = allocation_percentages(picks, min_position_pct_override=min_position_pct_override, max_position_pct_override=max_position_pct_override)
     allocations = correlation_limited_allocations(picks, allocations)
     sector_cap = env_float("SECTOR_GROUP_MAX_PCT", 100) if sector_cap_override is None else sector_cap_override
@@ -1415,12 +1417,12 @@ def auto_buy_virtual_trader(
         regime_multiplier = float(regime_exposure_multiplier.get(current_market_regime(date.today()), 1.0))
     exposure_limit = min(market_limit, profile_limit) * regime_multiplier
     candidates = [
-        {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": allocation,
+        {"ticker": pick.ticker, "name": pick.name, "close": pick.close, "score": pick.score, "allocation_pct": round(allocation * scale, 2),
          "portfolio_limit_pct": exposure_limit, "price_quality": "valid"}
         for pick, allocation in zip(picks, allocations)
     ]
     try:
-        return virtual_buy(candidates, path=path)
+        return virtual_buy(candidates, path=path, risk_release_policy=risk_release_policy)
     except ValueError:
         return None
 
@@ -1496,6 +1498,7 @@ def run() -> None:
                 min_position_pct_override=profile["min_position_pct"],
                 max_position_pct_override=profile["max_position_pct"],
                 regime_exposure_multiplier=profile["regime_exposure_multiplier"],
+                risk_release_policy=profile.get("risk_release"),
             )
         finish_run(run_id)
     except Exception:

@@ -9,6 +9,7 @@ from statistics import mean
 from .app import (
     env_float,
     average_true_range_pct,
+    current_market_regime,
     is_market_alert_time,
     latest_naver_trading_day,
     latest_sell_alert_times,
@@ -155,13 +156,14 @@ def _evaluate_position(
     take_profit_1_sell_ratio = float(policy.get("take_profit_1_sell_ratio", env_float("TAKE_PROFIT_1_SELL_RATIO", 50)))
     # Initial thresholds are conservative placeholders and must be tuned by
     # backtest before any real-account integration.
-    if not reasons and partial_taken and return_pct >= take_profit_2_pct:
+    take_profit_allowed = policy.get("market_regime") not in set(policy.get("disable_take_profit_in_regimes") or ())
+    if take_profit_allowed and not reasons and partial_taken and return_pct >= take_profit_2_pct:
         reasons.append(f"2차 익절 목표 +{take_profit_2_pct:.1f}% 도달")
         stage = "take_profit_2"
-    elif not reasons and not partial_taken and remaining_quantity == 1 and return_pct >= take_profit_2_pct:
+    elif take_profit_allowed and not reasons and not partial_taken and remaining_quantity == 1 and return_pct >= take_profit_2_pct:
         reasons.append(f"정수수량 제약으로 2차 익절 목표 +{take_profit_2_pct:.1f}%에서 1주 전량 매도")
         stage = "take_profit_2"
-    elif not reasons and not partial_taken and remaining_quantity >= 2 and return_pct >= take_profit_1_pct:
+    elif take_profit_allowed and not reasons and not partial_taken and remaining_quantity >= 2 and return_pct >= take_profit_1_pct:
         reasons.append(f"1차 익절 목표 +{take_profit_1_pct:.1f}% 도달")
         sale_type = "partial"
         stage = "take_profit_1"
@@ -432,10 +434,15 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
     from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
     state = virtual_trader_state(path=profile["db_path"])
     quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
+    sell_policy = profile["sell_policy"]
+    if sell_policy and sell_policy.get("disable_take_profit_in_regimes"):
+        # Previous session's regime, matching the backtest that validated this
+        # rule -- today's label isn't final until the close.
+        sell_policy = {**sell_policy, "market_regime": current_market_regime(end_day - timedelta(days=1))}
     alerts = find_alerts(
         positions, end_day, run_id,
         virtual_position_states(path=profile["db_path"]), quantities,
-        profile["sell_policy"], profile["sell_alerts_log"],
+        sell_policy, profile["sell_alerts_log"],
     )
     if alerts:
         write_log(alerts, path=profile["sell_alerts_log"])

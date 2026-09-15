@@ -67,6 +67,34 @@ class PortfolioRiskTest(unittest.TestCase):
             self.assertEqual("active", result["status"])
             self.assertEqual("resumed", result["transition"])
 
+    def test_cooldown_release_reopens_drawdown_halt_at_reduced_size(self):
+        from stock_alarm.data_store import record_portfolio_risk
+        from stock_alarm.portfolio_risk import buy_allocation_scale
+
+        def record(path, day, reason):
+            record_portfolio_risk({
+                "created_at": f"2026-08-{day:02d}T15:40:00", "equity": 88_000, "high_water": 100_000,
+                "daily_start_equity": 88_000, "weekly_start_equity": 88_000, "daily_return_pct": 0.0,
+                "weekly_return_pct": 0.0, "drawdown_pct": -12.0, "exposure_pct": 0.0,
+                "status": "halted" if reason else "active", "reason": reason,
+            }, path)
+
+        policy = {"mode": "cooldown", "cooldown_days": 3, "reentry_scale": 0.3}
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "test.db")
+            record(path, 3, "")
+            record(path, 4, "drawdown_limit")
+            record(path, 5, "drawdown_limit")
+            self.assertEqual(0.0, buy_allocation_scale(path, policy)[0])
+            record(path, 6, "drawdown_limit")
+            record(path, 6, "drawdown_limit")
+            self.assertEqual((0.3, "drawdown_cooldown_reentry"), buy_allocation_scale(path, policy))
+            self.assertTrue(new_buys_allowed(path, policy)[0])
+            self.assertEqual(0.0, buy_allocation_scale(path)[0])
+            self.assertFalse(new_buys_allowed(path)[0])
+            record(path, 7, "daily_loss_limit,drawdown_limit")
+            self.assertEqual(0.0, buy_allocation_scale(path, policy)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

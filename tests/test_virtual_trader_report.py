@@ -50,10 +50,12 @@ class VirtualTraderReportTest(unittest.TestCase):
         # Telegram message -- the neutral profile is comparison-only.
         state.return_value = self._state()
         run()
+        from stock_alarm.trading_profiles import PROFILES
+
         send.assert_called_once()
-        self.assertEqual(2, risk_snapshot.call_count)
+        self.assertEqual(len(PROFILES), risk_snapshot.call_count)
         paths = {call.kwargs.get("path") for call in risk_snapshot.call_args_list}
-        self.assertEqual({"data/stock_alarm.db", "data/stock_alarm_neutral.db"}, paths)
+        self.assertEqual({profile["db_path"] for profile in PROFILES.values()}, paths)
 
     @patch("stock_alarm.notifier.send_notification")
     @patch("stock_alarm.virtual_trader_report.risk_snapshot", return_value={"transition": "resumed", "reason": ""})
