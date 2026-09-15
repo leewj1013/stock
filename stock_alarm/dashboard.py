@@ -10,7 +10,7 @@ from statistics import mean
 from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
 from .data_store import (
-    latest_portfolio_risk, latest_profile_selections, recent_position_checks, recent_price_quality, recent_runs,
+    latest_portfolio_risk, latest_profile_selections, query_rows, recent_position_checks, recent_price_quality, recent_runs,
     recent_sell_outcomes, recent_shadow_orders, recent_virtual_trades, rejection_summary,
 )
 from .health import lines as health_lines
@@ -274,6 +274,12 @@ LABELS = {
     "strategy": "전략",
     "total_return_pct": "총수익률",
     "mdd_pct": "최대낙폭",
+    "experiment": "실험 계좌",
+    "rule": "규칙",
+    "since": "시작일",
+    "equity": "총자산",
+    "cash_pct": "현금비중",
+    "risk_state": "상태",
     "sharpe": "샤프지수",
     "tracking_status": "추적 상태",
     "sell_alert_date": "매도 알림일",
@@ -788,6 +794,44 @@ def profile_selection_rows() -> list[dict[str, str]]:
     return [{**row, "profile": labels.get(row.get("profile"), row.get("profile"))} for row in latest_profile_selections()]
 
 
+def experiment_account_rows() -> list[dict[str, str]]:
+    """Forward rule experiments -- comparison only, never real orders."""
+    from . import core_satellite_tracker as core30
+    from .trading_profiles import PROFILES
+
+    def summary(label: str, rule: str, since: str, start: int, equities: list[int], cash_pct: str, risk_state: str) -> dict[str, str]:
+        row = {"experiment": label, "rule": rule, "since": since, "equity": f"{start:,}원", "total_return_pct": "", "mdd_pct": "", "cash_pct": "-", "risk_state": "기록 대기"}
+        if not equities:
+            return row
+        peak, mdd = start, 0.0
+        for value in equities:
+            peak = max(peak, value)
+            mdd = min(mdd, value / peak - 1)
+        return {**row, "equity": f"{equities[-1]:,}원", "total_return_pct": f"{(equities[-1] / start - 1) * 100:.2f}",
+                "mdd_pct": f"{mdd * 100:.2f}", "cash_pct": cash_pct, "risk_state": risk_state}
+
+    rows = []
+    for name, label, rule in (
+        ("exp_control", "비교(현재 규칙)", "적극투자형과 같은 규칙"),
+        ("exp_candidate", "비교(후보 규칙)", "상승장 익절 해제 · 낙폭중단 20일 후 30% 재진입"),
+    ):
+        path = PROFILES[name]["db_path"]
+        deposit = query_rows("SELECT COALESCE(SUM(amount), 0) AS total, MIN(created_at) AS since FROM virtual_deposits", path=path)
+        start = int(deposit[0]["total"]) if deposit else 0
+        if not start:
+            continue
+        snapshots = query_rows("SELECT cash, equity FROM virtual_valuation_snapshots ORDER BY snapshot_id", path=path)
+        last = snapshots[-1] if snapshots else {}
+        cash_pct = f"{last['cash'] / last['equity'] * 100:.1f}%" if last.get("equity") else "-"
+        risk_state = "신규매수 중단" if latest_portfolio_risk(path).get("status") == "halted" else "정상"
+        rows.append(summary(label, rule, str(deposit[0]["since"] or "")[:10], start, [int(r["equity"]) for r in snapshots], cash_pct, risk_state))
+    snapshots = query_rows("SELECT created_at, equity FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.DB_PATH)
+    since = str(snapshots[0]["created_at"])[:10] if snapshots else ""
+    rows.append(summary("지수30%+전략70%", "KODEX 200 30% · 비교(현재 규칙) 70% · 분기 리밸런싱", since,
+                        core30.START_CAPITAL, [int(r["equity"]) for r in snapshots], "-", "정상"))
+    return rows
+
+
 def header_cell(column: str) -> str:
     attr = " class='num'" if column in NUMERIC_COLUMNS else ""
     return f"<th{attr}>{e(display_label(column))}</th>"
@@ -1118,6 +1162,7 @@ def render() -> str:
     </div>
   </div>
 </div></section>
+{table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"])}
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
   <div><span>자동매매</span><b id="home-auto-status">확인 중</b></div>
   <div><span>시장 모드</span><b id="home-market-mode">확인 중</b></div>
