@@ -1,14 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import urllib.request
 from datetime import date, timedelta
-
-
-def _number(text: str, element_id: str) -> float:
-    match = re.search(rf'id=["\']{re.escape(element_id)}["\'][^>]*>\s*([+-]?[0-9,.]+)', text, re.I)
-    return float(match.group(1).replace(",", "")) if match else 0.0
 
 
 def _score(per: float, pbr: float, dividend_yield: float, eps: float = 0, bps: float = 0) -> float:
@@ -24,14 +20,41 @@ def _score(per: float, pbr: float, dividend_yield: float, eps: float = 0, bps: f
     return score
 
 
+def _naver_number(text: str) -> float:
+    """"11.37배" / "0.66%" / "22,292원" -> float; "N/A" and blanks -> 0.0."""
+    cleaned = re.sub(r"[^0-9.+-]", "", str(text or ""))
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
 def naver_snapshot(ticker: str) -> dict[str, float | str]:
-    request = urllib.request.Request(f"https://finance.naver.com/item/main.naver?code={ticker}", headers={"User-Agent": "Mozilla/5.0"})
+    """PER/PBR/dividend yield from Naver's mobile stock API.
+
+    The desktop item/main.naver page stopped carrying these numbers in its
+    HTML (they are rendered client-side now), so scraping it returned zeros
+    for every ticker; this JSON endpoint is what that page itself calls.
+    """
+    request = urllib.request.Request(
+        f"https://m.stock.naver.com/api/stock/{ticker}/integration",
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
     with urllib.request.urlopen(request, timeout=10) as response:
-        text = response.read().decode("euc-kr", errors="ignore")
-    per, pbr, dividend_yield = _number(text, "_per"), _number(text, "_pbr"), _number(text, "_dvr")
+        payload = json.loads(response.read().decode("utf-8"))
+    values = {item.get("code"): item.get("value") for item in payload.get("totalInfos", [])}
+    per = _naver_number(values.get("per"))
+    pbr = _naver_number(values.get("pbr"))
+    dividend_yield = _naver_number(values.get("dividendYieldRatio"))
+    eps, bps = _naver_number(values.get("eps")), _naver_number(values.get("bps"))
     if not any((per, pbr, dividend_yield)):
         return {"financial_score": 0.0, "financial_notes": "naver fundamentals unavailable"}
-    return {"per": per, "pbr": pbr, "dividend_yield": dividend_yield, "financial_score": _score(per, pbr, dividend_yield), "financial_notes": "naver finance fundamentals"}
+    return {
+        "per": per, "pbr": pbr, "dividend_yield": dividend_yield, "eps": eps, "bps": bps,
+        "name": str(payload.get("stockName") or ""),
+        "financial_score": _score(per, pbr, dividend_yield, eps, bps),
+        "financial_notes": "naver mobile stock api",
+    }
 
 
 def pykrx_snapshot(ticker: str, end_day: date) -> dict[str, float | str]:
