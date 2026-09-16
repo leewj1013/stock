@@ -1,6 +1,13 @@
+import json
+import os
+import tempfile
+import time
 import unittest
+from datetime import date, timedelta
+from pathlib import Path
+from unittest.mock import patch
 
-from stock_alarm.screener import Filters, apply_filters, format_table
+from stock_alarm.screener import Filters, apply_filters, format_table, has_priced_rows, load_market_fundamentals
 
 ROWS = [
     {"ticker": "000001", "name": "싼성장주", "period": "2026Q2", "revenue_growth_pct": 12.0,
@@ -48,6 +55,44 @@ class ScreenerTest(unittest.TestCase):
     def test_filters_are_optional(self):
         passed, incomplete = apply_filters(ROWS, FUNDAMENTALS, Filters(per_min=None))
         self.assertEqual(6, len(passed) + len(incomplete))
+
+    def test_cache_written_today_is_reused_without_a_krx_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "krx.json"
+            path.write_text(json.dumps({"as_of": "20260916", "data": FUNDAMENTALS}), encoding="utf-8")
+            with patch("pykrx.stock.get_market_fundamental_by_ticker", side_effect=AssertionError("must not fetch")):
+                self.assertEqual("20260916", load_market_fundamentals(cache_path=path)["as_of"])
+
+    def test_yesterdays_cache_is_not_reused_for_an_undated_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "krx.json"
+            path.write_text(json.dumps({"as_of": "20260915", "data": {}}), encoding="utf-8")
+            stale = time.time() - 24 * 60 * 60
+            os.utime(path, (stale, stale))
+            with patch("stock_alarm.screener.date") as fake_date:
+                fake_date.today.return_value = date.today()
+                fake_date.fromtimestamp.return_value = date.today() - timedelta(days=1)
+                with patch("pykrx.stock.get_market_fundamental_by_ticker", side_effect=RuntimeError("fetch attempted")):
+                    with self.assertRaises(RuntimeError):
+                        load_market_fundamentals(cache_path=path)
+
+    def test_env_settings_supply_defaults_and_blank_disables_a_filter(self):
+        from stock_alarm.screener import _env_float
+
+        self.assertEqual(15.0, _env_float("SCREENER_MISSING", 15.0))
+        with patch.dict(os.environ, {"SCREENER_PER_MAX": "12.5"}):
+            self.assertEqual(12.5, _env_float("SCREENER_PER_MAX", 15.0))
+        with patch.dict(os.environ, {"SCREENER_PER_MAX": ""}):
+            self.assertIsNone(_env_float("SCREENER_PER_MAX", 15.0))
+        with patch.dict(os.environ, {"SCREENER_PER_MAX": "not-a-number"}):
+            self.assertEqual(15.0, _env_float("SCREENER_PER_MAX", 15.0))
+
+    def test_all_zero_ratios_are_not_accepted_as_a_trading_day(self):
+        # KRX answers with every ticker and all-zero ratios before the session
+        # settles; screening on that would match nothing at all.
+        self.assertFalse(has_priced_rows({"A": {"per": 0.0}, "B": {"per": 0.0}}))
+        self.assertTrue(has_priced_rows({"A": {"per": 8.0}, "B": {"per": 0.0}}))
+        self.assertFalse(has_priced_rows({}))
 
     def test_table_renders_matches(self):
         passed, _incomplete = apply_filters(ROWS, FUNDAMENTALS, BASE)

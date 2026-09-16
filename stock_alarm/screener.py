@@ -19,13 +19,15 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .financial_metrics import all_tickers, quarterly_metrics, trailing_twelve_months
 from .point_in_time_store import DEFAULT_PATH
 
 FUNDAMENTAL_CACHE = Path(".cache/krx_fundamental.json")
+# The dashboard reads this instead of re-screening 400+ tickers on every render.
+LATEST_RESULT = Path("reports/fundamentals/screen_latest.json")
 
 
 @dataclass
@@ -56,11 +58,24 @@ class Filters:
         return names
 
 
+def has_priced_rows(data: dict, minimum_ratio: float = 0.2) -> bool:
+    """True when enough tickers carry a real PER for the day to be usable."""
+    if not data:
+        return False
+    priced = sum(1 for row in data.values() if row.get("per"))
+    return priced / len(data) >= minimum_ratio
+
+
 def load_market_fundamentals(as_of: date | None = None, cache_path: Path = FUNDAMENTAL_CACHE, refresh: bool = False) -> dict:
     """{ticker: {market, per, pbr, eps, dividend_yield}} for KOSPI + KOSDAQ."""
     if cache_path.exists() and not refresh:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if as_of is None or cached.get("as_of") == as_of.strftime("%Y%m%d"):
+        if as_of is not None:
+            if cached.get("as_of") == as_of.strftime("%Y%m%d"):
+                return cached
+        # No explicit date: reuse the cache only while it was written today,
+        # otherwise a scheduled daily run would screen on stale prices forever.
+        elif date.fromtimestamp(cache_path.stat().st_mtime) == date.today():
             return cached
     from pykrx import stock
 
@@ -72,13 +87,17 @@ def load_market_fundamentals(as_of: date | None = None, cache_path: Path = FUNDA
     resolved = ""
     for back in range(7):
         stamp = (day - timedelta(days=back)).strftime("%Y%m%d")
+        day_data: dict[str, dict] = {}
         for market in ("KOSPI", "KOSDAQ"):
             frame = stock.get_market_fundamental_by_ticker(stamp, market=market)
             for ticker, row in frame.iterrows():
-                data[ticker] = {"market": market, "per": float(row["PER"]), "pbr": float(row["PBR"]),
-                                "eps": float(row["EPS"]), "dividend_yield": float(row["DIV"])}
-        if data:
-            resolved = stamp
+                day_data[ticker] = {"market": market, "per": float(row["PER"]), "pbr": float(row["PBR"]),
+                                    "eps": float(row["EPS"]), "dividend_yield": float(row["DIV"])}
+        # Before the session settles, KRX answers with a full ticker list whose
+        # ratios are all zero -- accepting that would screen every stock as
+        # "PER 0" and match nothing, so fall back to the previous day.
+        if has_priced_rows(day_data):
+            data, resolved = day_data, stamp
             break
     payload = {"as_of": resolved, "data": data}
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +174,37 @@ def screen(filters: Filters, path: Path = DEFAULT_PATH, as_of: date | None = Non
             "total": len(rows), "incomplete": len(incomplete), "matches": passed}
 
 
+def describe(filters: Filters) -> str:
+    """Human-readable filter summary, shown on the dashboard."""
+    parts = []
+    if filters.per_max is not None:
+        parts.append(f"PER {filters.per_max:g}배 미만")
+    if filters.pbr_max is not None:
+        parts.append(f"PBR {filters.pbr_max:g}배 미만")
+    if filters.dividend_min is not None:
+        parts.append(f"배당수익률 {filters.dividend_min:g}% 이상")
+    if filters.revenue_growth_min is not None:
+        parts.append(f"매출성장률 {filters.revenue_growth_min:g}% 초과")
+    if filters.operating_income_growth_min is not None:
+        parts.append(f"영업이익성장률 {filters.operating_income_growth_min:g}% 초과")
+    if filters.positive_free_cash_flow:
+        parts.append("잉여현금흐름 양수")
+    if filters.markets:
+        parts.append("/".join(filters.markets))
+    return " · ".join(parts) or "조건 없음"
+
+
+def save_latest(result: dict, filters: Filters, path: Path = LATEST_RESULT) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "as_of": result.get("as_of", ""), "conditions": describe(filters),
+        "evaluated": result.get("evaluated"), "total": result.get("total"),
+        "incomplete": result.get("incomplete"), "matches": result.get("matches", []),
+    }, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def format_table(result: dict) -> str:
     header = f"{'코드':<8}{'종목명':<16}{'시장':<8}{'PER':>7}{'PBR':>6}{'FCF(억)':>11}{'매출성장':>9}{'영업익성장':>11}{'기준분기':>9}"
     lines = [header]
@@ -170,16 +220,38 @@ def format_table(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _env_float(name: str, default: float | None) -> float | None:
+    """Settings live in .env so the scheduled run can be retuned without
+    editing run_stock_alarm.ps1; an empty value means "no such filter"."""
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def main() -> None:
+    from .app import load_env
+
+    load_env()
+    import os
+
     parser = argparse.ArgumentParser(description="Screen collected fundamentals (PER/PBR/growth/free cash flow)")
-    parser.add_argument("--per-max", type=float, default=15.0)
-    parser.add_argument("--pbr-max", type=float)
-    parser.add_argument("--dividend-min", type=float)
-    parser.add_argument("--growth-min", type=float, default=5.0, help="minimum year-over-year revenue growth %%")
-    parser.add_argument("--operating-growth-min", type=float)
-    parser.add_argument("--positive-fcf", action="store_true", default=True)
+    parser.add_argument("--per-max", type=float, default=_env_float("SCREENER_PER_MAX", 15.0))
+    parser.add_argument("--pbr-max", type=float, default=_env_float("SCREENER_PBR_MAX", None))
+    parser.add_argument("--dividend-min", type=float, default=_env_float("SCREENER_DIVIDEND_MIN", None))
+    parser.add_argument("--growth-min", type=float, default=_env_float("SCREENER_GROWTH_MIN", 5.0), help="minimum year-over-year revenue growth %%")
+    parser.add_argument("--operating-growth-min", type=float, default=_env_float("SCREENER_OPERATING_GROWTH_MIN", None))
+    parser.add_argument("--positive-fcf", action="store_true", default=os.environ.get("SCREENER_POSITIVE_FCF", "1") == "1")
     parser.add_argument("--any-fcf", dest="positive_fcf", action="store_false", help="do not require positive free cash flow")
-    parser.add_argument("--market", default="", help="KOSPI, KOSDAQ, or blank for both")
+    parser.add_argument("--market", default=os.environ.get("SCREENER_MARKETS", ""), help="KOSPI, KOSDAQ, or blank for both")
     parser.add_argument("--refresh", action="store_true", help="re-fetch KRX fundamentals instead of using today's cache")
     parser.add_argument("--db", type=Path, default=DEFAULT_PATH)
     parser.add_argument("--out", type=Path, help="write matches to this CSV")
@@ -191,6 +263,7 @@ def main() -> None:
         markets=tuple(value.strip().upper() for value in args.market.split(",") if value.strip()),
     )
     result = screen(filters, args.db, refresh=args.refresh)
+    save_latest(result, filters)
     print(f"기준일 {result['as_of']} | 평가 {result['evaluated']}/{result['total']}종목 "
           f"(자료부족 {result['incomplete']}) | 조건 통과 {len(result['matches'])}종목")
     print(format_table(result))

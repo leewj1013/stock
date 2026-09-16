@@ -40,10 +40,11 @@ ACCOUNTS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
     "operating_cash_flow": (("ifrs-full_CashFlowsFromUsedInOperatingActivities",), ("영업활동",), CF),
     "capex": (("ifrs-full_PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",), ("유형자산의 취득",), CF),
     "intangible_capex": (("ifrs-full_PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities",), ("무형자산의 취득",), CF),
-    "depreciation": (("ifrs-full_AdjustmentsForDepreciationExpense", "ifrs-full_DepreciationAndAmortisationExpense",
-                      "ifrs-full_AdjustmentsForDepreciationAndAmortisationExpense", "ifrs-full_DepreciationRightofuseAssets",
-                      "dart_AdjustmentsForDepreciationRightofuseAssets", "dart_AdjustmentsForDepreciationInvestmentProperty"), ("감가상각비",), CF),
-    "amortisation": (("ifrs-full_AdjustmentsForAmortisationExpense",), ("무형자산상각비",), CF),
+    # Filers label depreciation half a dozen ways ("감가상각비", "감가상각비에 대한
+    # 조정", "사용권자산감가상각비"...), so these two are matched by pattern in
+    # _depreciation_rows() rather than by a single account id.
+    "depreciation": ((), (), CF),
+    "amortisation": ((), (), CF),
     "assets": (("ifrs-full_Assets",), ("자산총계",), BS),
     "liabilities": (("ifrs-full_Liabilities",), ("부채총계",), BS),
     "equity": (("ifrs-full_Equity",), ("자본총계",), BS),
@@ -52,7 +53,31 @@ ACCOUNTS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
 FLOW_ITEMS = [item for item, (_ids, _names, kind) in ACCOUNTS.items() if kind in (IS, CF)]
 
 
+# "상각후원가금융자산" is amortised-cost financial assets, not depreciation --
+# matching it would put a balance-sheet asset into the D&A line.
+DEPRECIATION_PATTERNS = ("감가상각", "사용권자산상각", "투자부동산상각")
+AMORTISATION_PATTERNS = ("무형자산상각",)
+NOT_DEPRECIATION = ("상각후원가",)
+
+
+def _depreciation_rows(rows: list[dict], patterns: tuple[str, ...]) -> list[dict]:
+    """One row per account id, so a filer listing several depreciation lines
+    (plant, right-of-use, investment property) is summed but never counted twice."""
+    seen: dict[str, dict] = {}
+    for row in rows:
+        name = row.get("account_nm") or ""
+        if any(bad in name for bad in NOT_DEPRECIATION):
+            continue
+        if any(pattern in name for pattern in patterns) and row.get("thstrm_amount") is not None:
+            seen.setdefault(row.get("account_id") or name, row)
+    return list(seen.values())
+
+
 def _matching_rows(rows: list[dict], item: str) -> list[dict]:
+    if item == "depreciation":
+        return _depreciation_rows(rows, DEPRECIATION_PATTERNS)
+    if item == "amortisation":
+        return _depreciation_rows(rows, AMORTISATION_PATTERNS)
     ids, names, _kind = ACCOUNTS[item]
     for wanted in ids:
         matches = [row for row in rows if row["account_id"] == wanted]
@@ -74,15 +99,16 @@ def _amounts(rows: list[dict], item: str, reprt_code: str) -> tuple[float | None
     quarter_parts = [row["thstrm_amount"] for row in matches if row["thstrm_amount"] is not None]
     if not quarter_parts:
         return None, None
-    # Depreciation is filed as several separate adjustment lines (plant, right-of-use,
-    # investment property); every other item takes the first matching account.
-    value = sum(quarter_parts) if item == "depreciation" else quarter_parts[0]
+    # Depreciation/amortisation come as several separate lines that add up;
+    # every other item takes the first matching account.
+    multi = item in ("depreciation", "amortisation")
+    value = sum(quarter_parts) if multi else quarter_parts[0]
     if kind == BS:
         return value, None
     if reprt_code == ANNUAL_CODE or kind == CF:
         return None, value  # annual IS and every CF figure are cumulative
     cumulative_parts = [row["thstrm_add_amount"] for row in matches if row["thstrm_add_amount"] is not None]
-    cumulative = (sum(cumulative_parts) if item == "depreciation" else cumulative_parts[0]) if cumulative_parts else value
+    cumulative = (sum(cumulative_parts) if multi else cumulative_parts[0]) if cumulative_parts else value
     return value, cumulative
 
 

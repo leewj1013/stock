@@ -106,6 +106,9 @@ if ($mode -eq "daily") {
     # day's issue summary isn't silently skipped on top of the failure itself.
     try {
         RunOptionalStep "strategy_learning" "stock_alarm.strategy_learning"
+        # Screens the collected DART fundamentals and saves the result the
+        # dashboard reads, so it has to run before the dashboard build below.
+        RunOptionalStep "screener" "stock_alarm.screener"
         RunStep "daily_summary" "stock_alarm.daily_summary"
         RunStep "daily_check" "stock_alarm.daily_check"
         RunStep "dashboard" "stock_alarm.dashboard"

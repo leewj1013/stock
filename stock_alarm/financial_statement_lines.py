@@ -186,6 +186,8 @@ def main() -> None:
     parser.add_argument("--dynamic-universe", action="store_true",
                         help="collect today's screening universe (DYNAMIC_SCREENING_TOP_N) instead of the watchlist")
     parser.add_argument("--skip-collected", action="store_true", help="skip tickers that already have stored lines")
+    parser.add_argument("--stored", action="store_true",
+                        help="also refresh every ticker already stored, not just the chosen universe")
     args = parser.parse_args()
     from .app import load_env
 
@@ -193,6 +195,10 @@ def main() -> None:
     tickers = [value.strip() for value in args.tickers.split(",") if value.strip()]
     if not tickers:
         tickers = universe_tickers(args.dynamic_universe)
+    if args.stored:
+        # A weekly refresh has to cover what was collected before, not just
+        # whatever happens to screen well today.
+        tickers = sorted(set(tickers) | collected_tickers(args.db))
     if args.skip_collected:
         done = collected_tickers(args.db)
         tickers = [ticker for ticker in tickers if ticker not in done]

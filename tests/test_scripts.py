@@ -2,6 +2,31 @@ import unittest
 
 
 class ScriptTest(unittest.TestCase):
+    def test_screener_runs_after_market_close_and_before_the_dashboard(self):
+        # The dashboard only displays the screener's saved result, so a run
+        # ordered after the dashboard build would always show yesterday's list.
+        with open("scripts/run_stock_alarm.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn('RunOptionalStep "screener" "stock_alarm.screener"', script)
+        daily = script[script.index('RunOptionalStep "strategy_learning"'):]
+        self.assertLess(daily.index('"screener"'), daily.index('RunStep "dashboard"'))
+
+    def test_financial_statement_collection_runs_weekly_on_friday_evening(self):
+        # Quarterly filings change a few times a year, so a daily 400-ticker
+        # DART sweep would burn the API quota for nothing.
+        with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
+            register = file.read()
+        with open("scripts/run_financial_statements.ps1", encoding="utf-8-sig") as file:
+            runner = file.read()
+
+        self.assertIn('-TaskName "stockAlarmFinancialStatements"', register)
+        self.assertIn("-Weekly -DaysOfWeek Friday -At \"19:00\"", register)
+        self.assertIn("run_financial_statements.ps1", register)
+        self.assertIn("stock_alarm.financial_statement_lines", runner)
+        self.assertIn("--dynamic-universe --stored", runner)
+        self.assertIn("workspace.path", runner)
+
     def test_daily_task_runs_sell_check(self):
         with open("scripts/run_stock_alarm.ps1", encoding="utf-8-sig") as file:
             script = file.read()

@@ -108,7 +108,7 @@ def dashboard_logo_data_uri() -> str:
     """Embed the project logo so the generated dashboard remains one portable HTML file."""
     with open(LOGO_PATH, "rb") as file:
         return "data:image/png;base64," + base64.b64encode(file.read()).decode("ascii")
-RETURN_COLUMNS = {"return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
+RETURN_COLUMNS = {"revenue_growth_pct", "operating_income_growth_pct", "return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at", "ordered_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
 # Enum-valued columns whose Korean label depends on which table they're in --
@@ -284,6 +284,13 @@ LABELS = {
     "strategy": "전략",
     "total_return_pct": "총수익률",
     "mdd_pct": "최대낙폭",
+    "market": "시장",
+    "per": "PER",
+    "pbr": "PBR",
+    "free_cash_flow": "잉여현금흐름",
+    "revenue_growth_pct": "매출성장률",
+    "operating_income_growth_pct": "영업이익성장률",
+    "period": "기준분기",
     "experiment": "실험 계좌",
     "rule": "규칙",
     "since": "시작일",
@@ -804,6 +811,41 @@ def profile_selection_rows() -> list[dict[str, str]]:
     return [{**row, "profile": labels.get(row.get("profile"), row.get("profile"))} for row in latest_profile_selections()]
 
 
+def screener_result() -> dict:
+    """Latest saved screening run (stock_alarm.screener), or {} if never run."""
+    try:
+        with open(os.path.join("reports", "fundamentals", "screen_latest.json"), encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return {}
+
+
+def screener_rows(limit: int = 50) -> list[dict[str, str]]:
+    rows = []
+    for row in screener_result().get("matches", [])[:limit]:
+        free_cash_flow = row.get("free_cash_flow")
+        rows.append({
+            "name": str(row.get("name") or row.get("ticker") or ""),
+            "market": str(row.get("market") or ""),
+            "per": f"{float(row['per']):.2f}" if row.get("per") is not None else "",
+            "pbr": f"{float(row['pbr']):.2f}" if row.get("pbr") is not None else "",
+            "free_cash_flow": f"{round(float(free_cash_flow) / 1e8):,}억" if free_cash_flow is not None else "",
+            "revenue_growth_pct": f"{float(row['revenue_growth_pct']):.1f}" if row.get("revenue_growth_pct") is not None else "",
+            "operating_income_growth_pct": f"{float(row['operating_income_growth_pct']):.1f}" if row.get("operating_income_growth_pct") is not None else "",
+            "period": str(row.get("period") or ""),
+        })
+    return rows
+
+
+def screener_caption() -> str:
+    result = screener_result()
+    if not result:
+        return "아직 실행하지 않았습니다."
+    return (f"{result.get('conditions', '')} · 시세 {result.get('as_of', '')} 기준 · "
+            f"평가 {result.get('evaluated', 0)}/{result.get('total', 0)}종목"
+            f"(자료부족 {result.get('incomplete', 0)}) · 갱신 {str(result.get('generated_at', ''))[:16].replace('T', ' ')}")
+
+
 def experiment_account_rows() -> list[dict[str, str]]:
     """Forward rule experiments -- comparison only, never real orders."""
     from . import core_satellite_tracker as core30
@@ -1191,6 +1233,7 @@ def render() -> str:
     tracking_tab = f"""
 <div class="home-heading"><div><h2>추천종목 추적</h2><p class="muted">가상매수 여부와 관계없이 추천 이후의 성과와 매도 알림을 관리합니다.</p></div><span class="system-pill">총 {len(tracking_rows)}건</span></div>
 <div class="tracking-summary">{tracking_cards}</div>
+{details(f"재무 스크리닝 결과 · {screener_caption()}", user_table("재무 스크리닝 (관찰 전용)", screener_rows(), ["name", "market", "per", "pbr", "free_cash_flow", "revenue_growth_pct", "operating_income_growth_pct", "period"], "python -m stock_alarm.screener 를 실행하면 결과가 표시됩니다."))}
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
     trader_tab = """

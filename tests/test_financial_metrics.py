@@ -70,6 +70,20 @@ class FinancialMetricsTest(unittest.TestCase):
         self.assertAlmostEqual(100.0, rows["2026Q1"]["operating_income_growth_pct"])
         self.assertIsNone(rows["2025Q1"]["revenue_growth_pct"])
 
+    def test_depreciation_sums_its_lines_but_ignores_amortised_cost_assets(self):
+        lines = [
+            (2025, "11013", "CF", "ifrs-full_AdjustmentsForDepreciationExpense", "감가상각비", 10.0, None),
+            (2025, "11013", "CF", "dart_AdjustmentsForDepreciationRightofuseAssets", "사용권자산감가상각비", 4.0, None),
+            (2025, "11013", "CF", "ifrs-full_AdjustmentsForAmortisationExpense", "무형자산상각비", 3.0, None),
+            # amortised-cost financial assets are not depreciation
+            (2025, "11013", "CF", "dart_ShortTermAmortisedCost", "단기상각후원가금융자산", 999.0, None),
+        ]
+        with closing(build_db(lines)) as db:
+            row = {item["period"]: item for item in quarterly_metrics(db, "A")}["2025Q1"]
+
+        self.assertEqual(17.0, row["depreciation_amortisation"])
+        self.assertEqual(27.0, row["ebitda"])  # operating income 10 + D&A 17
+
     def test_margins_and_ebitda_need_their_inputs(self):
         row = metrics({"revenue": 200.0, "cost_of_sales": 150.0, "operating_income": 20.0, "depreciation": 5.0,
                        "amortisation": 3.0, "operating_cash_flow": 30.0, "capex": 12.0})

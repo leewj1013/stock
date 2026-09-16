@@ -15,6 +15,8 @@ $collectWarningsPath = Join-Path $runtimeRoot "scripts\collect_stock_warnings.ps
 $collectWarningsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$collectWarningsPath`""
 $shadowTraderPath = Join-Path $runtimeRoot "scripts\run_shadow_trader.ps1"
 $shadowTraderAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$shadowTraderPath`""
+$financialStatementsPath = Join-Path $runtimeRoot "scripts\run_financial_statements.ps1"
+$financialStatementsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$financialStatementsPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -158,3 +160,8 @@ Register-ScheduledTask -TaskName "stockAlarmCollectStockWarnings" -Action $colle
 # its real cash/holdings, without ever placing a real order. Runs after the
 # daily recommendation (16:00) so today's virtual_trades already exist.
 Register-ScheduledTask -TaskName "stockAlarmShadowTrader" -Action $shadowTraderAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "16:15") -Settings $taskSettings -Description "Log hypothetical real-account orders for review (shadow mode, no real orders placed)" -Force
+
+# Quarterly filings only change a few times a year, so the full DART statement
+# collection (400+ tickers, ~30 minutes) runs once a week on Friday evening
+# rather than daily; the screener then reads whatever was last collected.
+Register-ScheduledTask -TaskName "stockAlarmFinancialStatements" -Action $financialStatementsAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "19:00") -Settings $taskSettings -Description "Collect full DART financial statements weekly (read-only)" -Force
