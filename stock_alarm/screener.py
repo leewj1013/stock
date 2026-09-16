@@ -105,6 +105,39 @@ def load_market_fundamentals(as_of: date | None = None, cache_path: Path = FUNDA
     return payload
 
 
+def fundamentals_for(tickers: list[str], path: Path = DEFAULT_PATH) -> dict[str, dict]:
+    """Latest quarter growth/margin, trailing free cash flow and cached PER/PBR.
+
+    Used for a few held tickers at a time, so it reads only those rows instead
+    of the whole universe candidate_rows() walks, and never calls KRX -- a
+    dashboard render must not depend on a login round trip.
+    """
+    market = {}
+    if FUNDAMENTAL_CACHE.exists():
+        try:
+            market = json.loads(FUNDAMENTAL_CACHE.read_text(encoding="utf-8")).get("data", {})
+        except ValueError:
+            market = {}
+    out: dict[str, dict] = {}
+    with closing(sqlite3.connect(path)) as db:
+        db.row_factory = sqlite3.Row
+        for ticker in tickers:
+            quarters = quarterly_metrics(db, ticker)
+            latest = quarters[-1] if quarters else {}
+            ttm = trailing_twelve_months(quarters) if quarters else {}
+            priced = market.get(ticker, {})
+            out[ticker] = {
+                "per": priced.get("per") or None,
+                "pbr": priced.get("pbr") or None,
+                "market": priced.get("market") or "",
+                "revenue_growth_pct": latest.get("revenue_growth_pct"),
+                "operating_margin_pct": latest.get("operating_margin_pct"),
+                "free_cash_flow": ttm.get("free_cash_flow"),
+                "period": latest.get("period", ""),
+            }
+    return out
+
+
 def candidate_rows(path: Path = DEFAULT_PATH, names: dict[str, str] | None = None) -> list[dict]:
     """One row per ticker: latest growth plus trailing-twelve-month cash flow."""
     names = names or {}

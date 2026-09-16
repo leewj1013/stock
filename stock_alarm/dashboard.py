@@ -811,6 +811,131 @@ def profile_selection_rows() -> list[dict[str, str]]:
     return [{**row, "profile": labels.get(row.get("profile"), row.get("profile"))} for row in latest_profile_selections()]
 
 
+def _daily_last_snapshots(path: str) -> list[tuple[str, str, int]]:
+    """(day, timestamp, equity) for the last valuation recorded on each day."""
+    rows = query_rows("SELECT created_at, equity FROM virtual_valuation_snapshots ORDER BY snapshot_id", path=path)
+    per_day: dict[str, tuple[str, int]] = {}
+    for row in rows:
+        created = str(row["created_at"])
+        per_day[created[:10]] = (created, int(row["equity"]))
+    return [(day, value[0], value[1]) for day, value in sorted(per_day.items())]
+
+
+def time_weighted_returns(path: str) -> dict[str, float]:
+    """Cumulative return % per day with deposits removed.
+
+    A raw equity line would read the 9,000만원 top-up as a +900% day; what the
+    account actually earned is the chained daily return of (equity - deposits
+    received since the previous snapshot).
+    """
+    snapshots = _daily_last_snapshots(path)
+    deposits = [
+        (str(row["created_at"]), int(row["amount"]))
+        for row in query_rows("SELECT created_at, amount FROM virtual_deposits ORDER BY deposit_id", path=path)
+    ]
+    curve: dict[str, float] = {}
+    cumulative = 1.0
+    previous_time, previous_equity = "", 0
+    for day, timestamp, equity in snapshots:
+        if previous_equity > 0:
+            added = sum(amount for at, amount in deposits if previous_time < at <= timestamp)
+            cumulative *= (equity - added) / previous_equity
+        curve[day] = round((cumulative - 1) * 100, 2)
+        previous_time, previous_equity = timestamp, equity
+    return curve
+
+
+def benchmark_returns(days: list[str]) -> dict[str, float]:
+    """KOSPI cumulative % over the same days, or {} when the index is unavailable."""
+    if not days:
+        return {}
+    try:
+        from datetime import date as date_type, timedelta
+
+        from .app import naver_rows
+        rows = naver_rows(
+            "KOSPI", date_type.fromisoformat(days[0]) - timedelta(days=5),
+            date_type.fromisoformat(days[-1]), max_cache_age_seconds=6 * 60 * 60,
+        )
+    except Exception:
+        return {}
+    closes = {}
+    for row in rows:
+        stamp = str(row[0])
+        if len(stamp) == 8 and row[4]:
+            closes[f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:]}"] = float(row[4])
+    base = next((closes[day] for day in days if day in closes), None)
+    if not base:
+        return {}
+    return {day: round((closes[day] / base - 1) * 100, 2) for day in days if day in closes}
+
+
+CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "exp_candidate": "#BA7517", "benchmark": "#888780"}
+CURVE_ACCOUNTS = (("aggressive", "적극투자형"), ("neutral", "위험중립형"), ("exp_candidate", "비교(후보 규칙)"))
+
+
+def equity_curve_series(limit_days: int = 90) -> dict:
+    """Comparable return curves for the virtual accounts and KOSPI."""
+    from .trading_profiles import PROFILES
+
+    curves = {name: time_weighted_returns(PROFILES[name]["db_path"]) for name, _label in CURVE_ACCOUNTS if name in PROFILES}
+    days = sorted({day for curve in curves.values() for day in curve})[-limit_days:]
+    if len(days) < 2:
+        return {"days": [], "series": []}
+    series = []
+    for name, label in CURVE_ACCOUNTS:
+        points = [curves.get(name, {}).get(day) for day in days]
+        if len([point for point in points if point is not None]) >= 2:
+            series.append({"key": name, "label": label, "color": CURVE_COLORS.get(name, "#888780"), "points": points})
+    benchmark = benchmark_returns(days)
+    if benchmark:
+        series.append({"key": "benchmark", "label": "KOSPI", "color": CURVE_COLORS["benchmark"],
+                       "points": [benchmark.get(day) for day in days], "dashed": True})
+    return {"days": days, "series": series}
+
+
+def equity_curve_section(limit_days: int = 90) -> str:
+    data = equity_curve_series(limit_days)
+    days, series = data["days"], data["series"]
+    if not series:
+        return ("<section class='empty-section'><h2>자산 추이</h2><div class='empty-state'>"
+                "<b>표시할 기록이 없습니다</b><span>평가 기록이 이틀 이상 쌓이면 수익률 추이가 나타납니다.</span></div></section>")
+    values = [point for item in series for point in item["points"] if point is not None] + [0.0]
+    low, high = min(values), max(values)
+    span = (high - low) or 1.0
+    width, height, left, top, bottom = 960.0, 200.0, 52.0, 14.0, 26.0
+
+    def x_of(index):
+        return left + (width - left - 12) * (index / max(len(days) - 1, 1))
+
+    def y_of(value):
+        return top + (height - top - bottom) * (1 - (value - low) / span)
+
+    lines, legend = [], []
+    for item in series:
+        points = " ".join(
+            f"{x_of(index):.1f},{y_of(point):.1f}" for index, point in enumerate(item["points"]) if point is not None
+        )
+        dash = " stroke-dasharray='5 4'" if item.get("dashed") else ""
+        lines.append(f"<polyline fill='none' stroke='{item['color']}' stroke-width='2'{dash} points='{points}'/>")
+        last = next((point for point in reversed(item["points"]) if point is not None), 0.0)
+        signed = "pos" if last > 0 else "neg" if last < 0 else "zero"
+        legend.append(f"<span class='curve-legend-item'><i style='background:{item['color']}'></i>"
+                      f"{e(item['label'])}<b class='{signed}'>{last:+.2f}%</b></span>")
+    grid = "".join(
+        f"<line x1='{left:.0f}' y1='{y_of(value):.1f}' x2='{width - 12:.0f}' y2='{y_of(value):.1f}' class='curve-grid'/>"
+        f"<text x='6' y='{y_of(value) + 4:.1f}' class='curve-axis'>{value:+.1f}%</text>"
+        for value in dict.fromkeys((high, (low + high) / 2, low))
+    )
+    labels = (f"<text x='{left:.0f}' y='{height - 6:.0f}' class='curve-axis'>{e(days[0][5:])}</text>"
+              f"<text x='{width - 70:.0f}' y='{height - 6:.0f}' class='curve-axis'>{e(days[-1][5:])}</text>")
+    return ("<section class='curve-card'><div class='table-heading'><h2>자산 추이</h2>"
+            f"<span class='table-count'>입금 제외 수익률 · 최근 {len(days)}일</span></div>"
+            f"<svg viewBox='0 0 {width:.0f} {height:.0f}' class='equity-curve' role='img' "
+            f"aria-label='계좌별 누적 수익률 추이'>{grid}{''.join(lines)}{labels}</svg>"
+            f"<div class='curve-legend'>{''.join(legend)}</div></section>")
+
+
 def screener_result() -> dict:
     """Latest saved screening run (stock_alarm.screener), or {} if never run."""
     try:
@@ -1215,7 +1340,6 @@ def render() -> str:
     </div>
   </div>
 </div></section>
-{table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"])}
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
   <div><span>자동매매</span><b id="home-auto-status">확인 중</b></div>
   <div><span>시장 모드</span><b id="home-market-mode">확인 중</b></div>
@@ -1224,7 +1348,6 @@ def render() -> str:
 </div></section>
 {user_table("Today recommendations", recommendation_rows, ["name", "close", "virtual_target_pct", "aggressive_order_status", "neutral_order_status"], "오늘 신규 추천 신호가 없습니다.")}
 {user_table("Today sell alerts", sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
-{details("추천 성과 추적 보기", table("Positions", position_rows, ["name", "entry_price", "close", "return_pct", "decision"]))}
 """
     tracking_cards = "".join(
         f"<div class='tracking-card'><span>{e(label)}</span><b>{e(value)}</b></div>"
@@ -1236,7 +1359,7 @@ def render() -> str:
 {details(f"재무 스크리닝 결과 · {screener_caption()}", user_table("재무 스크리닝 (관찰 전용)", screener_rows(), ["name", "market", "per", "pbr", "free_cash_flow", "revenue_growth_pct", "operating_income_growth_pct", "period"], "python -m stock_alarm.screener 를 실행하면 결과가 표시됩니다."))}
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
-    trader_tab = """
+    trader_tab = equity_curve_section() + """
 <div class="trader-profile-toggle" role="tablist" aria-label="가상 트레이더 성향 선택">
   <button type="button" class="profile-button" id="profile-aggressive" data-profile="aggressive" aria-pressed="true">적극투자형</button>
   <button type="button" class="profile-button" id="profile-neutral" data-profile="neutral" aria-pressed="false">위험중립형</button>
@@ -1270,7 +1393,7 @@ def render() -> str:
   <div class="trader-form"><label for="remote-api-url">HTTPS API 주소</label><input id="remote-api-url" type="url" placeholder="https://stock-api.example.com"><label for="remote-api-token">접속 토큰</label><input id="remote-api-token" type="password" autocomplete="current-password"><button id="remote-connect-button" type="button">읽기 전용 연결</button></div>
   <p class="muted">주소는 이 브라우저에, 토큰은 현재 탭에만 저장됩니다. 원격에서는 입금과 수동주문을 실행할 수 없습니다.</p>
 </section>
-<section><h2>가상계좌 보유종목</h2><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
+<section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
     <div><span>누적 실현손익</span><b id="sale-realized-profit">0원</b></div>
@@ -1281,7 +1404,7 @@ def render() -> str:
   <div class="table-scroll"><table><thead><tr><th>종목명</th><th>매수일</th><th>매도일</th><th>구분</th><th class="num">평균 매수가</th><th class="num">매도가</th><th class="num">수량</th><th class="num">실현손익</th><th class="num">실현수익률</th><th>매도 사유</th></tr></thead><tbody id="trader-sales"></tbody></table></div>
   <div class="pager" id="trader-sales-pager" data-page-size="15"></div>
 </section>
-"""
+""" + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"])
     real_account = real_account_state()
     real_account_warning_count = sum(1 for row in real_account.get("holdings", []) if str(row.get("watch_state", "")).startswith("종목"))
     shadow_order_rows = [
@@ -1388,6 +1511,7 @@ table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom
 .nav-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:999px;background:var(--danger-bg);color:var(--danger-text);font-size:11px;font-weight:700}} .nav-badge[hidden]{{display:none}}
 .table-heading{{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 16px}} .table-heading h2{{margin:0}} .table-count{{color:var(--text-secondary);font-size:13px;font-weight:600;white-space:nowrap}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
+.curve-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .equity-curve{{width:100%;height:auto;margin-top:6px}} .curve-grid{{stroke:var(--table-border)}} .curve-axis{{fill:var(--text-secondary);font-size:11px}} .curve-legend{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:10px;font-size:13px;color:var(--text-secondary)}} .curve-legend-item{{display:inline-flex;align-items:center;gap:7px}} .curve-legend-item i{{width:14px;height:3px;border-radius:2px;display:inline-block}} .curve-legend-item b{{font-weight:700}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .trader-balance span{{display:block;color:var(--text-on-accent-muted)}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text-primary)}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:var(--bg-accent-card);color:var(--text-on-accent);cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:var(--text-strong)}}
@@ -1601,16 +1725,21 @@ function renderTrader(message="") {{
     const row = document.createElement("tr");
     const sellReference=`손절 ${{won(item.stop_price||0)}}${{item.ma20?` · 20일선 ${{won(item.ma20)}}`:""}}`;
     const watchState=item.watch_state||'데이터 대기';
-    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference];
+    const ratio=(value,suffix)=>value==null||value===""?"–":`${{Number(value).toFixed(suffix==="%"?1:2)}}${{suffix}}`;
+    const eok=(value)=>value==null||value===""?"–":`${{Math.round(Number(value)/1e8).toLocaleString("ko-KR")}}억`;
+    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference,ratio(item.per,""),ratio(item.revenue_growth_pct,"%"),ratio(item.operating_margin_pct,"%"),eok(item.free_cash_flow)];
     values.forEach((value,index)=>{{
       const cell=document.createElement("td");
       if(index===8 && watchStatePillClass(watchState)) {{const pill=document.createElement("span"); pill.className=`status-pill ${{watchStatePillClass(watchState)}}`; pill.textContent=value; cell.appendChild(pill);}}
       else cell.textContent=value;
       if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";
+      if(index>=10){{cell.className="num fundamental-col";}}
+      if(index===11&&item.revenue_growth_pct!=null)cell.className+=Number(item.revenue_growth_pct)>0?" pos":Number(item.revenue_growth_pct)<0?" neg":"";
+      if(index===13&&item.free_cash_flow!=null)cell.className+=Number(item.free_cash_flow)>0?" pos":Number(item.free_cash_flow)<0?" neg":"";
       row.appendChild(cell);
     }}); body.appendChild(row);
   }});
-  if (!body.children.length) body.innerHTML='<tr><td colspan="10" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
+  if (!body.children.length) body.innerHTML='<tr><td colspan="14" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
   const warningCount=(trader.holdings||[]).filter(item=>(item.watch_state||"").startsWith("종목")).length;
   const navBadge=document.getElementById("nav-badge-trader");
   navBadge.textContent=warningCount; navBadge.hidden=!warningCount;

@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -93,6 +94,45 @@ class ScreenerTest(unittest.TestCase):
         self.assertFalse(has_priced_rows({"A": {"per": 0.0}, "B": {"per": 0.0}}))
         self.assertTrue(has_priced_rows({"A": {"per": 8.0}, "B": {"per": 0.0}}))
         self.assertFalse(has_priced_rows({}))
+
+    def test_fundamentals_for_joins_cached_prices_with_stored_statements(self):
+        from contextlib import closing as closing_db
+
+        from stock_alarm.financial_statement_lines import SCHEMA
+        from stock_alarm.screener import fundamentals_for
+
+        with tempfile.TemporaryDirectory() as directory:
+            pit = Path(directory) / "pit.sqlite3"
+            with closing_db(sqlite3.connect(pit)) as db:
+                db.executescript(SCHEMA)
+                rows = [
+                    (2025, "11013", "IS", "ifrs-full_Revenue", "매출액", 100.0, 100.0),
+                    (2025, "11013", "IS", "dart_OperatingIncomeLoss", "영업이익", 20.0, 20.0),
+                    (2026, "11013", "IS", "ifrs-full_Revenue", "매출액", 150.0, 150.0),
+                    (2026, "11013", "IS", "dart_OperatingIncomeLoss", "영업이익", 30.0, 30.0),
+                ]
+                db.executemany(
+                    "INSERT INTO financial_statement_lines(ticker,bsns_year,reprt_code,fs_div,sj_div,account_id,"
+                    "account_nm,account_detail,thstrm_amount,thstrm_add_amount,frmtrm_amount,frmtrm_q_amount,"
+                    "bfefrmtrm_amount,ord,currency,collected_at) VALUES('000100',?,?,'CFS',?,?,?,'',?,?,"
+                    "NULL,NULL,NULL,1,'KRW','now')",
+                    rows,
+                )
+                db.commit()
+            cache = Path(directory) / "krx.json"
+            cache.write_text(json.dumps({"as_of": "20260916", "data": {
+                "000100": {"market": "KOSPI", "per": 9.5, "pbr": 0.8, "eps": 100.0, "dividend_yield": 2.0}}}), encoding="utf-8")
+            with patch("stock_alarm.screener.FUNDAMENTAL_CACHE", cache):
+                result = fundamentals_for(["000100", "999999"], path=pit)
+
+        self.assertEqual(9.5, result["000100"]["per"])
+        self.assertEqual("KOSPI", result["000100"]["market"])
+        self.assertAlmostEqual(50.0, result["000100"]["revenue_growth_pct"])
+        self.assertAlmostEqual(20.0, result["000100"]["operating_margin_pct"])
+        self.assertEqual("2026Q1", result["000100"]["period"])
+        # a ticker with neither prices nor filings still gets a row of blanks
+        self.assertIsNone(result["999999"]["per"])
+        self.assertIsNone(result["999999"]["free_cash_flow"])
 
     def test_table_renders_matches(self):
         passed, _incomplete = apply_filters(ROWS, FUNDAMENTALS, BASE)

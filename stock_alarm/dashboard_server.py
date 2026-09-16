@@ -170,6 +170,13 @@ def trader_payload(profile: str = "aggressive") -> dict:
             "stop_price": stop_price,
             "ma20": check.get("ma20"),
         })
+    try:
+        from .screener import fundamentals_for
+        fundamentals = fundamentals_for(holding_ticker_list)
+    except Exception:
+        fundamentals = {}
+    for holding in state["holdings"]:
+        holding.update(fundamentals.get(str(holding.get("ticker") or ""), {}))
     sales = []
     for row in recent_virtual_sales(500, path):
         cost_basis = int(row.get("cost_basis") or 0)
