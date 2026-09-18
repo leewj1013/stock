@@ -173,6 +173,63 @@ class RemoteReadOnlyHandlerTest(unittest.TestCase):
         self.assertEqual(403, self._request("/api/trader/buy", method="POST"))
 
 
+class ReadRequestBodyTest(unittest.TestCase):
+    def _handler(self, body: bytes, length: str | None):
+        from io import BytesIO
+        from types import SimpleNamespace
+
+        headers = {} if length is None else {"Content-Length": length}
+        return SimpleNamespace(headers=headers, rfile=BytesIO(body))
+
+    def test_reads_exactly_the_declared_body(self):
+        from stock_alarm.dashboard_server import read_request_body
+
+        handler = self._handler(b'{"a":1}trailing', "7")
+        self.assertEqual(b'{"a":1}', read_request_body(handler))
+        self.assertEqual(7, handler.rfile.tell())
+
+    def test_missing_or_bad_length_reads_nothing(self):
+        from stock_alarm.dashboard_server import read_request_body
+
+        self.assertEqual(b"", read_request_body(self._handler(b"abc", None)))
+        self.assertEqual(b"", read_request_body(self._handler(b"abc", "not-a-number")))
+        self.assertEqual(b"", read_request_body(self._handler(b"abc", "-5")))
+
+
+class RejectedPostDrainsBodyTest(unittest.TestCase):
+    """Deterministic version of the flaky socket test: call the handler with an
+    in-memory request and check the body was fully read before the reply."""
+
+    def _call(self, handler_class, headers):
+        from io import BytesIO
+
+        body = b'{"amount":1000,"padding":"' + b"x" * 50_000 + b'"}'
+        handler = handler_class.__new__(handler_class)
+        handler.rfile, handler.wfile = BytesIO(body), BytesIO()
+        handler.headers = {"Content-Length": str(len(body)), **headers}
+        handler.path, handler.command = "/api/trader/deposit", "POST"
+        handler.request_version, handler.requestline = "HTTP/1.1", "POST /api/trader/deposit HTTP/1.1"
+        handler.client_address, handler.close_connection = ("127.0.0.1", 0), True
+        handler.do_POST()
+        return handler.rfile.tell(), len(body), handler.wfile.getvalue()
+
+    @patch("stock_alarm.dashboard_server.virtual_deposit")
+    def test_local_handler_reads_the_body_before_a_403(self, deposit_mock):
+        from stock_alarm.dashboard_server import DashboardHandler
+
+        read, total, reply = self._call(DashboardHandler, {})
+        self.assertIn(b" 403 ", reply.splitlines()[0])
+        self.assertEqual(total, read)
+        deposit_mock.assert_not_called()
+
+    def test_remote_handler_reads_the_body_before_a_403(self):
+        from stock_alarm.dashboard_server import RemoteReadOnlyHandler
+
+        read, total, reply = self._call(RemoteReadOnlyHandler, {"Origin": "https://example.com"})
+        self.assertIn(b" 403 ", reply.splitlines()[0])
+        self.assertEqual(total, read)
+
+
 class DashboardHandlerLocalTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -212,6 +269,22 @@ class DashboardHandlerLocalTest(unittest.TestCase):
             data=b'{"amount":1000}',
         )
         self.assertEqual(403, status)
+        deposit_mock.assert_not_called()
+
+    @patch("stock_alarm.dashboard_server.virtual_deposit")
+    def test_rejected_posts_always_get_a_clean_403_not_a_reset(self, deposit_mock):
+        # A small body usually arrives with the headers and lands in the
+        # server's 8 KB read buffer, so the bug only showed up now and then
+        # (WinError 10053 instead of the 403). A body past that buffer leaves
+        # unread bytes on the socket every time, which makes it reproducible.
+        for _ in range(5):
+            status, _headers = self._request(
+                "/api/trader/deposit",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+                data=b'{"amount":1000,"padding":"' + b"x" * 200_000 + b'"}',
+            )
+            self.assertEqual(403, status)
         deposit_mock.assert_not_called()
 
     @patch("stock_alarm.dashboard_server.trader_payload", return_value={"cash": 1000})

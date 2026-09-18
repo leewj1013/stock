@@ -232,6 +232,26 @@ def remote_setup_page() -> str:
 <script>document.getElementById('copy').onclick=async()=>{{await navigator.clipboard.writeText(document.getElementById('token').value);document.getElementById('status').textContent='토큰을 복사했습니다.';}};</script></html>"""
 
 
+# Legacy virtual-trader imports are the largest body this server accepts, and
+# they are a few KB; anything past this is not a real dashboard request.
+MAX_BODY_BYTES = 1_000_000
+
+
+def read_request_body(handler: BaseHTTPRequestHandler) -> bytes:
+    """Consume the declared request body, including for requests about to be
+    rejected. Closing a socket that still holds unread request bytes makes
+    Windows reset the connection instead of closing it, so the client sees
+    ConnectionAbortedError (WinError 10053) rather than the 403/401 it was
+    actually sent -- which is also what made the rejection test flaky."""
+    try:
+        length = int(handler.headers.get("Content-Length", "0") or 0)
+    except ValueError:
+        return b""
+    if length <= 0:
+        return b""
+    return handler.rfile.read(min(length, MAX_BODY_BYTES))
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """Loopback-only dashboard and virtual-account write API."""
 
@@ -307,12 +327,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            raw_body = read_request_body(self)
             origin = self.headers.get("Origin", "")
             if not allowed_local_origin(origin):
                 self._json(403, {"error": "허용되지 않은 요청 출처입니다."})
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(raw_body or b"{}")
             path = urlparse(self.path).path
             profile = body.get("profile") if body.get("profile") in PROFILES else "aggressive"
             db_path = profile_db_path(profile)
@@ -390,6 +410,7 @@ class RemoteReadOnlyHandler(BaseHTTPRequestHandler):
         self._json(200, trader_payload(profile if profile in PROFILES else "aggressive"))
 
     def do_POST(self) -> None:  # noqa: N802
+        read_request_body(self)
         self._json(403, {"error": "원격에서는 조회만 가능합니다."})
 
     def log_message(self, format: str, *args: object) -> None:
