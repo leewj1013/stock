@@ -14,18 +14,27 @@ def _size_buy_orders(
     max_position_pct: float,
     min_fill_ratio: float,
     portfolio_budget: int,
+    decisions: list[dict] | None = None,
 ) -> list[dict]:
     """Mirrors data_store.virtual_buy()'s per-candidate sizing loop exactly,
     kept as its own copy (not a shared refactor) so this observation-only
     module can never touch virtual_buy()'s real DB-writing code path.
     tests/test_shadow_trader.py has a parity test against virtual_buy() to
-    catch the two drifting out of sync."""
+    catch the two drifting out of sync. `decisions`, when given, receives one
+    entry per candidate saying why it was ordered or skipped."""
     spent = 0
     orders = []
+
+    def note(row: dict, target: int, cost: int, verdict: str) -> None:
+        if decisions is not None:
+            decisions.append({"ticker": row["ticker"], "name": row.get("name", ""), "target_cost": target,
+                              "cost": cost, "verdict": verdict})
+
     for row in candidates:
         price = int(float(row["close"]))
         allocation_pct = max(0.0, min(max_position_pct, float(row.get("allocation_pct") or 0)))
         if not allocation_pct:
+            note(row, 0, 0, "비중 0% (상관관계·업종 한도)")
             continue
         target_cost = int(account_equity * allocation_pct / 100)
         additional_budget = min(
@@ -36,65 +45,91 @@ def _size_buy_orders(
         quantity = int(additional_budget // price)
         cost = price * quantity
         if quantity < 1 or spent + cost > cash:
+            note(row, target_cost, cost, "예산 부족")
             continue
         if target_cost > 0 and cost < target_cost * min_fill_ratio:
+            note(row, target_cost, cost, f"남은 예산이 목표의 {min_fill_ratio:.0%} 미만")
             continue
         orders.append({
             "ticker": row["ticker"], "name": row.get("name", ""), "side": "BUY", "order_type": "MARKET",
             "quantity": quantity, "price": price, "cost": cost, "reason": "recommendation",
         })
+        note(row, target_cost, cost, "주문")
         spent += cost
     return orders
 
 
-def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
-    """What BUY orders the real account would have received today, using
-    the exact tickers/prices/allocation_pct the aggressive profile's virtual
-    trader ACTUALLY bought today (already sector/correlation/market-exposure
-    limited -- see app.auto_buy_virtual_trader) -- just re-sized against the
-    REAL account's own cash and holdings instead of the virtual account's.
+DECISIONS_LOG = "logs/shadow_decisions.csv"
 
-    Deliberately reuses today's already-computed virtual_trades rows rather
-    than re-running the recommendation pipeline: recomputing picks would
-    duplicate a full universe evaluation (and its Toss stock-warning calls)
-    for no benefit -- what matters for the shadow test is "would today's
-    already-made decision have produced a sane real order", not re-deciding.
+
+def _shadow_buys_today(path: str) -> dict[str, int]:
+    """Cost already committed to shadow BUY orders today, per ticker.
+
+    Buys are now sized at the moment each virtual purchase happens, so a later
+    run the same day must treat the earlier shadow buys as held -- otherwise
+    every intraday cycle would spend the full budget again.
+    """
+    from .data_store import query_rows
+
+    spent: dict[str, int] = {}
+    for row in query_rows(
+        "SELECT ticker, cost FROM shadow_orders WHERE side='BUY' AND created_at LIKE ?",
+        (f"{date.today().isoformat()}%",), path,
+    ):
+        spent[str(row["ticker"])] = spent.get(str(row["ticker"]), 0) + int(row["cost"] or 0)
+    return spent
+
+
+def plan_shadow_buys(trades: list[dict], path: str = DB_PATH) -> tuple[list[dict], list[dict], dict]:
+    """(orders, per-candidate decisions, context) for the real account.
+
+    Re-sizes exactly the tickers/prices/allocation_pct the aggressive virtual
+    trader just bought -- in the order it bought them, so a short budget
+    keeps the same names the virtual account kept -- against the REAL
+    account's cash and holdings, with the market limit read at that same
+    moment. `context` records the limit and budget so a skipped order can be
+    explained later without replaying the day.
     """
     from .app import current_market_regime, env_float, market_exposure_limit_pct, naver_market_up_ratio
     from .dashboard import real_account_state
-    from .data_store import recent_virtual_trades
     from .trading_profiles import PROFILES
 
-    today = date.today().isoformat()
-    todays_trades = [row for row in recent_virtual_trades(200, path=path) if str(row.get("created_at", "")).startswith(today)]
-    if not todays_trades:
-        return []
+    trades = sorted(trades, key=lambda row: (int(row.get("trade_id") or 0), str(row.get("created_at") or "")))
+    if not trades:
+        return [], [], {}
     state = real_account_state()
     # Before any real deposit the account's cash sizes every order to zero;
     # this lets the sizing logic be reviewed against a hypothetical balance
     # instead. Real holdings still constrain it (open costs, correlation/sector).
     assumed_capital = int(env_float("SHADOW_TRADER_ASSUMED_CAPITAL", 0))
     if assumed_capital <= 0 and (not state.get("connected") or state.get("cash", 0) <= 0):
-        return []
+        return [], [], {"skipped": "no_capital"}
     breadth = naver_market_up_ratio(date.today())
     market_limit = market_exposure_limit_pct(breadth)
-    regime_multiplier = float(PROFILES["aggressive"]["regime_exposure_multiplier"].get(current_market_regime(date.today()), 1.0))
+    regime = current_market_regime(date.today())
+    regime_multiplier = float(PROFILES["aggressive"]["regime_exposure_multiplier"].get(regime, 1.0))
     exposure_limit = market_limit * regime_multiplier
-    cash = assumed_capital if assumed_capital > 0 else int(state["cash"])
     open_costs = {
         str(row.get("ticker") or ""): int(float(row.get("average_price") or 0)) * int(float(row.get("quantity") or 0))
         for row in state.get("holdings", [])
     }
+    earlier_today = _shadow_buys_today(path)
+    for ticker, cost in earlier_today.items():
+        open_costs[ticker] = open_costs.get(ticker, 0) + cost
+    spent_today = sum(earlier_today.values())
     if assumed_capital > 0:
-        account_equity = cash + int(sum(float(row.get("valuation") or 0) for row in state.get("holdings", [])))
+        account_equity = assumed_capital + int(sum(float(row.get("valuation") or 0) for row in state.get("holdings", [])))
+        cash = assumed_capital - spent_today
     else:
         account_equity = int(state["total_equity"])
+        cash = int(state["cash"]) - spent_today
+    cash = max(0, cash)
     portfolio_budget = max(0, int(account_equity * exposure_limit / 100) - sum(open_costs.values()))
     min_fill_ratio = max(0.0, min(1.0, env_float("VIRTUAL_TRADER_MIN_FILL_RATIO", 0.5)))
     max_position_pct = max(0.0, min(100.0, env_float("VIRTUAL_TRADER_MAX_POSITION_PCT", 30)))
     candidates = [
         {"ticker": row["ticker"], "name": row.get("name", ""), "close": row["price"], "allocation_pct": row["allocation_pct"]}
-        for row in todays_trades
+        for row in trades
     ]
     if state.get("holdings"):
         from .app import Pick, correlation_limited_allocations, sector_limited_allocations
@@ -119,11 +154,82 @@ def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
             )
         for row, allocation in zip(candidates, allocations[len(existing):]):
             row["allocation_pct"] = allocation
-    orders = _size_buy_orders(candidates, cash, open_costs, account_equity, max_position_pct, min_fill_ratio, portfolio_budget)
-    if assumed_capital > 0:
-        for order in orders:
-            order["reason"] = f"recommendation (가정금액 {assumed_capital:,}원)"
-    return orders
+    decisions: list[dict] = []
+    orders = _size_buy_orders(
+        candidates, cash, open_costs, account_equity, max_position_pct, min_fill_ratio, portfolio_budget, decisions,
+    )
+    context = {
+        "breadth": round(float(breadth), 4), "regime": regime, "market_limit_pct": market_limit,
+        "exposure_limit_pct": exposure_limit, "account_equity": account_equity, "budget": portfolio_budget,
+        "spent_earlier_today": spent_today, "assumed_capital": assumed_capital,
+    }
+    capital_note = f"가정금액 {assumed_capital:,}원 · " if assumed_capital > 0 else ""
+    for order in orders:
+        order["reason"] = (f"recommendation ({capital_note}보유한도 {exposure_limit:g}% · "
+                           f"남은예산 {portfolio_budget:,}원)")
+    return orders, decisions, context
+
+
+def log_decisions(decisions: list[dict], context: dict, path: str = DECISIONS_LOG) -> None:
+    """Append one row per candidate, including the ones that were skipped."""
+    import csv
+    import os
+
+    if not decisions:
+        return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fields = ["logged_at", "ticker", "name", "verdict", "target_cost", "cost", "breadth", "regime",
+              "exposure_limit_pct", "budget", "spent_earlier_today", "assumed_capital"]
+    new_file = not os.path.exists(path)
+    now = datetime.now().isoformat(timespec="seconds")
+    with open(path, "a", encoding="utf-8-sig" if new_file else "utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        if new_file:
+            writer.writeheader()
+        for decision in decisions:
+            writer.writerow({"logged_at": now, **context, **decision})
+
+
+def compute_shadow_buy_orders(path: str = DB_PATH) -> list[dict]:
+    """All of today's aggressive virtual buys re-sized in one pass (kept for
+    ad-hoc review; the scheduled path is record_intraday_buys)."""
+    from .data_store import query_rows
+
+    trades = query_rows(
+        "SELECT * FROM virtual_trades WHERE created_at LIKE ? ORDER BY trade_id",
+        (f"{date.today().isoformat()}%",), path,
+    )
+    return plan_shadow_buys(trades, path)[0]
+
+
+def latest_trade_id(path: str = DB_PATH) -> int:
+    from .data_store import query_rows
+
+    rows = query_rows("SELECT COALESCE(MAX(trade_id), 0) AS latest FROM virtual_trades", path=path)
+    return int(rows[0]["latest"]) if rows else 0
+
+
+def record_intraday_buys(after_trade_id: int, path: str = DB_PATH) -> dict:
+    """Shadow the aggressive account's buys made since `after_trade_id`.
+
+    Called right after each intraday virtual buy, so the real-account order
+    is sized with the same market reading the virtual order used -- a single
+    16:15 pass re-cut the whole day with the closing reading instead, and
+    dropped most of a day's buys whenever the market mode changed.
+    """
+    from .data_store import query_rows
+
+    trades = query_rows(
+        "SELECT * FROM virtual_trades WHERE trade_id > ? ORDER BY trade_id", (after_trade_id,), path,
+    )
+    if not trades:
+        return {"trades": 0, "recorded": 0}
+    orders, decisions, context = plan_shadow_buys(trades, path)
+    log_decisions(decisions, context)
+    recorded = record_shadow_orders(orders, path=path)
+    print(f"shadow_trader intraday trades={len(trades)} orders={len(orders)} "
+          f"limit={context.get('exposure_limit_pct')}% budget={context.get('budget')}")
+    return {"trades": len(trades), "recorded": recorded, "context": context}
 
 
 def compute_shadow_sell_orders() -> list[dict]:
@@ -174,15 +280,15 @@ def record_shadow_orders(orders: list[dict], path: str = DB_PATH) -> int:
 
 
 def run(path: str = DB_PATH) -> dict:
-    """Daily entry point: compute today's would-be real-account buy/sell
-    orders and log them to shadow_orders. Read-only against Toss end to end
-    -- no order is ever placed."""
+    """After-close entry point: log the SELL orders the real account would
+    receive. BUY orders are recorded intraday by record_intraday_buys at the
+    moment each virtual buy happens. Read-only against Toss -- no order is
+    ever placed."""
     from .app import load_env
     load_env()
-    buy_orders = compute_shadow_buy_orders(path=path)
     sell_orders = compute_shadow_sell_orders()
-    recorded = record_shadow_orders(buy_orders + sell_orders, path=path)
-    return {"buy_orders": len(buy_orders), "sell_orders": len(sell_orders), "recorded": recorded}
+    recorded = record_shadow_orders(sell_orders, path=path)
+    return {"buy_orders": 0, "sell_orders": len(sell_orders), "recorded": recorded}
 
 
 def main() -> None:

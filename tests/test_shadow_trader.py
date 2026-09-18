@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from stock_alarm.data_store import connect, virtual_buy, virtual_deposit
 from stock_alarm.shadow_trader import (
-    _size_buy_orders, compute_shadow_buy_orders, compute_shadow_sell_orders, record_shadow_orders, run,
+    _size_buy_orders, compute_shadow_sell_orders, latest_trade_id, plan_shadow_buys, record_intraday_buys,
+    record_shadow_orders, run,
 )
 
 
@@ -49,17 +50,11 @@ class ShadowTraderTest(unittest.TestCase):
     @patch("stock_alarm.app.current_market_regime", return_value="bull")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
     @patch("stock_alarm.dashboard.real_account_state")
-    @patch("stock_alarm.data_store.recent_virtual_trades")
-    def test_compute_shadow_buy_orders_sizes_against_the_real_account(self, recent_trades, real_state, _breadth, _regime):
-        recent_trades.return_value = [
-            {"created_at": "2026-09-12T16:00:00", "ticker": "005930", "name": "Samsung", "price": 70000, "quantity": 1, "cost": 70000, "allocation_pct": 10.0},
-        ]
-        real_state.return_value = {
-            "connected": True, "cash": 1_000_000, "total_equity": 1_000_000, "holdings": [],
-        }
-        with patch("stock_alarm.shadow_trader.date") as fake_date:
-            fake_date.today.return_value = __import__("datetime").date(2026, 9, 12)
-            orders = compute_shadow_buy_orders(path=self.path)
+    def test_plan_sizes_against_the_real_account(self, real_state, _breadth, _regime):
+        real_state.return_value = {"connected": True, "cash": 1_000_000, "total_equity": 1_000_000, "holdings": []}
+        trades = [{"trade_id": 1, "ticker": "005930", "name": "Samsung", "price": 70000, "allocation_pct": 10.0}]
+
+        orders, _decisions, _context = plan_shadow_buys(trades, path=self.path)
 
         self.assertEqual(1, len(orders))
         self.assertEqual("005930", orders[0]["ticker"])
@@ -69,48 +64,91 @@ class ShadowTraderTest(unittest.TestCase):
     @patch("stock_alarm.app.current_market_regime", return_value="bull")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
     @patch("stock_alarm.dashboard.real_account_state")
-    @patch("stock_alarm.data_store.recent_virtual_trades")
-    def test_shadow_buy_rechecks_constraints_against_real_holdings(self, recent_trades, real_state, _breadth, _regime):
-        recent_trades.return_value = [
-            {"created_at": "2026-09-12T16:00:00", "ticker": "000660", "name": "SK hynix", "price": 150000, "allocation_pct": 10.0},
-        ]
+    def test_plan_rechecks_constraints_against_real_holdings(self, real_state, _breadth, _regime):
         real_state.return_value = {
             "connected": True, "cash": 1_000_000, "total_equity": 2_000_000,
             "holdings": [{"ticker": "005930", "name": "Samsung", "quantity": 10, "average_price": 100000, "current_price": 100000, "valuation": 1_000_000}],
         }
+        trades = [{"trade_id": 1, "ticker": "000660", "name": "SK hynix", "price": 150000, "allocation_pct": 10.0}]
         with patch("stock_alarm.app.correlation_limited_allocations", return_value=[50.0, 0.0]) as limited, \
-             patch("stock_alarm.app.sector_limited_allocations", side_effect=lambda picks, allocations, **kwargs: allocations), \
-             patch("stock_alarm.shadow_trader.date") as fake_date:
-            fake_date.today.return_value = __import__("datetime").date(2026, 9, 12)
-            orders = compute_shadow_buy_orders(path=self.path)
+             patch("stock_alarm.app.sector_limited_allocations", side_effect=lambda picks, allocations, **kwargs: allocations):
+            orders, decisions, _context = plan_shadow_buys(trades, path=self.path)
 
         self.assertEqual([], orders)
         self.assertEqual({"005930"}, limited.call_args.kwargs["locked_tickers"])
+        self.assertIn("상관관계", decisions[0]["verdict"])
 
     @patch("stock_alarm.app.current_market_regime", return_value="bull")
     @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.7)
     @patch("stock_alarm.dashboard.real_account_state")
-    @patch("stock_alarm.data_store.recent_virtual_trades")
-    def test_assumed_capital_sizes_orders_before_any_real_deposit(self, recent_trades, real_state, _breadth, _regime):
-        recent_trades.return_value = [
-            {"created_at": "2026-09-14T13:45:43", "ticker": "010140", "name": "Samsung Heavy", "price": 22300, "allocation_pct": 10.0},
-        ]
+    def test_assumed_capital_sizes_orders_before_any_real_deposit(self, real_state, _breadth, _regime):
         real_state.return_value = {"connected": True, "cash": 450, "total_equity": 450, "holdings": []}
-        with patch("stock_alarm.shadow_trader.date") as fake_date:
-            fake_date.today.return_value = __import__("datetime").date(2026, 9, 14)
-            with patch.dict(os.environ, {}):
-                os.environ.pop("SHADOW_TRADER_ASSUMED_CAPITAL", None)
-                self.assertEqual([], compute_shadow_buy_orders(path=self.path))
-            with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "10000000"}):
-                orders = compute_shadow_buy_orders(path=self.path)
+        trades = [{"trade_id": 1, "ticker": "010140", "name": "Samsung Heavy", "price": 22300, "allocation_pct": 10.0}]
+        with patch.dict(os.environ, {}):
+            os.environ.pop("SHADOW_TRADER_ASSUMED_CAPITAL", None)
+            self.assertEqual([], plan_shadow_buys(trades, path=self.path)[0])
+        with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "10000000"}):
+            orders = plan_shadow_buys(trades, path=self.path)[0]
 
         self.assertEqual(1, len(orders))
         self.assertEqual(44, orders[0]["quantity"])
         self.assertIn("가정금액 10,000,000원", orders[0]["reason"])
 
-    @patch("stock_alarm.data_store.recent_virtual_trades", return_value=[])
-    def test_compute_shadow_buy_orders_returns_nothing_without_todays_virtual_trades(self, _trades):
-        self.assertEqual([], compute_shadow_buy_orders(path=self.path))
+    @patch("stock_alarm.app.current_market_regime", return_value="bear")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.3)  # 10% market limit
+    @patch("stock_alarm.dashboard.real_account_state")
+    def test_short_budget_keeps_the_name_bought_first_and_says_why(self, real_state, _breadth, _regime):
+        # 2026-09-17: the 16:15 pass read the trades newest-first, so a 1,000만원
+        # budget went to the day's LAST buy instead of its first.
+        real_state.return_value = {"connected": True, "cash": 0, "total_equity": 0, "holdings": []}
+        trades = [
+            {"trade_id": 12, "ticker": "LATE", "name": "Late", "price": 10_000, "allocation_pct": 15.0},
+            {"trade_id": 11, "ticker": "EARLY", "name": "Early", "price": 10_000, "allocation_pct": 15.0},
+        ]
+        with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "100000000"}):
+            orders, decisions, context = plan_shadow_buys(trades, path=self.path)
+
+        self.assertEqual(["EARLY"], [order["ticker"] for order in orders])
+        self.assertEqual(10.0, context["exposure_limit_pct"])
+        self.assertEqual(10_000_000, context["budget"])
+        self.assertIn("보유한도 10%", orders[0]["reason"])
+        self.assertEqual(["주문", "예산 부족"], [decision["verdict"] for decision in decisions])
+
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.5)  # 40% market limit
+    @patch("stock_alarm.dashboard.real_account_state")
+    def test_earlier_shadow_buys_today_use_up_the_budget(self, real_state, _breadth, _regime):
+        real_state.return_value = {"connected": True, "cash": 0, "total_equity": 0, "holdings": []}
+        from datetime import date
+        record_shadow_orders([{"ticker": "FIRST", "name": "First", "side": "BUY", "order_type": "MARKET",
+                               "quantity": 3500, "price": 10_000, "cost": 35_000_000}], path=self.path)
+        trades = [{"trade_id": 2, "ticker": "SECOND", "name": "Second", "price": 10_000, "allocation_pct": 15.0}]
+        with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "100000000"}), \
+             patch("stock_alarm.shadow_trader.date") as fake_date:
+            fake_date.today.return_value = date.today()
+            orders, decisions, context = plan_shadow_buys(trades, path=self.path)
+
+        # 40% of 1억 = 4,000만원, 3,500만원 already committed this morning
+        self.assertEqual(35_000_000, context["spent_earlier_today"])
+        self.assertEqual(5_000_000, context["budget"])
+        self.assertEqual([], orders)
+        self.assertIn("목표의 50% 미만", decisions[0]["verdict"])
+
+    @patch("stock_alarm.shadow_trader.log_decisions")
+    @patch("stock_alarm.shadow_trader.plan_shadow_buys", return_value=([], [], {}))
+    def test_intraday_hook_only_shadows_trades_made_after_the_marker(self, plan, _log):
+        virtual_deposit(10_000_000, path=self.path)
+        virtual_buy([{"ticker": "OLD", "name": "Old", "close": 10_000, "allocation_pct": 10.0}], path=self.path)
+        marker = latest_trade_id(self.path)
+        virtual_buy([{"ticker": "NEW", "name": "New", "close": 10_000, "allocation_pct": 10.0}], path=self.path)
+
+        result = record_intraday_buys(marker, path=self.path)
+
+        self.assertEqual(1, result["trades"])
+        self.assertEqual(["NEW"], [row["ticker"] for row in plan.call_args.args[0]])
+
+    def test_intraday_hook_does_nothing_without_new_trades(self):
+        self.assertEqual({"trades": 0, "recorded": 0}, record_intraday_buys(0, path=self.path))
 
     @patch("stock_alarm.dashboard.real_account_state")
     def test_compute_shadow_sell_orders_flags_only_blocked_holdings(self, real_state):
@@ -146,17 +184,17 @@ class ShadowTraderTest(unittest.TestCase):
     def test_record_shadow_orders_is_a_noop_for_an_empty_list(self):
         self.assertEqual(0, record_shadow_orders([], path=self.path))
 
-    @patch("stock_alarm.shadow_trader.compute_shadow_sell_orders", return_value=[])
-    @patch("stock_alarm.shadow_trader.compute_shadow_buy_orders")
+    @patch("stock_alarm.shadow_trader.compute_shadow_sell_orders")
     @patch("stock_alarm.app.load_env")
-    def test_run_records_computed_orders(self, _load_env, buy_orders, _sell_orders):
-        buy_orders.return_value = [
-            {"ticker": "005930", "name": "Samsung", "side": "BUY", "order_type": "MARKET", "quantity": 10, "price": 70000, "cost": 700000, "reason": "recommendation"},
+    def test_after_close_run_records_only_sells(self, _load_env, sell_orders):
+        # Buys are recorded intraday now; a second pass here would double them.
+        sell_orders.return_value = [
+            {"ticker": "005930", "name": "Samsung", "side": "SELL", "order_type": "MARKET", "quantity": 10, "price": 70000, "cost": 0, "reason": "종목 경고"},
         ]
 
         result = run(path=self.path)
 
-        self.assertEqual({"buy_orders": 1, "sell_orders": 0, "recorded": 1}, result)
+        self.assertEqual({"buy_orders": 0, "sell_orders": 1, "recorded": 1}, result)
 
 
 if __name__ == "__main__":

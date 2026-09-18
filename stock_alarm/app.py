@@ -1573,7 +1573,15 @@ def run() -> None:
         track_positions(picks)
         write_log(picks)
         from .trading_profiles import PROFILES
+        from .shadow_trader import latest_trade_id, record_intraday_buys
+        last_trade_id = latest_trade_id()
         virtual_result = auto_buy_virtual_trader(picks, regime_exposure_multiplier=PROFILES["aggressive"]["regime_exposure_multiplier"])
+        try:
+            # Observation only: shadow the buys just made, at the same market
+            # reading, before anything else changes the state they depend on.
+            record_intraday_buys(last_trade_id)
+        except Exception as error:
+            print(f"shadow_trader intraday failed {error!r}")
         # Secondary virtual-trader profiles rank/select from the same shared
         # evaluation with their own weights (see select_for_profile) and buy
         # their own resulting pick list with their own sizing/exit rules --
