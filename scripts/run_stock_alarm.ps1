@@ -1,6 +1,9 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+# Windows PowerShell 5.1 writes `>>` redirections as UTF-16LE by default,
+# which interleaved NUL-padded text with the UTF-8 START/DONE lines below.
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
 $workspaceMarker = Join-Path $runtimeRoot "workspace.path"
 $projectRoot = if (Test-Path -LiteralPath $workspaceMarker) { (Get-Content -LiteralPath $workspaceMarker -Raw).Trim() } else { $runtimeRoot }

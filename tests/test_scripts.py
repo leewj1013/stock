@@ -27,6 +27,14 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("--dynamic-universe --stored", runner)
         self.assertIn("workspace.path", runner)
 
+    def test_task_scripts_write_logs_as_utf8(self):
+        # PowerShell 5.1 would otherwise append python output as UTF-16LE.
+        for path in ("scripts/run_stock_alarm.ps1", "scripts/run_financial_statements.ps1"):
+            with open(path, encoding="utf-8-sig") as file:
+                script = file.read()
+            self.assertIn("$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'", script, path)
+            self.assertIn("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8", script, path)
+
     def test_daily_task_runs_sell_check(self):
         with open("scripts/run_stock_alarm.ps1", encoding="utf-8-sig") as file:
             script = file.read()
