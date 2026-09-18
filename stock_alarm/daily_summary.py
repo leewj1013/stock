@@ -55,6 +55,46 @@ def _trade_lines(buys: list[dict], sales: list[dict]) -> list[str]:
     return lines
 
 
+def unbought_recommendation_lines(recommendations: list[dict], buys: list[dict], limit: int = 5) -> list[str]:
+    """Picks the virtual trader passed on -- no longer sent one by one intraday."""
+    bought = {str(row.get("ticker")) for row in buys}
+    names = [str(row.get("name") or row.get("ticker")) for row in recommendations if str(row.get("ticker")) not in bought]
+    if not names:
+        return []
+    extra = f" 외 {len(names) - limit}종목" if len(names) > limit else ""
+    return ["", "■ 오늘 추천(미매수)", ", ".join(names[:limit]) + extra]
+
+
+def shadow_lines() -> list[str]:
+    """What the real account would have ordered today (observation only)."""
+    from .data_store import query_rows
+
+    rows = query_rows(
+        "SELECT side, cost FROM shadow_orders WHERE created_at LIKE ?", (f"{datetime.now().date().isoformat()}%",),
+    )
+    buys = [row for row in rows if row.get("side") == "BUY"]
+    sells = [row for row in rows if row.get("side") == "SELL"]
+    if not rows:
+        return ["", "■ 실계좌였다면(섀도)", "주문 없음"]
+    spent = sum(int(row.get("cost") or 0) for row in buys)
+    return ["", "■ 실계좌였다면(섀도)", f"매수 {len(buys)}건 · {_won(spent)} · 매도 {len(sells)}건"]
+
+
+def screener_lines(limit: int = 5) -> list[str]:
+    try:
+        from .screener import new_matches
+        added, total = new_matches()
+    except Exception:
+        return []
+    if not total:
+        return []
+    if not added:
+        return ["", "■ 재무 스크리닝", f"신규 통과 없음 (전체 {total}종목)"]
+    names = ", ".join(str(row.get("name") or row.get("ticker")) for row in added[:limit])
+    extra = f" 외 {len(added) - limit}종목" if len(added) > limit else ""
+    return ["", "■ 재무 스크리닝", f"신규 통과 {len(added)}종목: {names}{extra}", f"(전체 {total}종목)"]
+
+
 def market_comparison_line(daily_return_pct: float | None, whole_market: dict[str, str] | None) -> str | None:
     if daily_return_pct is None or not whole_market:
         return None
@@ -95,7 +135,7 @@ def message() -> str:
         "",
         "■ 오늘 결과",
         f"추천 {len(recommendations)}종목 · 가상매수 {len(buys)}종목 · 가상매도 {len(sales)}종목",
-        f"매도 검토 {len(sell_alerts)}종목",
+        f"매도 조건 충족 {len(sell_alerts)}종목(추천 추적 전체 기준)",
     ]
     if whole_market:
         lines.extend(["", "■ 오늘 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
@@ -119,6 +159,9 @@ def message() -> str:
         lines.append(f"최저 {worst.get('name') or worst['ticker']} {float(worst['return_pct']):+.2f}%")
     lines.append("")
     lines.extend(_trade_lines(buys, sales))
+    lines.extend(unbought_recommendation_lines(recommendations, buys))
+    lines.extend(shadow_lines())
+    lines.extend(screener_lines())
     lines.extend(["", "■ 내일 확인"])
     if sell_alerts:
         for row in sell_alerts[:2]:

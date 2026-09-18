@@ -60,17 +60,43 @@ def us_market_rows(api_key: str | None = None, cache_path: str = US_CACHE_PATH) 
     return list(cached.values())
 
 
+def session_change(ticker: str, day: date) -> tuple[float, int] | None:
+    """(% change, trading value) for `day` from Naver's daily rows."""
+    prices = naver_rows(ticker, day - timedelta(days=10), day)
+    if len(prices) < 2:
+        return None
+    previous, close, volume = int(prices[-2][4]), int(prices[-1][4]), int(prices[-1][5])
+    return ((close - previous) / previous * 100 if previous else 0.0), close * volume
+
+
 def market_rows(end_day: date | None = None) -> list[dict[str, str]]:
     day = end_day or latest_naver_trading_day()
     rows: list[dict[str, str]] = []
     for ticker, fallback in configured_stocks().items():
-        prices = naver_rows(ticker, day - timedelta(days=10), day)
-        if len(prices) < 2:
+        figures = session_change(ticker, day)
+        if figures is None:
             continue
-        previous, close, volume = int(prices[-2][4]), int(prices[-1][4]), int(prices[-1][5])
-        change = (close - previous) / previous * 100 if previous else 0
-        rows.append({"ticker": ticker, "name": stock_name(ticker, fallback), "change_pct": f"{change:.2f}", "trading_value": str(close * volume)})
+        change, trading_value = figures
+        rows.append({"ticker": ticker, "name": stock_name(ticker, fallback), "change_pct": f"{change:.2f}", "trading_value": str(trading_value)})
     return rows
+
+
+def with_session_changes(leaders: list[dict], day: date) -> list[dict]:
+    """Keep KRX's ranking but take each leader's % from the same Naver session.
+
+    On 2026-09-18 KRX's daily rows labelled 09/17 disagreed with both Naver
+    and Toss (SK hynix close 1,745,000 vs 1,766,000), so the same stock showed
+    +4.13% and -0.80% in adjacent lists. Naver matches Toss, so it is the
+    source for every % in the brief; KRX only says who led by trading value.
+    """
+    out = []
+    for row in leaders:
+        try:
+            figures = session_change(str(row["ticker"]), day)
+        except Exception:
+            figures = None
+        out.append({**row, "change_pct": figures[0]} if figures else row)
+    return out
 
 
 def summary(rows: list[dict[str, str]]) -> dict[str, str]:
@@ -117,10 +143,17 @@ def message(
     whole_market: dict[str, str] | None = None,
     whole_market_leaders: list[dict] | None = None,
 ) -> str:
-    rows = rows if rows is not None else market_rows()
+    basis_day = None
+    if rows is None:
+        basis_day = latest_naver_trading_day()
+        rows = market_rows(basis_day)
+    if whole_market_leaders is None:
+        whole_market_leaders = krx_top_trading_value_leaders()
+        if basis_day:
+            whole_market_leaders = with_session_changes(whole_market_leaders, basis_day)
     us_rows = us_rows if us_rows is not None else us_market_rows()
     whole_market = whole_market if whole_market is not None else whole_market_summary()
-    whole_market_leaders = whole_market_leaders if whole_market_leaders is not None else krx_top_trading_value_leaders()
+    session = f" ({basis_day:%m/%d} 기준)" if basis_day else ""
     info = summary(rows)
     regime = market_regime(info, us_rows, whole_market)
     leaders = sorted(rows, key=lambda row: int(row.get("trading_value") or 0), reverse=True)[:3]
@@ -138,16 +171,23 @@ def message(
         lines.extend(f"- {row['name']}({row['symbol']}): {float(row['change_pct']):+.2f}%" for row in us_rows)
     else:
         lines.append("- 미국 증시 데이터 수집 대기")
-    lines.extend(["", "■ 국내 관심종목 흐름", f"상승/하락: {info['up_count']}개 / {info['down_count']}개", f"상승 비율: {info['up_ratio_pct']}%", f"평균 등락률: {float(info['avg_change_pct']):+.2f}%"])
+    lines.extend(["", f"■ 국내 관심종목 흐름{session}", f"상승/하락: {info['up_count']}개 / {info['down_count']}개", f"상승 비율: {info['up_ratio_pct']}%", f"평균 등락률: {float(info['avg_change_pct']):+.2f}%"])
     if whole_market:
         lines.extend(["", "■ 국내 전체 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
+    # The watchlist is mostly large caps, so its top names often are the whole
+    # market's; listing the same three stocks twice added nothing.
+    if leaders and [row["ticker"] for row in leaders] == [row.get("ticker") for row in whole_market_leaders]:
+        leaders = []
     if leaders:
-        lines.extend(["", "■ 거래대금 주도 종목(관심종목)"])
+        lines.extend(["", f"■ 거래대금 주도 종목(관심종목){session}"])
         lines.extend(f"- {row['name']}({row['ticker']}): {float(row['change_pct']):+.2f}%" for row in leaders)
     if whole_market_leaders:
-        lines.extend(["", "■ 거래대금 주도 종목(전체 시장)"])
+        lines.extend(["", f"■ 거래대금 주도 종목(전체 시장){session}"])
         lines.extend(f"- {row['name']}({row['ticker']}): {row['change_pct']:+.2f}%" for row in whole_market_leaders)
-    lines.extend(["", "■ 한 줄 결론", regime["guidance"], "미국장은 최근 마감가, 국내는 직전 거래일 종가 기준입니다."])
+    # The guidance already heads the message; repeating it as a closing
+    # "one-line conclusion" added nothing.
+    basis = f"{basis_day:%m/%d} 종가" if basis_day else "직전 거래일 종가"
+    lines.extend(["", f"미국장은 최근 마감가, 국내는 {basis} 기준입니다."])
     return "\n".join(lines)
 
 

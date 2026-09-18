@@ -51,14 +51,34 @@ class FormatMessageTest(unittest.TestCase):
     def pick(self, news=0, disclosure=0, penalty=0):
         return Pick("005930", "Samsung", 80000, 2.3, 123_000_000_000, 76.5, news_score=news, disclosure_score=disclosure, performance_penalty=penalty)
 
-    def test_includes_ticker_score_and_disclaimer(self):
+    def test_unbought_recommendation_shows_exit_levels_not_internal_score(self):
         message = format_message([self.pick()])
-        self.assertIn("가상투자 비중: 전체 가상계좌 자산 기준", message)
-        self.assertIn("가상투자 예정 10.00%", message)
+        self.assertIn("[매수 추천", message)
         self.assertIn("Samsung(005930)", message)
-        self.assertIn("거래량 2.3배", message)
-        self.assertIn("신호: 거래량 급증", message)
+        self.assertIn("현재가 80,000원 · 목표 비중 10%", message)
+        # stop is the wider of SELL_LOSS_PCT (5%) and ATR x2; target is TAKE_PROFIT_1_PCT (10%)
+        self.assertIn("손절 76,000원(-5.0%) · 1차 익절 88,000원(+10%)", message)
+        self.assertIn("신호: 거래량 급증 · 거래량 2.3배", message)
         self.assertIn("투자 자문이 아닙니다", message)
+        # internal figures a reader cannot act on are gone
+        self.assertNotIn("점수", message)
+        self.assertNotIn("가상투자 비중", message)
+        self.assertNotIn("ATR", message)
+
+    def test_volatile_pick_gets_the_wider_atr_stop_in_plain_words(self):
+        message = format_message([Pick(**{**self.pick().__dict__, "atr20_pct": 4.0})])
+        self.assertIn("손절 73,600원(-8.0%)", message)
+        self.assertIn("하루 변동폭 약 4.0%", message)
+
+    def test_fundamentals_line_and_warnings(self):
+        fundamentals = {"005930": {"per": 11.4, "free_cash_flow": -1_667_700_000_000.0, "revenue_growth_pct": 35.5, "market": "KOSPI"}}
+        message = format_message([self.pick()], fundamentals=fundamentals)
+        self.assertIn("재무: PER 11.4 · 잉여현금흐름 -16,677억 · 매출 +35.5%", message)
+        self.assertIn("⚠ 잉여현금흐름 적자", message)
+
+        loss_making = {"005930": {"per": None, "free_cash_flow": 42_000_000_000.0, "market": "KOSDAQ"}}
+        self.assertIn("⚠ 적자 기업(PER 없음)", format_message([self.pick()], fundamentals=loss_making))
+        self.assertNotIn("재무:", format_message([self.pick()], fundamentals={}))
 
     def test_reason_summary(self):
         self.assertEqual("기본 조건 충족", reason_summary(1.5, 0, 0, 0))
@@ -70,13 +90,16 @@ class FormatMessageTest(unittest.TestCase):
         self.assertIn("공시 보너스", message)
         self.assertIn("성과 감점", message)
 
-    def test_includes_virtual_execution_summary(self):
-        result = {"spent": 80000, "cash": 20000, "executions": [{"ticker": "005930", "quantity": 1, "cost": 80000}]}
-        message = format_message([self.pick()], result)
+    def test_bought_picks_lead_and_unbought_ones_collapse_to_a_line(self):
+        other = Pick(**{**self.pick().__dict__, "ticker": "000660", "name": "SK hynix"})
+        result = {"spent": 80000, "cash": 20000, "executions": [{"ticker": "005930", "price": 80000, "quantity": 1, "cost": 80000}]}
+        message = format_message([self.pick(), other], result)
 
-        self.assertIn("가상 자동매수", message)
-        self.assertIn("1주 · 80,000원", message)
-        self.assertIn("잔여 현금 20,000원", message)
+        self.assertIn("[가상매수 체결", message)
+        self.assertIn("1종목 · 총 80,000원 · 잔여 현금 20,000원", message)
+        self.assertIn("매수 1주 × 80,000원 = 80,000원", message)
+        self.assertIn("기타 추천(미매수): SK hynix", message)
+        self.assertNotIn("SK hynix(000660)", message)
 
 
 if __name__ == "__main__":

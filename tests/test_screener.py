@@ -134,6 +134,30 @@ class ScreenerTest(unittest.TestCase):
         self.assertIsNone(result["999999"]["per"])
         self.assertIsNone(result["999999"]["free_cash_flow"])
 
+    def test_previous_result_is_kept_across_days_but_not_overwritten_within_a_day(self):
+        from stock_alarm.screener import new_matches, save_latest
+
+        with tempfile.TemporaryDirectory() as directory:
+            latest, previous = Path(directory) / "latest.json", Path(directory) / "previous.json"
+            latest.write_text(json.dumps({"generated_at": "2026-09-17T16:02:00", "matches": [{"ticker": "A"}]}), encoding="utf-8")
+
+            save_latest({"matches": [{"ticker": "A"}, {"ticker": "B", "name": "Beta"}]}, BASE, path=latest, previous=previous)
+            self.assertEqual([{"ticker": "A"}], json.loads(previous.read_text(encoding="utf-8"))["matches"])
+            added, total = new_matches(latest, previous)
+            self.assertEqual((["B"], 2), ([row["ticker"] for row in added], total))
+
+            # a second run today must keep yesterday's list as the comparison point
+            save_latest({"matches": [{"ticker": "C"}]}, BASE, path=latest, previous=previous)
+            self.assertEqual([{"ticker": "A"}], json.loads(previous.read_text(encoding="utf-8"))["matches"])
+
+    def test_new_matches_without_history_reports_none_as_new(self):
+        from stock_alarm.screener import new_matches
+
+        with tempfile.TemporaryDirectory() as directory:
+            latest = Path(directory) / "latest.json"
+            latest.write_text(json.dumps({"matches": [{"ticker": "A"}]}), encoding="utf-8")
+            self.assertEqual(([], 1), new_matches(latest, Path(directory) / "missing.json"))
+
     def test_table_renders_matches(self):
         passed, _incomplete = apply_filters(ROWS, FUNDAMENTALS, BASE)
         table = format_table({"matches": passed})

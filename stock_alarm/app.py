@@ -1518,41 +1518,72 @@ def auto_buy_virtual_trader(
         return None
 
 
-def format_message(picks: list[Pick], virtual_result: dict | None = None) -> str:
+def stop_and_target(pick: Pick) -> tuple[int, float, int, float]:
+    """(stop price, stop %, first take-profit price, take-profit %) matching the
+    rules sell_check applies: the stop is the wider of SELL_LOSS_PCT and the
+    ATR-based distance, the first target is TAKE_PROFIT_1_PCT."""
+    stop_pct = max(abs(env_float("SELL_LOSS_PCT", 5)), float(pick.atr20_pct or 0) * env_float("SELL_ATR_MULTIPLIER", 2))
+    target_pct = env_float("TAKE_PROFIT_1_PCT", 10)
+    return round(pick.close * (1 - stop_pct / 100)), stop_pct, round(pick.close * (1 + target_pct / 100)), target_pct
+
+
+def fundamental_lines(data: dict | None) -> list[str]:
+    """One line of the collected financials, plus a warning when they are bad."""
+    if not data:
+        return []
+    parts = []
+    if data.get("per"):
+        parts.append(f"PER {float(data['per']):.1f}")
+    free_cash_flow = data.get("free_cash_flow")
+    if free_cash_flow is not None:
+        parts.append(f"잉여현금흐름 {free_cash_flow / 1e8:+,.0f}억")
+    if data.get("revenue_growth_pct") is not None:
+        parts.append(f"매출 {float(data['revenue_growth_pct']):+.1f}%")
+    lines = ["재무: " + " · ".join(parts)] if parts else []
+    warnings = []
+    if not data.get("per") and data.get("market"):
+        warnings.append("적자 기업(PER 없음)")
+    if free_cash_flow is not None and free_cash_flow < 0:
+        warnings.append("잉여현금흐름 적자")
+    if warnings:
+        lines.append("⚠ " + " · ".join(warnings))
+    return lines
+
+
+def format_message(picks: list[Pick], virtual_result: dict | None = None, fundamentals: dict | None = None) -> str:
     if not picks:
         return "오늘 조건에 맞는 관심 종목이 없습니다."
-    lines = [
-        f"[매수 추천 · {datetime.now().strftime('%H:%M')}]",
-        f"추천 종목: {len(picks)}개",
-        "가상투자 비중: 전체 가상계좌 자산 기준 종목별 목표 비중",
-    ]
-    allocations = allocation_percentages(picks)
-    for index, (pick, allocation) in enumerate(zip(picks, allocations), 1):
-        signal = reason_summary(pick.volume_ratio, pick.news_score, pick.disclosure_score, pick.performance_penalty)
-        lines.extend([
-            "",
-            f"{index}. {pick.name}({pick.ticker})",
-            f"현재가 {pick.close:,}원 · 가상투자 예정 {allocation:.2f}% · 점수 {pick.score:.1f}",
-            f"신호: {signal} · 거래량 {pick.volume_ratio:.1f}배",
-        ])
-        risk = []
-        if pick.atr20_pct:
-            risk.append(f"ATR {pick.atr20_pct:.2f}%")
-        if pick.relative_strength_pct:
-            risk.append(f"상대강도 {pick.relative_strength_pct:+.2f}%p")
-        if risk:
-            lines.append("위험/강도: " + " · ".join(risk))
+    fundamentals = fundamentals or {}
     executions = {row["ticker"]: row for row in (virtual_result or {}).get("executions", [])}
-    if executions:
-        lines.extend(["", "■ 가상 자동매수"])
-        for pick in picks:
-            execution = executions.get(pick.ticker)
-            if execution:
-                lines.append(f"- {pick.name}: {execution['quantity']:,}주 · {execution['cost']:,}원")
-        lines.append(f"총 매수 {virtual_result.get('spent', 0):,}원 · 잔여 현금 {virtual_result.get('cash', 0):,}원")
-    elif virtual_result is None:
-        lines.extend(["", "가상 자동매수: 잔액 없음 또는 비활성"])
-    lines.append("조건 기반 관심 종목 알림이며 투자 자문이 아닙니다.")
+    bought = [pick for pick in picks if pick.ticker in executions]
+    shown = bought or picks
+    now = datetime.now().strftime("%H:%M")
+    if bought:
+        lines = [f"[가상매수 체결 · {now}]",
+                 f"{len(bought)}종목 · 총 {virtual_result.get('spent', 0):,}원 · 잔여 현금 {virtual_result.get('cash', 0):,}원"]
+    else:
+        lines = [f"[매수 추천 · {now}]", f"추천 {len(picks)}종목"]
+    allocations = dict(zip((pick.ticker for pick in picks), allocation_percentages(picks)))
+    for index, pick in enumerate(shown, 1):
+        stop_price, stop_pct, target_price, target_pct = stop_and_target(pick)
+        lines.extend(["", f"{index}. {pick.name}({pick.ticker})"])
+        execution = executions.get(pick.ticker)
+        if execution:
+            price = int(execution.get("price") or pick.close)
+            lines.append(f"매수 {execution['quantity']:,}주 × {price:,}원 = {execution['cost']:,}원")
+        else:
+            lines.append(f"현재가 {pick.close:,}원 · 목표 비중 {allocations.get(pick.ticker, 0):.0f}%")
+        lines.append(f"손절 {stop_price:,}원(-{stop_pct:.1f}%) · 1차 익절 {target_price:,}원(+{target_pct:.0f}%)")
+        signal = reason_summary(pick.volume_ratio, pick.news_score, pick.disclosure_score, pick.performance_penalty)
+        detail = f"신호: {signal} · 거래량 {pick.volume_ratio:.1f}배"
+        if pick.atr20_pct:
+            detail += f" · 하루 변동폭 약 {pick.atr20_pct:.1f}%"
+        lines.append(detail)
+        lines.extend(fundamental_lines(fundamentals.get(pick.ticker)))
+    others = [pick.name for pick in picks if pick not in shown]
+    if others:
+        lines.extend(["", "기타 추천(미매수): " + ", ".join(others)])
+    lines.append("조건 기반 알림이며 투자 자문이 아닙니다.")
     return "\n".join(lines)
 
 
@@ -1605,9 +1636,22 @@ def run() -> None:
         raise
     if not picks and os.environ.get("SEND_EMPTY_RECOMMENDATION", "0") != "1":
         return
+    executed = (virtual_result or {}).get("executions") or []
+    if picks and not executed and os.environ.get("RECOMMENDATION_ALERTS", "bought") != "all":
+        # Every 5-minute batch used to go out (16 alerts a day on average, up
+        # to 26), burying the sell alerts; picks the virtual trader did not buy
+        # are listed in the 16:00 briefing instead.
+        print(f"recommendation alert held for the briefing picks={len(picks)} (no virtual buy)")
+        return
+    fundamentals: dict = {}
+    try:
+        from .screener import fundamentals_for
+        fundamentals = fundamentals_for([pick.ticker for pick in picks])
+    except Exception:
+        pass
     from .notifier import send_notification
 
-    send_notification(format_message(picks, virtual_result), event_type="recommendation", tickers=[pick.ticker for pick in picks])
+    send_notification(format_message(picks, virtual_result, fundamentals), event_type="recommendation", tickers=[pick.ticker for pick in picks])
 
 
 def main() -> None:

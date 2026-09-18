@@ -28,6 +28,8 @@ from .point_in_time_store import DEFAULT_PATH
 FUNDAMENTAL_CACHE = Path(".cache/krx_fundamental.json")
 # The dashboard reads this instead of re-screening 400+ tickers on every render.
 LATEST_RESULT = Path("reports/fundamentals/screen_latest.json")
+# The previous day's result, kept so the briefing can list only new entrants.
+PREVIOUS_RESULT = Path("reports/fundamentals/screen_previous.json")
 
 
 @dataclass
@@ -227,8 +229,17 @@ def describe(filters: Filters) -> str:
     return " · ".join(parts) or "조건 없음"
 
 
-def save_latest(result: dict, filters: Filters, path: Path = LATEST_RESULT) -> Path:
+def save_latest(result: dict, filters: Filters, path: Path = LATEST_RESULT, previous: Path = PREVIOUS_RESULT) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            generated = json.loads(path.read_text(encoding="utf-8")).get("generated_at", "")
+        except ValueError:
+            generated = ""
+        # Keep yesterday's list as the comparison point; a second run on the
+        # same day must not overwrite it with this morning's result.
+        if generated[:10] != datetime.now().date().isoformat():
+            previous.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
     path.write_text(json.dumps({
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "as_of": result.get("as_of", ""), "conditions": describe(filters),
@@ -236,6 +247,22 @@ def save_latest(result: dict, filters: Filters, path: Path = LATEST_RESULT) -> P
         "incomplete": result.get("incomplete"), "matches": result.get("matches", []),
     }, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def new_matches(latest: Path = LATEST_RESULT, previous: Path = PREVIOUS_RESULT) -> tuple[list[dict], int]:
+    """(matches that were not in the previous run, total matches now)."""
+    def read(path: Path) -> dict:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    now, before = read(latest), read(previous)
+    matches = now.get("matches", [])
+    if not before:
+        return [], len(matches)
+    seen = {row.get("ticker") for row in before.get("matches", [])}
+    return [row for row in matches if row.get("ticker") not in seen], len(matches)
 
 
 def format_table(result: dict) -> str:

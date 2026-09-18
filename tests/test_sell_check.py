@@ -203,18 +203,26 @@ class SellCheckTest(unittest.TestCase):
         alert = SellAlert("005930", "Samsung", 100, 94, -6.0, "손절 기준 -5.0% 이탈")
         message = format_message([alert])
         self.assertIn("매도 알림", message)
-        self.assertIn("🔴 자동 매도", message)
-        self.assertIn("수익률 -6.00%", message)
-        self.assertIn("재추천 제한: 5일", message)
+        # the action comes first, before prices and reasons
+        self.assertIn("🔴 자동 매도 · 전량 매도", message)
+        self.assertLess(message.index("전량 매도"), message.index("수익률 -6.00%"))
+        self.assertIn("Samsung(005930) 수익률 -6.00%", message)
+        self.assertNotIn("재추천 제한", message)
         self.assertEqual("고점 대비 수익 반납", alert_summary(SellAlert("A", "A", 100, 102, 2, "고점 대비 반납")))
         self.assertEqual("20일선 이탈", alert_summary(SellAlert("A", "A", 100, 101, 1, "20일선 이탈")))
 
-    def test_format_message_shows_no_cooldown_for_partial_take_profit(self):
+    def test_partial_take_profit_says_half_and_shows_what_is_left(self):
         alert = SellAlert("005930", "Samsung", 100, 110, 10.0, "1차 익절 목표 +10.0% 도달", sale_type="partial", stage="take_profit_1")
+        result = {
+            "sold": 1, "cash": 1000,
+            "executions": [{"ticker": "005930", "quantity": 5, "cost_basis": 500, "realized_profit_loss": 50, "sale_type": "partial"}],
+            "holdings": [{"ticker": "005930", "quantity": 5}],
+        }
 
-        message = format_message([alert])
+        message = format_message([alert], result)
 
-        self.assertIn("재추천 제한: 없음(잔량 보유 중)", message)
+        self.assertIn("🟢 1차 부분익절 · 절반 매도", message)
+        self.assertIn("가상 부분매도 완료: 5주 · 실현손익 +50원(+10.00%) · 남은 5주", message)
 
     def test_format_message_includes_virtual_sale_execution(self):
         alert = SellAlert("005930", "Samsung", 100, 110, 10.0, "고점 대비 반납", 5)

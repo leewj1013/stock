@@ -471,7 +471,8 @@ def today_recommendation_rows(limit: int | None = None) -> list[dict[str, str]]:
             **row,
             "virtual_target_pct": f"{min(30.0, max(10.0, float(row.get('allocation_pct') or 10))):.2f}",
             "allocation_rule": "현재 총자산 10% 고정" if abs(float(row.get("allocation_pct") or 0) - 10) < 0.01 else "이전 규칙 산출값",
-            "notification_status": delivery_statuses.get(ticker, "미전송"),
+            # Unbought picks are no longer sent one by one; they go out in the 16:00 briefing.
+            "notification_status": delivery_statuses.get(ticker, "마감 브리핑"),
             "aggressive_order_status": "체결" if ticker in bought_by_profile["aggressive"] else "미체결",
             "neutral_order_status": "체결" if ticker in bought_by_profile["neutral"] else "미체결",
             "reason": reason_summary(row, performance.get(ticker, {}), performance_penalty(ticker)),

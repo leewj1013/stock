@@ -406,23 +406,28 @@ def alert_urgency(alert: SellAlert) -> str:
 def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) -> str:
     if not alerts:
         return "오늘 매도 검토 조건에 걸린 보유 종목이 없습니다."
-    lines = [f"[매도 알림 · {datetime.now().strftime('%H:%M')}]", f"조건 충족: {len(alerts)}개"]
+    lines = [f"[매도 알림 · {datetime.now().strftime('%H:%M')}] {len(alerts)}건"]
     executions = {row["ticker"]: row for row in (virtual_result or {}).get("executions", [])}
+    remaining = {str(row.get("ticker")): int(row.get("quantity") or 0) for row in (virtual_result or {}).get("holdings", [])}
     for alert in alerts:
         execution = executions.get(alert.ticker)
+        action = "절반 매도" if alert.sale_type == "partial" else "전량 매도"
+        held = f" · 보유 {alert.holding_days}일" if alert.holding_days is not None else ""
         lines.extend([
             "",
-            f"{alert_urgency(alert)}",
-            f"{alert.name}({alert.ticker})",
-            f"현재가 {alert.close:,}원 · 진입가 {alert.entry_price:,}원",
-            f"수익률 {alert.return_pct:+.2f}%" + (f" · 보유 {alert.holding_days}일" if alert.holding_days is not None else ""),
+            f"{alert_urgency(alert)} · {action}",
+            f"{alert.name}({alert.ticker}) 수익률 {alert.return_pct:+.2f}%{held}",
+            f"현재가 {alert.close:,}원 (진입 {alert.entry_price:,}원)",
             f"사유: {alert.reason}",
-            "재추천 제한: 없음(잔량 보유 중)" if alert.sale_type == "partial" else f"재추천 제한: {sell_cooldown_days(alert.reason, alert.stage):.0f}일",
         ])
         if execution:
             realized_rate = execution["realized_profit_loss"] / execution["cost_basis"] * 100 if execution["cost_basis"] else 0
             label = "부분매도" if execution.get("sale_type") == "partial" else "전량매도"
-            lines.append(f"가상 {label} 완료: {execution['quantity']:,}주 · 실현손익 {execution['realized_profit_loss']:+,}원({realized_rate:+.2f}%)")
+            line = (f"가상 {label} 완료: {execution['quantity']:,}주 · "
+                    f"실현손익 {execution['realized_profit_loss']:+,}원({realized_rate:+.2f}%)")
+            if remaining.get(alert.ticker):
+                line += f" · 남은 {remaining[alert.ticker]:,}주"
+            lines.append(line)
     if virtual_result and virtual_result.get("sold"):
         lines.extend(["", f"매도 후 현금: {virtual_result.get('cash', 0):,}원"])
     lines.append("조건 기반 매도 검토 알림이며 투자 자문이 아닙니다.")

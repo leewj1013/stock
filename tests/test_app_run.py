@@ -29,10 +29,44 @@ class AppRunTest(unittest.TestCase):
     @patch("stock_alarm.app.write_log")
     @patch("stock_alarm.app.recommend_picks_by_profile", return_value={"aggressive": [Pick("005930", "Samsung", 100, 2, 5_000_000_000, 60)], "neutral": []})
     @patch("stock_alarm.notifier.send_notification")
-    def test_run_sends_when_pick_exists(self, send, _recommend, _write_log, _track_positions, _env, _trading, _start, _finish):
+    def test_unbought_picks_are_held_for_the_briefing(self, send, _recommend, _write_log, _track_positions, _env, _trading, _start, _finish):
+        # Sending every 5-minute batch averaged 16 alerts a day and buried the sell alerts.
+        run()
+
+        send.assert_not_called()
+
+    @patch.dict("os.environ", {"VIRTUAL_TRADER_AUTO_BUY": "0", "RECOMMENDATION_ALERTS": "all"}, clear=True)
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.app.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.app.load_env")
+    @patch("stock_alarm.app.track_positions")
+    @patch("stock_alarm.app.write_log")
+    @patch("stock_alarm.app.recommend_picks_by_profile", return_value={"aggressive": [Pick("005930", "Samsung", 100, 2, 5_000_000_000, 60)], "neutral": []})
+    @patch("stock_alarm.notifier.send_notification")
+    def test_all_mode_still_sends_every_batch(self, send, _recommend, _write_log, _track_positions, _env, _trading, _start, _finish):
         run()
 
         send.assert_called_once()
+
+    @patch.dict("os.environ", {"VIRTUAL_TRADER_AUTO_BUY": "1"}, clear=True)
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.app.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.app.load_env")
+    @patch("stock_alarm.app.track_positions")
+    @patch("stock_alarm.app.write_log")
+    @patch("stock_alarm.screener.fundamentals_for", return_value={})
+    @patch("stock_alarm.app.auto_buy_virtual_trader")
+    @patch("stock_alarm.app.recommend_picks_by_profile", return_value={"aggressive": [Pick("005930", "Samsung", 100, 2, 5_000_000_000, 60)], "neutral": []})
+    @patch("stock_alarm.notifier.send_notification")
+    def test_bought_picks_are_sent_right_away(self, send, _recommend, auto_buy, _fundamentals, _write_log, _track_positions, _env, _trading, _start, _finish):
+        auto_buy.return_value = {"spent": 100, "cash": 900, "executions": [{"ticker": "005930", "price": 100, "quantity": 1, "cost": 100}]}
+
+        run()
+
+        send.assert_called_once()
+        self.assertIn("[가상매수 체결", send.call_args.args[0])
 
     @patch.dict("os.environ", {"VIRTUAL_TRADER_AUTO_BUY": "0"}, clear=True)
     @patch("stock_alarm.data_store.finish_run")
