@@ -599,7 +599,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("현재 설정", html)
         self.assertIn("최근 발송", html)
         self.assertIn("오늘 실행 상세", html)
-        self.assertIn("오늘 추천 종목", html)
+        self.assertIn("오늘 가상매수 체결", html)
         self.assertIn("추천 형태", html)
         self.assertIn("데이터 축적 현황", html)
         self.assertIn("현재 운영 상태", html)

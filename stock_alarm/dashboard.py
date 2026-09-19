@@ -13,7 +13,8 @@ from .app import load_env, performance_penalty, write_error_log
 from .daily_check import lines as daily_check_lines, run_log_statuses
 from .data_store import (
     latest_portfolio_risk, latest_profile_selections, query_rows, recent_position_checks, recent_price_quality, recent_runs,
-    recent_sell_outcomes, recent_shadow_orders, recent_virtual_trades, rejection_summary,
+    recent_sell_outcomes, recent_shadow_orders, recent_virtual_sales, recent_virtual_trades, rejection_summary,
+    virtual_position_states,
 )
 from .health import lines as health_lines
 from .positions_check import active_position_tickers
@@ -144,8 +145,6 @@ LABELS = {
     "generated": "생성 시각",
     "Issues": "문제",
     "Today run details": "오늘 실행 상세",
-    "Today recommendations": "오늘 추천 종목",
-    "Today sell alerts": "오늘 매도 검토 종목",
     "Recommendation shape": "추천 형태",
     "Score breakdown": "점수 구성",
     "Why recommended": "추천 사유",
@@ -494,7 +493,7 @@ def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
         profile_rows = reconciled_daily_alert_rows(raw, deliveries, today, "sell") if profile["notify"] else daily_ticker_rows(raw, today)
         for row in profile_rows:
             ticker = row.get("ticker", "")
-            entry = by_ticker.setdefault(ticker, {"name": row.get("name", ticker), "created_at": ""})
+            entry = by_ticker.setdefault(ticker, {"ticker": ticker, "name": row.get("name", ticker), "created_at": ""})
             entry[f"{name}_status"] = row.get("summary") or row.get("reason") or "매도 조건 충족"
             entry["created_at"] = max(entry["created_at"], row.get("created_at", ""))
     rows = []
@@ -504,6 +503,47 @@ def today_sell_alert_rows(limit: int | None = None) -> list[dict[str, str]]:
         rows.append(entry)
     rows.sort(key=lambda row: row.get("created_at", ""), reverse=True)
     return rows[:limit] if limit else rows
+
+
+HOME_PROFILES = ("aggressive", "neutral")
+
+
+def split_home_recommendations(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """(picks a virtual account actually bought, the rest).
+
+    Telegram now only announces bought picks and lists the rest in the 16:00
+    briefing; the home tab follows the same split instead of listing every
+    pick of the day as if it were actionable.
+    """
+    bought = [row for row in rows if "체결" in (row.get("aggressive_order_status"), row.get("neutral_order_status"))]
+    return bought, [row for row in rows if row not in bought]
+
+
+def held_or_sold_today_tickers() -> set[str]:
+    """Tickers the home-tab accounts hold now or sold today."""
+    from .trading_profiles import PROFILES
+
+    today = datetime.now().date().isoformat()
+    tickers: set[str] = set()
+    for name in HOME_PROFILES:
+        path = PROFILES[name]["db_path"]
+        tickers |= {ticker for ticker, row in virtual_position_states(path=path).items() if row.get("status") != "closed"}
+        tickers |= {str(row.get("ticker")) for row in recent_virtual_sales(200, path=path)
+                    if str(row.get("created_at", "")).startswith(today)}
+    return tickers
+
+
+def home_sell_rows(rows: list[dict[str, str]], held: set[str]) -> list[dict[str, str]]:
+    """Sell signals on positions actually held, not on tracked-only picks.
+
+    The sell-alert logs also carry signals for recommendations that were never
+    bought (tracked in the 추천 추적 tab) and for the comparison-only accounts,
+    which showed up here as rows of "-".
+    """
+    return [
+        row for row in rows
+        if row.get("ticker") in held and any(row.get(f"{name}_status", "-") != "-" for name in HOME_PROFILES)
+    ]
 
 
 def today_issue_count() -> int:
@@ -599,6 +639,10 @@ def actionable_issue_rows() -> list[dict[str, str]]:
         if risk.get("status") == "halted":
             rows.append({"source": "가상매매", "item": f"{labels.get(name, name)} 신규매수 중단", "status": display_value(risk.get("reason") or "위험 한도 도달")})
     return rows
+
+
+def home_note(message: str) -> str:
+    return f"<p class='muted home-note'>{e(message)}</p>"
 
 
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
@@ -1319,6 +1363,8 @@ def render() -> str:
         [{key: row.get(key, "") for key in ("ticker", "name", "close", "score", "allocation_pct")} for row in recommendation_rows],
         ensure_ascii=False,
     ).replace("</", "<\\/")
+    bought_rows, unbought_rows = split_home_recommendations(recommendation_rows)
+    held_sell_rows = home_sell_rows(sell_rows, held_or_sold_today_tickers())
     stock_tab = f"""
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div></div>
 <section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
@@ -1347,8 +1393,10 @@ def render() -> str:
   <div><span>오늘 추천</span><b>{len(recommendation_rows)}종목</b></div>
   <div><span>최근 가격 갱신</span><b id="home-price-updated">확인 중</b></div>
 </div></section>
-{user_table("Today recommendations", recommendation_rows, ["name", "close", "virtual_target_pct", "aggressive_order_status", "neutral_order_status"], "오늘 신규 추천 신호가 없습니다.")}
-{user_table("Today sell alerts", sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
+{user_table("오늘 가상매수 체결", bought_rows, ["name", "close", "virtual_target_pct", "aggressive_order_status", "neutral_order_status"], "오늘 가상매수가 체결된 추천이 없습니다.")}
+{home_note(f"미매수 추천 {len(unbought_rows)}종목: " + ", ".join(row.get("name", "") for row in unbought_rows[:5]) + (f" 외 {len(unbought_rows) - 5}종목" if len(unbought_rows) > 5 else "") + " · 추천 추적 탭과 마감 브리핑에서 확인") if unbought_rows else ""}
+{user_table("보유종목 매도 신호", held_sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
+{home_note(f"보유하지 않은 추천 종목의 매도 신호 {len(sell_rows) - len(held_sell_rows)}건은 추천 추적 탭에 있습니다.") if len(sell_rows) > len(held_sell_rows) else ""}
 """
     tracking_cards = "".join(
         f"<div class='tracking-card'><span>{e(label)}</span><b>{e(value)}</b></div>"
@@ -1360,7 +1408,10 @@ def render() -> str:
 {details(f"재무 스크리닝 결과 · {screener_caption()}", user_table("재무 스크리닝 (관찰 전용)", screener_rows(), ["name", "market", "per", "pbr", "free_cash_flow", "revenue_growth_pct", "operating_income_growth_pct", "period"], "python -m stock_alarm.screener 를 실행하면 결과가 표시됩니다."))}
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
-    trader_tab = equity_curve_section() + """
+    # Order: what the account is and may do now, how it got here, what it
+    # holds and sold, then composition, the comparison experiment and the
+    # rarely used manual controls last.
+    trader_tab = """
 <div class="trader-profile-toggle" role="tablist" aria-label="가상 트레이더 성향 선택">
   <button type="button" class="profile-button" id="profile-aggressive" data-profile="aggressive" aria-pressed="true">적극투자형</button>
   <button type="button" class="profile-button" id="profile-neutral" data-profile="neutral" aria-pressed="false">위험중립형</button>
@@ -1372,10 +1423,6 @@ def render() -> str:
   <div class="trader-balance"><span>보유종목 총수익률</span><strong id="trader-holdings-return">0.00%</strong></div>
 </div>
 <div class="trader-breakdown"><span>계좌 총수익률 <b id="trader-total-return">0.00%</b></span><span>총손익 <b id="trader-total-profit">0원</b></span></div>
-<div class="trader-chart-grid">
-  <section class="donut-card" aria-labelledby="asset-chart-title"><h2 id="asset-chart-title">가상계좌 자산 구성</h2><div class="donut-layout"><div class="donut-ring" id="asset-donut" role="img" aria-label="자산 구성 데이터 대기"><div class="donut-hole"><span>총자산</span><b id="asset-donut-total">0원</b></div></div><div class="donut-legend" id="asset-donut-legend"></div></div></section>
-  <section class="donut-card" aria-labelledby="sector-chart-title"><h2 id="sector-chart-title">보유종목 업종 비중</h2><div class="donut-layout"><div class="donut-ring" id="sector-donut" role="img" aria-label="업종 비중 데이터 대기"><div class="donut-hole"><span>보유 업종</span><b id="sector-donut-count">0개</b></div></div><div class="donut-legend" id="sector-donut-legend"></div></div></section>
-</div>
 <section class="order-status"><h2>현재 주문 상태</h2>
 <div class="trader-risk-grid">
   <div><span>자동매매</span><b id="trader-auto-status">확인 중</b></div>
@@ -1384,16 +1431,7 @@ def render() -> str:
   <div><span>위험관리</span><b id="trader-risk">초기화 전</b></div>
 </div>
 <div class="trader-status" aria-live="polite"><span id="trader-price-status">가격 기준시각 확인 중</span><span>적용 전략 <b id="trader-strategy">기본 전략</b> · 일간 <b id="trader-daily-return">0.00%</b> · 주간 <b id="trader-weekly-return">0.00%</b> · 최대낙폭 <b id="trader-drawdown">0.00%</b></span></div></section>
-<details class="account-actions"><summary>입금 및 수동 주문</summary><div class="details-body"><section class="trader-controls">
-  <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
-  <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10%이며 정수 수량만 주문합니다.</p>
-  <p class="muted" id="trader-message" aria-live="polite">계좌 정보를 불러오는 중입니다.</p>
-</section></div></details>
-<section class="trader-controls" id="remote-connection" hidden>
-  <h2>로컬 DB 실시간 연결</h2>
-  <div class="trader-form"><label for="remote-api-url">HTTPS API 주소</label><input id="remote-api-url" type="url" placeholder="https://stock-api.example.com"><label for="remote-api-token">접속 토큰</label><input id="remote-api-token" type="password" autocomplete="current-password"><button id="remote-connect-button" type="button">읽기 전용 연결</button></div>
-  <p class="muted">주소는 이 브라우저에, 토큰은 현재 탭에만 저장됩니다. 원격에서는 입금과 수동주문을 실행할 수 없습니다.</p>
-</section>
+""" + equity_curve_section() + """
 <section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
@@ -1404,8 +1442,22 @@ def render() -> str:
   </div>
   <div class="table-scroll"><table><thead><tr><th>종목명</th><th>매수일</th><th>매도일</th><th>구분</th><th class="num">평균 매수가</th><th class="num">매도가</th><th class="num">수량</th><th class="num">실현손익</th><th class="num">실현수익률</th><th>매도 사유</th></tr></thead><tbody id="trader-sales"></tbody></table></div>
   <div class="pager" id="trader-sales-pager" data-page-size="15"></div>
+</section><div class="trader-chart-grid">
+  <section class="donut-card" aria-labelledby="asset-chart-title"><h2 id="asset-chart-title">가상계좌 자산 구성</h2><div class="donut-layout"><div class="donut-ring" id="asset-donut" role="img" aria-label="자산 구성 데이터 대기"><div class="donut-hole"><span>총자산</span><b id="asset-donut-total">0원</b></div></div><div class="donut-legend" id="asset-donut-legend"></div></div></section>
+  <section class="donut-card" aria-labelledby="sector-chart-title"><h2 id="sector-chart-title">보유종목 업종 비중</h2><div class="donut-layout"><div class="donut-ring" id="sector-donut" role="img" aria-label="업종 비중 데이터 대기"><div class="donut-hole"><span>보유 업종</span><b id="sector-donut-count">0개</b></div></div><div class="donut-legend" id="sector-donut-legend"></div></div></section>
+</div>
+""" + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"]) + """
+<details class="account-actions"><summary>입금 및 수동 주문</summary><div class="details-body"><section class="trader-controls">
+  <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
+  <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10%이며 정수 수량만 주문합니다.</p>
+  <p class="muted" id="trader-message" aria-live="polite">계좌 정보를 불러오는 중입니다.</p>
+</section></div></details>
+<section class="trader-controls" id="remote-connection" hidden>
+  <h2>로컬 DB 실시간 연결</h2>
+  <div class="trader-form"><label for="remote-api-url">HTTPS API 주소</label><input id="remote-api-url" type="url" placeholder="https://stock-api.example.com"><label for="remote-api-token">접속 토큰</label><input id="remote-api-token" type="password" autocomplete="current-password"><button id="remote-connect-button" type="button">읽기 전용 연결</button></div>
+  <p class="muted">주소는 이 브라우저에, 토큰은 현재 탭에만 저장됩니다. 원격에서는 입금과 수동주문을 실행할 수 없습니다.</p>
 </section>
-""" + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"])
+"""
     real_account = real_account_state()
     real_account_warning_count = sum(1 for row in real_account.get("holdings", []) if str(row.get("watch_state", "")).startswith("종목"))
     shadow_order_rows = [
@@ -1512,7 +1564,7 @@ table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom
 .nav-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:999px;background:var(--danger-bg);color:var(--danger-text);font-size:11px;font-weight:700}} .nav-badge[hidden]{{display:none}}
 .table-heading{{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 16px}} .table-heading h2{{margin:0}} .table-count{{color:var(--text-secondary);font-size:13px;font-weight:600;white-space:nowrap}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
-.curve-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .equity-curve{{width:100%;height:auto;margin-top:6px}} .curve-grid{{stroke:var(--table-border)}} .curve-axis{{fill:var(--text-secondary);font-size:11px}} .curve-legend{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:10px;font-size:13px;color:var(--text-secondary)}} .curve-legend-item{{display:inline-flex;align-items:center;gap:7px}} .curve-legend-item i{{width:14px;height:3px;border-radius:2px;display:inline-block}} .curve-legend-item b{{font-weight:700}}
+.home-note{{margin:-6px 0 18px;font-size:13px}} .curve-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .equity-curve{{width:100%;height:auto;margin-top:6px}} .curve-grid{{stroke:var(--table-border)}} .curve-axis{{fill:var(--text-secondary);font-size:11px}} .curve-legend{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:10px;font-size:13px;color:var(--text-secondary)}} .curve-legend-item{{display:inline-flex;align-items:center;gap:7px}} .curve-legend-item i{{width:14px;height:3px;border-radius:2px;display:inline-block}} .curve-legend-item b{{font-weight:700}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .trader-balance span{{display:block;color:var(--text-on-accent-muted)}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text-primary)}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:var(--bg-accent-card);color:var(--text-on-accent);cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:var(--text-strong)}}
