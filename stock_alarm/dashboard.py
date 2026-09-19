@@ -1404,9 +1404,9 @@ def render() -> str:
 {details(f"재무 스크리닝 결과 · {screener_caption()}", user_table("재무 스크리닝 (관찰 전용)", screener_rows(), ["name", "market", "per", "pbr", "free_cash_flow", "revenue_growth_pct", "operating_income_growth_pct", "period"], "python -m stock_alarm.screener 를 실행하면 결과가 표시됩니다."))}
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
 """
-    # Order: what the account is and may do now, how it got here, what it
-    # holds and sold, then composition, the comparison experiment and the
-    # rarely used manual controls last.
+    # Order: what the account is and may do now, how it got here and how the
+    # comparison experiments are doing, what it holds and sold, then
+    # composition and the rarely used manual controls last.
     trader_tab = """
 <div class="trader-profile-toggle" role="tablist" aria-label="가상 트레이더 성향 선택">
   <button type="button" class="profile-button" id="profile-aggressive" data-profile="aggressive" aria-pressed="true">적극투자형</button>
@@ -1427,7 +1427,7 @@ def render() -> str:
   <div><span>위험관리</span><b id="trader-risk">초기화 전</b></div>
 </div>
 <div class="trader-status" aria-live="polite"><span id="trader-price-status">가격 기준시각 확인 중</span><span>적용 전략 <b id="trader-strategy">기본 전략</b> · 일간 <b id="trader-daily-return">0.00%</b> · 주간 <b id="trader-weekly-return">0.00%</b> · 최대낙폭 <b id="trader-drawdown">0.00%</b></span></div></section>
-""" + equity_curve_section() + """
+""" + equity_curve_section() + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"]) + """
 <section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
@@ -1442,7 +1442,6 @@ def render() -> str:
   <section class="donut-card" aria-labelledby="asset-chart-title"><h2 id="asset-chart-title">가상계좌 자산 구성</h2><div class="donut-layout"><div class="donut-ring" id="asset-donut" role="img" aria-label="자산 구성 데이터 대기"><div class="donut-hole"><span>총자산</span><b id="asset-donut-total">0원</b></div></div><div class="donut-legend" id="asset-donut-legend"></div></div></section>
   <section class="donut-card" aria-labelledby="sector-chart-title"><h2 id="sector-chart-title">보유종목 업종 비중</h2><div class="donut-layout"><div class="donut-ring" id="sector-donut" role="img" aria-label="업종 비중 데이터 대기"><div class="donut-hole"><span>보유 업종</span><b id="sector-donut-count">0개</b></div></div><div class="donut-legend" id="sector-donut-legend"></div></div></section>
 </div>
-""" + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"]) + """
 <details class="account-actions"><summary>입금 및 수동 주문</summary><div class="details-body"><section class="trader-controls">
   <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
   <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10%이며 정수 수량만 주문합니다.</p>
