@@ -389,14 +389,14 @@ class DashboardTest(unittest.TestCase):
         datetime.now.return_value.date.return_value.isoformat.return_value = "2026-07-25"
         def fake_tail(path, _count):
             if path.endswith("recommendation_performance.csv"):
-                return [{"ticker": "A", "news_score": "1"}]
+                return [{"ticker": "A", "disclosure_score": "1"}]
             return [{"created_at": "2026-07-24T09:00:00"}, {"created_at": "2026-07-25T09:00:00", "ticker": "A"}]
 
         tail_csv.side_effect = fake_tail
 
         row = today_recommendation_rows()[0]
         self.assertEqual("A", row["ticker"])
-        self.assertEqual("뉴스 보너스", row["reason"])
+        self.assertEqual("공시 보너스", row["reason"])
 
     @patch("stock_alarm.dashboard.recent_virtual_trades", return_value=[])
     @patch("stock_alarm.dashboard.datetime")

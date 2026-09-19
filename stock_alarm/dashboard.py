@@ -94,7 +94,6 @@ NUMERIC_COLUMNS = {
     "stability_score",
     "dividend_score",
     "momentum_score",
-    "news_category_score",
     "order_quantity",
     "filled_price",
     "filled_amount",
@@ -244,7 +243,6 @@ LABELS = {
     "stability_score": "안정성",
     "dividend_score": "배당성",
     "momentum_score": "모멘텀",
-    "news_category_score": "뉴스",
     "decision": "판단",
     "reasons": "판단사유",
     "holding_days": "보유일수",
@@ -562,7 +560,7 @@ def today_run_rows() -> list[dict[str, str]]:
 def recommendation_shape_rows() -> list[dict[str, str]]:
     return [
         {"type": "관심 후보", "when": "거래량 급증 + 20일선 상회 + 거래대금 충분", "action": "추천 알림 발송"},
-        {"type": "확인 필요", "when": "뉴스/공시/과거 성과 보너스 또는 감점 있음", "action": "대시보드 사유 확인"},
+        {"type": "확인 필요", "when": "공시/과거 성과 보너스 또는 감점 있음", "action": "대시보드 사유 확인"},
         {"type": "매도 검토", "when": "손절, 급락, 수익 반납 조건 발생", "action": "매도 검토 알림 발송"},
     ]
 
@@ -574,8 +572,6 @@ def reason_summary(recommendation: dict[str, str], performance: dict[str, str], 
             parts.append("거래량 급증")
     except ValueError:
         pass
-    if positive(performance.get("news_score", "")):
-        parts.append("뉴스 보너스")
     if positive(performance.get("disclosure_score", "")):
         parts.append("공시 보너스")
     if penalty:
@@ -1502,7 +1498,7 @@ def render() -> str:
 {user_table("Today run details", user_run_rows(), ["step", "status"], "오늘 사용자 확인이 필요한 자동 작업은 없습니다.")}
 {details("데이터 품질과 발송 상태", table("Price quality", recent_price_quality(30), ["created_at", "ticker", "status", "reason"]) + table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "error"]))}
 {details("알고리즘 검증 결과", table("전략별 성과", benchmark_summary_rows(), ["strategy", "total_return_pct", "mdd_pct", "sharpe"]) + table("매도 사유별 결과", sell_quality_rows(), ["sell_reason_group", "count", "avg_realized_return_pct", "rebound_5d_rate_pct", "assessment"]))}
-{details("프로필별 후보 평가", table("성향별 카테고리 점수", profile_selection_rows(), ["profile", "ticker", "name", "rank", "selected", "profile_score", "profitability_score", "growth_score", "stability_score", "dividend_score", "momentum_score", "news_category_score"]))}
+{details("프로필별 후보 평가", table("성향별 카테고리 점수", profile_selection_rows(), ["profile", "ticker", "name", "rank", "selected", "profile_score", "profitability_score", "growth_score", "stability_score", "dividend_score", "momentum_score"]))}
 {details("고급 운영 정보", table("Candidate rejection summary", rejection_summary(), ["reason", "count"]) + table("Recent position checks", recent_position_checks(), ["checked_at", "name", "return_pct", "decision", "reasons"]) + table("Current settings", settings_rows(), ["setting", "value"]) + table("Recommendation shape", recommendation_shape_rows(), ["type", "when", "action"]) + f'<section><h2>{e(display_label("Daily check"))}</h2><ul>{checks}</ul></section><section><h2>{e(display_label("Recent task log"))}</h2><ul>{task_log}</ul></section><section><h2>{e(display_label("Recent task errors"))}</h2><ul>{task_error_items}</ul></section>')}
 """
     return f"""<!doctype html>
