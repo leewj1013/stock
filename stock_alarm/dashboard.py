@@ -641,6 +641,17 @@ def home_note(message: str) -> str:
     return f"<p class='muted home-note'>{e(message)}</p>"
 
 
+def us_overnight_note() -> str:
+    """Last US close as saved by the 08:30 briefing; the dashboard never fetches it."""
+    from .market_summary import _read_us_cache, us_row_text
+
+    rows = _read_us_cache()
+    if not rows or not all(row.get("symbol", "").startswith(".") for row in rows):
+        return ""
+    day = max(row["market_date"] for row in rows)
+    return home_note(f"간밤 미국 ({day[5:7]}/{day[8:10]} 마감): " + " · ".join(us_row_text(row) for row in rows))
+
+
 def table(title: str, rows: list[dict[str, str]], columns: list[str]) -> str:
     rows = sort_table_rows(rows, columns)
     body = "".join(
@@ -1363,6 +1374,7 @@ def render() -> str:
     held_sell_rows = home_sell_rows(sell_rows, held_or_sold_today_tickers())
     stock_tab = f"""
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div></div>
+{us_overnight_note()}
 <section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
   <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
     <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>

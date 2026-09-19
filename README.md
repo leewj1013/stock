@@ -143,9 +143,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate_secret
 
 - **토스증권 Open API**(`TOSS_CLIENT_ID`·`TOSS_CLIENT_SECRET`): 실계좌 조회, 장중 가격 교차검증, 종목 경고, 일봉. 토스 WTS에서 이 PC의 공인 IP를 허용해야 합니다. 확인: `python -m stock_alarm.toss_check`.
 - **OpenDART**(`DART_API_KEY`, `set_dart_key.bat`): 공시, 재무제표. 없어도 기본 기능은 동작합니다.
-- **네이버 금융**: 일별 시세(기본 데이터 소스), 모바일 API로 PER 등.
+- **네이버 금융**: 일별 시세(기본 데이터 소스), 모바일 API로 PER 등, 해외지수 API로 미국 지수(S&P 500·나스닥·필라델피아 반도체·VIX) 마감. 미국 마감은 `data/us_market_history.csv`에 날짜별로 쌓입니다.
 - **KRX**: 전체 시장 상승비율, 거래대금 상위 종목, 전 종목 PER.
-- **Alpha Vantage**(`ALPHA_VANTAGE_API_KEY`): 미국 ETF(SPY·QQQ·SOXX·IWM) 마감.
 
 ## 로그와 데이터 위치
 

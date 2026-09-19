@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
-import urllib.parse
 import urllib.request
 from datetime import date, timedelta
 from statistics import mean
@@ -11,22 +11,23 @@ from .app import configured_stocks, latest_naver_trading_day, load_env, naver_ro
 from .notifier import send_notification
 
 
-US_MARKET_SYMBOLS = {"SPY": "S&P 500", "QQQ": "나스닥 100", "SOXX": "반도체", "IWM": "미국 중소형주"}
+US_MARKET_SYMBOLS = {".INX": "S&P 500", ".IXIC": "나스닥", ".SOX": "필라델피아 반도체", ".VIX": "VIX"}
 US_CACHE_PATH = "data/us_market_summary.json"
+# Daily closes kept so the VIX "fear regime" idea can be re-checked later
+# (2026-09-20 study: too few episodes to act on yet).
+US_HISTORY_PATH = "data/us_market_history.csv"
+# 2022-01~2026-09: after a US session that moved 1%+ (S&P 500), KOSPI opened
+# on average about that much in the same direction, then did ~0 intraday.
+US_GAP_NOTE_PCT = 1.0
 
 
-def alpha_vantage_daily(symbol: str, api_key: str) -> dict[str, str]:
-    query = urllib.parse.urlencode({"function": "TIME_SERIES_DAILY", "symbol": symbol, "outputsize": "compact", "apikey": api_key})
-    request = urllib.request.Request(f"https://www.alphavantage.co/query?{query}", headers={"User-Agent": "stockAlarm/1.0"})
+def naver_world_index(symbol: str) -> dict[str, str]:
+    request = urllib.request.Request(f"https://api.stock.naver.com/index/{symbol}/basic", headers={"User-Agent": "stockAlarm/1.0"})
     with urllib.request.urlopen(request, timeout=15) as response:
         body = json.loads(response.read().decode("utf-8"))
-    series = body.get("Time Series (Daily)") or {}
-    days = sorted(series, reverse=True)
-    if len(days) < 2:
-        raise RuntimeError(body.get("Note") or body.get("Information") or body.get("Error Message") or f"{symbol} daily data unavailable")
-    latest, previous = series[days[0]], series[days[1]]
-    close, previous_close = float(latest["4. close"]), float(previous["4. close"])
-    return {"symbol": symbol, "name": US_MARKET_SYMBOLS[symbol], "market_date": days[0], "close": f"{close:.2f}", "change_pct": f"{(close - previous_close) / previous_close * 100:.2f}"}
+    close = float(str(body["closePrice"]).replace(",", ""))
+    return {"symbol": symbol, "name": US_MARKET_SYMBOLS[symbol], "market_date": str(body["localTradedAt"])[:10],
+            "close": f"{close:.2f}", "change_pct": f"{float(body['fluctuationsRatio']):.2f}"}
 
 
 def _read_us_cache(path: str = US_CACHE_PATH) -> list[dict[str, str]]:
@@ -37,27 +38,56 @@ def _read_us_cache(path: str = US_CACHE_PATH) -> list[dict[str, str]]:
         return []
 
 
-def us_market_rows(api_key: str | None = None, cache_path: str = US_CACHE_PATH) -> list[dict[str, str]]:
-    api_key = api_key or os.environ.get("ALPHA_VANTAGE_API_KEY", "")
-    if not api_key:
-        return _read_us_cache(cache_path)
-    cached = {row.get("symbol"): row for row in _read_us_cache(cache_path) if row.get("symbol")}
+def append_us_history(rows: list[dict[str, str]], path: str = US_HISTORY_PATH) -> None:
+    seen = set()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", newline="") as file:
+            seen = {(row["market_date"], row["symbol"]) for row in csv.DictReader(file)}
+    new = [row for row in rows if (row["market_date"], row["symbol"]) not in seen]
+    if not new:
+        return
+    write_header = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["market_date", "symbol", "close", "change_pct"], extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        writer.writerows(new)
+
+
+def us_market_rows(cache_path: str = US_CACHE_PATH, history_path: str = US_HISTORY_PATH) -> list[dict[str, str]]:
+    cached = {row.get("symbol"): row for row in _read_us_cache(cache_path) if row.get("symbol") in US_MARKET_SYMBOLS}
     rows = []
     for symbol in US_MARKET_SYMBOLS:
         try:
-            rows.append(alpha_vantage_daily(symbol, api_key))
+            rows.append(naver_world_index(symbol))
         except Exception:
             continue
-    if rows:
-        merged = {**cached, **{row["symbol"]: row for row in rows}}
-        rows = [merged[symbol] for symbol in US_MARKET_SYMBOLS if symbol in merged]
-        directory = os.path.dirname(cache_path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        with open(cache_path, "w", encoding="utf-8") as file:
-            json.dump({"updated_at": date.today().isoformat(), "rows": rows}, file, ensure_ascii=False, indent=2)
-        return rows
-    return list(cached.values())
+    if not rows:
+        return list(cached.values())
+    merged = {**cached, **{row["symbol"]: row for row in rows}}
+    rows = [merged[symbol] for symbol in US_MARKET_SYMBOLS if symbol in merged]
+    directory = os.path.dirname(cache_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as file:
+        json.dump({"updated_at": date.today().isoformat(), "rows": rows}, file, ensure_ascii=False, indent=2)
+    append_us_history(rows, history_path)
+    return rows
+
+
+def us_row_text(row: dict[str, str]) -> str:
+    if row["symbol"] == ".VIX":
+        return f"VIX {float(row['close']):.2f} ({float(row['change_pct']):+.2f}%)"
+    return f"{row['name']} {float(row['change_pct']):+.2f}%"
+
+
+def us_gap_note(us_rows: list[dict[str, str]]) -> str:
+    spx = next((row for row in us_rows if row.get("symbol") == ".INX"), None)
+    if not spx or abs(float(spx["change_pct"])) < US_GAP_NOTE_PCT:
+        return ""
+    direction = "상승" if float(spx["change_pct"]) > 0 else "하락"
+    return (f"S&P 500이 1% 넘게 {direction}한 다음 날, 코스피는 시초가에서 평균 1% 안팎 {direction} 출발했고 "
+            "장중 추가 움직임은 거의 없었습니다(2022~2026 기준).")
 
 
 def session_change(ticker: str, day: date) -> tuple[float, int] | None:
@@ -120,15 +150,16 @@ def whole_market_summary() -> dict[str, str] | None:
     return {"up_ratio_pct": f"{up_ratio * 100:.1f}", "avg_change_pct": f"{avg_change:.2f}"}
 
 
-def market_regime(domestic: dict[str, str], us_rows: list[dict[str, str]], whole_market: dict[str, str] | None = None) -> dict[str, str]:
+def market_regime(domestic: dict[str, str], whole_market: dict[str, str] | None = None) -> dict[str, str]:
     # Prefer the whole-market figures when available: the watchlist is
     # curated toward large/mid caps and can read stronger or weaker than the
     # broader KOSPI+KOSDAQ mood.
     basis = whole_market or domestic
     domestic_average = float(basis["avg_change_pct"])
     domestic_breadth = float(basis["up_ratio_pct"])
-    us_average = mean(float(row["change_pct"]) for row in us_rows) if us_rows else 0
-    score = 50 + domestic_average * 8 + (domestic_breadth - 50) * 0.3 + us_average * 10
+    # US moves are left out on purpose: the 2026-09-20 study found they are
+    # fully priced into the KOSPI open and say nothing about the day after it.
+    score = 50 + domestic_average * 8 + (domestic_breadth - 50) * 0.3
     score = max(0, min(100, score))
     if score >= 70:
         return {"label": "🟢 공격", "buy_limit": "70%", "guidance": "추세 확인 종목은 분할 매수 가능", "score": f"{score:.0f}"}
@@ -155,7 +186,7 @@ def message(
     whole_market = whole_market if whole_market is not None else whole_market_summary()
     session = f" ({basis_day:%m/%d} 기준)" if basis_day else ""
     info = summary(rows)
-    regime = market_regime(info, us_rows, whole_market)
+    regime = market_regime(info, whole_market)
     leaders = sorted(rows, key=lambda row: int(row.get("trading_value") or 0), reverse=True)[:3]
     lines = [
         "[08:30 오늘의 매매 브리핑]",
@@ -168,7 +199,9 @@ def message(
         "■ 미국 증시 마감",
     ]
     if us_rows:
-        lines.extend(f"- {row['name']}({row['symbol']}): {float(row['change_pct']):+.2f}%" for row in us_rows)
+        lines.extend(f"- {us_row_text(row)}" for row in us_rows)
+        if note := us_gap_note(us_rows):
+            lines.append(note)
     else:
         lines.append("- 미국 증시 데이터 수집 대기")
     lines.extend(["", f"■ 국내 관심종목 흐름{session}", f"상승/하락: {info['up_count']}개 / {info['down_count']}개", f"상승 비율: {info['up_ratio_pct']}%", f"평균 등락률: {float(info['avg_change_pct']):+.2f}%"])

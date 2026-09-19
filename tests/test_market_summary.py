@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.market_summary import alpha_vantage_daily, krx_top_trading_value_leaders, market_regime, market_rows, message, run, summary, whole_market_summary
+from stock_alarm.market_summary import append_us_history, krx_top_trading_value_leaders, market_regime, market_rows, message, naver_world_index, run, summary, us_gap_note, whole_market_summary
 
 
 class MarketSummaryTest(unittest.TestCase):
@@ -13,13 +13,15 @@ class MarketSummaryTest(unittest.TestCase):
     def test_message(self):
         text = message(
             [{"ticker": "A", "name": "Alpha", "change_pct": "1.23", "trading_value": "100"}, {"ticker": "B", "name": "Beta", "change_pct": "-2.34", "trading_value": "200"}],
-            [{"symbol": "SPY", "name": "S&P 500", "change_pct": "1.10"}],
+            [{"symbol": ".INX", "name": "S&P 500", "close": "7650.50", "change_pct": "1.10"}, {"symbol": ".VIX", "name": "VIX", "close": "14.81", "change_pct": "-4.08"}],
             whole_market={},
             whole_market_leaders=[],
         )
         self.assertIn("[08:30 오늘의 매매 브리핑]", text)
         self.assertIn("미국 증시 마감", text)
-        self.assertIn("S&P 500(SPY): +1.10%", text)
+        self.assertIn("- S&P 500 +1.10%", text)
+        self.assertIn("- VIX 14.81 (-4.08%)", text)
+        self.assertIn("시초가에서 평균 1% 안팎 상승 출발", text)
         self.assertIn("상승/하락: 1개 / 1개", text)
         self.assertIn("거래대금 주도 종목(관심종목)", text)
         self.assertIn("권장 신규 매수 한도", text)
@@ -77,15 +79,19 @@ class MarketSummaryTest(unittest.TestCase):
         self.assertNotIn("한 줄 결론", text)
         self.assertEqual(1, text.count("초반 추격을 피하고") + text.count("추세 확인 종목은") + text.count("신규 매수를 최소화"))
 
-    def test_market_regime_combines_domestic_and_us_market(self):
-        result = market_regime({"avg_change_pct": "2.0", "up_ratio_pct": "80.0"}, [{"change_pct": "1.5"}])
+    def test_market_regime_ignores_us_market(self):
+        result = market_regime({"avg_change_pct": "2.0", "up_ratio_pct": "80.0"})
         self.assertEqual("🟢 공격", result["label"])
         self.assertEqual("70%", result["buy_limit"])
+
+    def test_us_gap_note_only_for_large_sp500_moves(self):
+        self.assertEqual("", us_gap_note([{"symbol": ".INX", "change_pct": "0.99"}]))
+        self.assertIn("하락 출발", us_gap_note([{"symbol": ".INX", "change_pct": "-1.20"}]))
+        self.assertEqual("", us_gap_note([{"symbol": ".IXIC", "change_pct": "3.00"}]))
 
     def test_market_regime_prefers_whole_market_over_watchlist_when_given(self):
         result = market_regime(
             {"avg_change_pct": "5.0", "up_ratio_pct": "90.0"},
-            [{"change_pct": "0"}],
             whole_market={"avg_change_pct": "-2.0", "up_ratio_pct": "20.0"},
         )
         self.assertEqual("🔴 방어", result["label"])
@@ -105,12 +111,21 @@ class MarketSummaryTest(unittest.TestCase):
         self.assertEqual([], krx_top_trading_value_leaders())
 
     @patch("stock_alarm.market_summary.urllib.request.urlopen")
-    def test_alpha_vantage_daily_uses_latest_two_sessions(self, urlopen):
+    def test_naver_world_index_parses_close_and_signed_change(self, urlopen):
         response = urlopen.return_value.__enter__.return_value
-        response.read.return_value = b'{"Time Series (Daily)":{"2026-08-21":{"4. close":"110"},"2026-08-20":{"4. close":"100"}}}'
-        row = alpha_vantage_daily("SPY", "secret")
-        self.assertEqual("10.00", row["change_pct"])
-        self.assertNotIn("secret", str(row))
+        response.read.return_value = '{"closePrice":"7,650.50","fluctuationsRatio":"-1.25","localTradedAt":"2026-09-18T17:29:48-04:00"}'.encode()
+        self.assertEqual({"symbol": ".INX", "name": "S&P 500", "market_date": "2026-09-18", "close": "7650.50", "change_pct": "-1.25"}, naver_world_index(".INX"))
+
+    def test_append_us_history_skips_rows_already_recorded(self):
+        import csv, os, tempfile
+
+        row = {"symbol": ".VIX", "name": "VIX", "market_date": "2026-09-18", "close": "14.81", "change_pct": "-4.08"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "history.csv")
+            append_us_history([row], path)
+            append_us_history([row, {**row, "market_date": "2026-09-21"}], path)
+            with open(path, encoding="utf-8", newline="") as file:
+                self.assertEqual(["2026-09-18", "2026-09-21"], [r["market_date"] for r in csv.DictReader(file)])
 
     @patch("stock_alarm.market_summary.stock_name", side_effect=lambda _ticker, fallback: fallback)
     @patch("stock_alarm.market_summary.configured_stocks", return_value={"005930": "삼성전자"})
