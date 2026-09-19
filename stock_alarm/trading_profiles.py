@@ -19,7 +19,9 @@ PROFILES = {
         "max_position_pct": None,
         "sell_policy": None,
         # 성장성/모멘텀 중심 -- 안정성/배당 비중은 낮춘다.
-        "scoring_weights": {"profitability": 0.20, "growth": 0.30, "stability": 0.10, "dividend": 0.05, "momentum": 0.25, "news": 0.10},
+        # 2026-09-19: 뉴스 가중치 0 -- 키워드 감성은 어느 기간에서도 수익률을
+        # 예측하지 못했다. 나머지는 기존 비율대로 재분배. news_score 기록은 유지.
+        "scoring_weights": {"profitability": 0.222, "growth": 0.333, "stability": 0.111, "dividend": 0.056, "momentum": 0.278, "news": 0.0},
         "max_volatility_atr_pct": None,
         "max_holdings": 7,
         # 백테스트에서 확인: 상승/하락 추세에선 baseline보다 낫지만 횡보장에서
@@ -37,7 +39,9 @@ PROFILES = {
         "max_position_pct": 20.0,
         "sell_policy": {"stop_loss_pct": 3.0, "take_profit_1_pct": 7.0, "take_profit_2_pct": 14.0},
         # 안정성/수익성 중심 -- 모멘텀 비중은 낮춘다.
-        "scoring_weights": {"profitability": 0.25, "growth": 0.20, "stability": 0.30, "dividend": 0.10, "momentum": 0.10, "news": 0.05},
+        # 2026-09-19: 뉴스 가중치 0 -- 키워드 감성은 어느 기간에서도 수익률을
+        # 예측하지 못했다. 나머지는 기존 비율대로 재분배. news_score 기록은 유지.
+        "scoring_weights": {"profitability": 0.263, "growth": 0.211, "stability": 0.316, "dividend": 0.105, "momentum": 0.105, "news": 0.0},
         "max_volatility_atr_pct": 6.0,
         "max_holdings": 10,
         "regime_exposure_multiplier": {},
