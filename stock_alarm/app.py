@@ -104,7 +104,6 @@ DEFAULT_SECURE_ENV_PATH = os.path.join(
 # workspace is writable by development tools, while the secure file is
 # provisioned with a user/SYSTEM-only ACL by scripts/migrate_secrets.ps1.
 SENSITIVE_ENV_KEYS = {
-    "ALPHA_VANTAGE_API_KEY",
     "DART_API_KEY",
     "DASHBOARD_LOCAL_TOKEN",
     "DASHBOARD_LOCAL_USERNAME",
