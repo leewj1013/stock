@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -79,7 +80,16 @@ def save_sector_mapping(mapping: dict[str, str], metadata: dict, path: Path = DE
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"), "source": LIST_URL,
                "mapping": dict(sorted(mapping.items())), **metadata}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Aggressive and neutral profiles both refresh this same cache file on
+    # their own dashboard render; a plain write_text() truncates in place, so
+    # two overlapping writers can interleave and leave a corrupt file behind
+    # (this happened -- see 2026-09-21 incident, a leftover second JSON tail
+    # after the closing brace). Writing to a per-process temp file and
+    # rename()-ing it into place makes the swap atomic, so the file is always
+    # either the old or the new complete payload, never a mix.
+    tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def load_sector_mapping(tickers: set[str] | None = None, path: Path = DEFAULT_CACHE, refresh: bool = False,

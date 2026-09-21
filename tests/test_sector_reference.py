@@ -48,6 +48,21 @@ class SectorReferenceTest(unittest.TestCase):
                 load_sector_mapping({"999999"}, path, retry_after_seconds=600)
         fetch.assert_called_once_with({"999999"})
 
+    def test_save_leaves_no_partial_write_if_a_shorter_save_follows(self):
+        # Regression: two profiles refreshing the same cache used to
+        # write_text() straight into the target file, so an overlapping
+        # second (shorter) write could leave the first write's tail appended
+        # after the second's closing brace -- corrupt, unparseable JSON that
+        # then made every holding show as 미분류 until fixed by hand.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sector_mapping.json"
+            save_sector_mapping({"005930": "전기전자", "000660": "반도체", "035420": "IT서비스"}, {}, path)
+            save_sector_mapping({"005930": "전기전자"}, {}, path)
+            content = path.read_text(encoding="utf-8")
+            saved = json.loads(content)  # raises if any trailing/leftover bytes remain
+            self.assertEqual({"005930": "전기전자"}, saved["mapping"])
+            self.assertEqual([], [entry for entry in Path(directory).iterdir() if entry != path])
+
 
 if __name__ == "__main__":
     unittest.main()
