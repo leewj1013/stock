@@ -5,10 +5,35 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from stock_alarm.sector_reference import load_sector_mapping, save_sector_mapping
+from stock_alarm.sector_reference import fetch_sector_mapping, load_sector_mapping, save_sector_mapping
 
 
 class SectorReferenceTest(unittest.TestCase):
+    def test_fetch_looks_up_each_tickers_industry_then_resolves_the_name_once_per_code(self):
+        responses = {
+            "https://m.stock.naver.com/api/stock/005930/integration": {"industryCode": "278"},
+            "https://m.stock.naver.com/api/stock/000660/integration": {"industryCode": "278"},
+            "https://m.stock.naver.com/api/stocks/industry/278": {"groupInfo": {"name": "반도체와반도체장비"}},
+        }
+        with patch("stock_alarm.sector_reference._fetch_json", side_effect=lambda url: responses[url]) as fetch_json:
+            mapping, metadata = fetch_sector_mapping({"005930", "000660"})
+        self.assertEqual({"005930": "반도체와반도체장비", "000660": "반도체와반도체장비"}, mapping)
+        self.assertEqual(1, metadata["sector_count"])
+        # Both tickers share industry 278 -- its name is looked up once, not twice.
+        self.assertEqual(3, fetch_json.call_count)
+
+    def test_fetch_skips_a_ticker_naver_has_no_industry_for_without_failing_the_rest(self):
+        def fake_fetch(url):
+            if url == "https://m.stock.naver.com/api/stock/000001/integration":
+                raise OSError("404")
+            if url == "https://m.stock.naver.com/api/stock/005930/integration":
+                return {"industryCode": "278"}
+            return {"groupInfo": {"name": "반도체와반도체장비"}}
+
+        with patch("stock_alarm.sector_reference._fetch_json", side_effect=fake_fetch):
+            mapping, _ = fetch_sector_mapping({"005930", "000001"})
+        self.assertEqual({"005930": "반도체와반도체장비"}, mapping)
+
     def test_cache_hit_with_all_tickers_present_skips_fetch(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sector_mapping.json"

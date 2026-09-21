@@ -4,16 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from stock_alarm.app import Pick, auto_buy_virtual_trader, sector_limited_allocations
-from stock_alarm.sector_reference import parse_sector_detail, parse_sector_list
 
 
 class SectorLimitTest(unittest.TestCase):
-    def test_parsers_extract_sector_and_ticker(self):
-        sectors = parse_sector_list('<a href="/sise/sise_group_detail.naver?type=upjong&amp;no=261">반도체와반도체장비</a>')
-        stocks = parse_sector_detail('<tr><td><a href="/item/main.naver?code=005930" class="tltle">삼성전자</a></td></tr>')
-        self.assertEqual(sectors, [{"number": "261", "sector": "반도체와반도체장비"}])
-        self.assertEqual(stocks, [{"ticker": "005930", "name": "삼성전자"}])
-
     def test_sector_cap_counts_locked_holdings(self):
         picks = [SimpleNamespace(ticker=value) for value in ("A", "B", "C")]
         result = sector_limited_allocations(

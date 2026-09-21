@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import html
 import json
 import os
-import re
-import urllib.parse
 import urllib.request
 import argparse
 from datetime import datetime
@@ -12,73 +9,54 @@ from pathlib import Path
 
 
 DEFAULT_CACHE = Path(".cache/sector_mapping.json")
-LIST_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver"
+# finance.naver.com/sise/sise_group.naver (the old 업종별시세 listing) was
+# rebuilt as a client-rendered Next.js page -- the sector list and per-stock
+# membership no longer appear anywhere in the server HTML, which is why the
+# old regex scraper (parse_sector_list/parse_sector_detail against that URL)
+# silently started returning nothing (2026-09-21 incident: every holding
+# fell back to 미분류). Naver's mobile site still serves the same data as
+# JSON: one industry code per ticker, and a name+membership page per code.
+STOCK_URL = "https://m.stock.naver.com/api/stock/{code}/integration"
+INDUSTRY_URL = "https://m.stock.naver.com/api/stocks/industry/{code}"
 
 
-def _decode(body: bytes) -> str:
-    for encoding in ("euc-kr", "cp949", "utf-8"):
-        try:
-            return body.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return body.decode("utf-8", errors="replace")
-
-
-def _clean(value: str) -> str:
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", value))).strip()
-
-
-def parse_sector_list(content: str) -> list[dict[str, str]]:
-    """Parse Naver upjong links regardless of query-parameter order."""
-    output, seen = [], set()
-    for href, label in re.findall(r"<a[^>]+href=[\"']([^\"']*sise_group_detail\.naver\?[^\"']+)[\"'][^>]*>(.*?)</a>", content, re.I | re.S):
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(html.unescape(href)).query)
-        number = (query.get("no") or [""])[0]
-        if not number or number in seen:
-            continue
-        name = _clean(label)
-        if name:
-            seen.add(number); output.append({"number": number, "sector": name})
-    return output
-
-
-def parse_sector_detail(content: str) -> list[dict[str, str]]:
-    output, seen = [], set()
-    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", content, re.I | re.S):
-        match = re.search(r"(?:/item/main\.naver\?code=|[?&]code=)(\d{6})", row, re.I)
-        if not match or match.group(1) in seen:
-            continue
-        name_match = re.search(r"class=[\"']tltle[\"'][^>]*>(.*?)</a>", row, re.I | re.S)
-        seen.add(match.group(1)); output.append({"ticker": match.group(1), "name": _clean(name_match.group(1)) if name_match else ""})
-    return output
-
-
-def _fetch(url: str) -> str:
+def _fetch_json(url: str) -> dict:
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 stockAlarm sector-cache"})
     with urllib.request.urlopen(request, timeout=20) as response:
-        return _decode(response.read())
+        return json.loads(response.read().decode("utf-8"))
 
 
 def fetch_sector_mapping(target_tickers: set[str] | None = None) -> tuple[dict[str, str], dict]:
-    sectors = parse_sector_list(_fetch(LIST_URL))
-    mapping, duplicates = {}, {}
-    for item in sectors:
-        url = DETAIL_URL + "?" + urllib.parse.urlencode({"type": "upjong", "no": item["number"]})
-        for stock in parse_sector_detail(_fetch(url)):
-            ticker = stock["ticker"]
-            if target_tickers is not None and ticker not in target_tickers:
-                continue
-            if ticker in mapping and mapping[ticker] != item["sector"]:
-                duplicates.setdefault(ticker, [mapping[ticker]]).append(item["sector"])
-                continue
-            mapping[ticker] = item["sector"]
-    return mapping, {"sector_count": len(sectors), "duplicate_memberships": duplicates}
+    """One Naver industry name per ticker.
+
+    A ticker's own industryCode is looked up first, then the code's Korean
+    name is resolved from the industry page and cached per-code so tickers
+    sharing an industry only look its name up once. A ticker Naver has no
+    industry code for (delisted, newly listed, etc.) is just left unmapped
+    rather than failing the whole batch.
+    """
+    mapping: dict[str, str] = {}
+    industry_names: dict[str, str] = {}
+    for ticker in sorted(target_tickers or ()):
+        try:
+            code = str(_fetch_json(STOCK_URL.format(code=ticker)).get("industryCode") or "")
+        except (OSError, ValueError, TypeError):
+            continue
+        if not code:
+            continue
+        if code not in industry_names:
+            try:
+                industry_names[code] = str(_fetch_json(INDUSTRY_URL.format(code=code)).get("groupInfo", {}).get("name") or "")
+            except (OSError, ValueError, TypeError):
+                industry_names[code] = ""
+        if industry_names[code]:
+            mapping[ticker] = industry_names[code]
+    return mapping, {"sector_count": len(industry_names)}
 
 
 def save_sector_mapping(mapping: dict[str, str], metadata: dict, path: Path = DEFAULT_CACHE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"), "source": LIST_URL,
+    payload = {"fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"), "source": STOCK_URL,
                "mapping": dict(sorted(mapping.items())), **metadata}
     # Aggressive and neutral profiles both refresh this same cache file on
     # their own dashboard render; a plain write_text() truncates in place, so
