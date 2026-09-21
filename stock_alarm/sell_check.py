@@ -449,12 +449,15 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
             writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason, alert.sale_type, alert.stage, f"{alert.quantity_fraction:.4f}"])
 
 
-def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict]:
+def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict, set[str]]:
     from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
     state = virtual_trader_state(path=profile["db_path"])
     if profile.get("sell_alerts_log") != SELL_ALERTS_LOG:
         positions = virtual_holding_positions(state)
     quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
+    # Snapshot of what's actually held before today's sells settle, so
+    # notify-worthiness reflects a real position rather than a closed one.
+    held_tickers = set(quantities)
     sell_policy = profile["sell_policy"]
     if sell_policy and sell_policy.get("disable_take_profit_in_regimes"):
         # Previous session's regime, matching the backtest that validated this
@@ -472,7 +475,7 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
          "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
         for alert in alerts
     ], path=profile["db_path"])
-    return alerts, result
+    return alerts, result, held_tickers
 
 
 def run() -> str:
@@ -486,7 +489,7 @@ def run() -> str:
     run_id = start_run("sell_check", end_day.isoformat())
     positions = active_positions()
     try:
-        alerts, virtual_result = _run_profile_sell_check(positions, end_day, run_id, PROFILES["aggressive"])
+        alerts, virtual_result, held_tickers = _run_profile_sell_check(positions, end_day, run_id, PROFILES["aggressive"])
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")
@@ -504,11 +507,15 @@ def run() -> str:
         except Exception as error:
             write_error_log(error)
 
-    if not alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
+    # Sell-alert logs also carry signals for recommendations the virtual
+    # account never bought (tracked for the 추천 추적 tab); those still get
+    # logged above but shouldn't page as a "sell" alert with nothing to sell.
+    notify_alerts = [alert for alert in alerts if alert.ticker in held_tickers]
+    if not notify_alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
         return "no_alerts"
     from .notifier import send_notification
 
-    return send_notification(format_message(alerts, virtual_result), event_type="sell", tickers=[alert.ticker for alert in alerts])
+    return send_notification(format_message(notify_alerts, virtual_result), event_type="sell", tickers=[alert.ticker for alert in notify_alerts])
 
 
 def main() -> None:

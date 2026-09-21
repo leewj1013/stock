@@ -274,6 +274,56 @@ class SellCheckTest(unittest.TestCase):
     @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
     @patch("stock_alarm.sell_check.read_positions", return_value=[])
     @patch("stock_alarm.sell_check.write_log")
+    def test_run_does_not_notify_a_sell_alert_for_a_ticker_the_virtual_account_never_bought(
+        self, _write, _positions, _trading, _start, _finish, _day, _state, _position_states, _sell, _regime,
+    ):
+        # 추천 추적-only positions (never virtually bought) still get logged by
+        # find_alerts/write_log above, but must not page as a "sell" alert
+        # since the aggressive account holds nothing to sell.
+        alert = SellAlert("005930", "Samsung", 70000, 65000, -7.0, "손절 기준 -5.0% 이탈")
+        with patch("stock_alarm.sell_check.find_alerts") as find_alerts_mock, \
+             patch("stock_alarm.notifier.send_notification") as send_mock:
+            find_alerts_mock.side_effect = lambda *args, **kwargs: [alert] if args[6] == "logs/sell_alerts.csv" else []
+            self.assertEqual("no_alerts", run())
+        send_mock.assert_not_called()
+
+    @patch("stock_alarm.sell_check.current_market_regime", return_value="sideways")
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.sell_check.read_positions", return_value=[])
+    @patch("stock_alarm.sell_check.write_log")
+    def test_run_notifies_a_sell_alert_for_a_ticker_actually_held(
+        self, _write, _positions, _trading, _start, _finish, _day, _position_states, _sell, _regime,
+    ):
+        from stock_alarm.trading_profiles import PROFILES
+
+        alert = SellAlert("005930", "Samsung", 70000, 65000, -7.0, "손절 기준 -5.0% 이탈")
+        held = {"holdings": [{"ticker": "005930", "name": "Samsung", "average_price": 70000,
+                               "first_entry_at": "2026-07-01T09:00:00", "quantity": 1}]}
+        not_held = {"holdings": []}
+        with patch("stock_alarm.data_store.virtual_trader_state") as virtual_state, \
+             patch("stock_alarm.sell_check.find_alerts") as find_alerts_mock, \
+             patch("stock_alarm.notifier.send_notification") as send_mock:
+            virtual_state.side_effect = [held] + [not_held] * (len(PROFILES) - 1)
+            find_alerts_mock.side_effect = lambda *args, **kwargs: [alert] if args[6] == "logs/sell_alerts.csv" else []
+            run()
+        send_mock.assert_called_once()
+        self.assertEqual(["005930"], send_mock.call_args.kwargs["tickers"])
+
+    @patch("stock_alarm.sell_check.current_market_regime", return_value="sideways")
+    @patch("stock_alarm.data_store.virtual_sell", return_value={})
+    @patch("stock_alarm.data_store.virtual_position_states", return_value={})
+    @patch("stock_alarm.data_store.virtual_trader_state", return_value={"holdings": []})
+    @patch("stock_alarm.sell_check.latest_naver_trading_day", return_value=date(2026, 7, 24))
+    @patch("stock_alarm.data_store.finish_run")
+    @patch("stock_alarm.data_store.start_run", return_value="test-run")
+    @patch("stock_alarm.sell_check.is_market_alert_time", return_value=True)
+    @patch("stock_alarm.sell_check.read_positions", return_value=[])
+    @patch("stock_alarm.sell_check.write_log")
     def test_run_gives_neutral_profile_its_own_sell_policy_and_alert_log(self, _write, _positions, _trading, _start, _finish, _day, _state, _position_states, _sell, _regime):
         with patch("stock_alarm.sell_check.find_alerts", return_value=[]) as find_alerts_mock:
             run()
