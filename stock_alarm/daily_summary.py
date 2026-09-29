@@ -12,6 +12,7 @@ from .data_store import (
 )
 from .notifier import send_notification
 from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv
+from .sell_check import short_reason
 from .virtual_trader_report import current_prices
 
 
@@ -80,19 +81,47 @@ def shadow_lines() -> list[str]:
     return ["", "■ 실계좌였다면(섀도)", f"매수 {len(buys)}건 · {_won(spent)} · 매도 {len(sells)}건"]
 
 
-def screener_lines(limit: int = 5) -> list[str]:
+def regime_line(labels: list[dict[str, str]]) -> str:
+    """Today's KOSPI regime and what a bull label still needs (120MA + 60d rule)."""
+    last = labels[-1]
+    close, ma, momentum = float(last["close"]), float(last["ma120"]), float(last["return_60d_pct"])
+    names = {"bull": "상승장", "bear": "하락장", "sideways": "횡보장"}
+    line = f"국면 {names.get(last['regime'], last['regime'])} · KOSPI {close:,.0f} / 120일선 {ma:,.0f} ({(close / ma - 1) * 100:+.1f}%)"
+    if last["regime"] != "bull":
+        line += f" · 60일 {momentum:+.1f}% (상승장은 +5% 이상)"
+    return line
+
+
+def research_lines() -> list[str]:
+    """Strategy vs the index layouts that decide the mid-November review."""
+    from . import core_satellite_tracker as core30
+    from .dashboard import benchmark_returns, core30_returns, regime_label_rows
+    from .data_store import query_rows
+    from .trading_profiles import PROFILES
+
+    lines = ["", "■ 전략 vs 지수"]
     try:
-        from .screener import new_matches
-        added, total = new_matches()
+        control = PROFILES["exp_control"]["db_path"]
+        funded = int(query_rows("SELECT COALESCE(SUM(amount), 0) AS total FROM virtual_deposits", path=control)[0]["total"])
+        last = query_rows("SELECT equity FROM virtual_valuation_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=control)
+        core, index70 = core30_returns(core30.DB_PATH), core30_returns(core30.INDEX70_DB_PATH)
+        parts = [f"전략 {(int(last[0]['equity']) / funded - 1) * 100:+.1f}%"] if last and funded else []
+        if core:
+            parts.append(f"지수30% {list(core.values())[-1]:+.1f}%")
+            kodex = benchmark_returns(sorted(core), "069500")
+            if kodex:
+                parts.append(f"KODEX 200 {list(kodex.values())[-1]:+.1f}%")
+        if index70:
+            parts.append(f"지수70%+현금 {list(index70.values())[-1]:+.1f}%({min(index70)[5:].replace('-', '/')}~)")
+        if parts:
+            since = f"{min(core)[5:].replace('-', '/')} 이후 · " if core else ""
+            lines.append(since + " · ".join(parts))
+        labels = regime_label_rows(datetime.now().date().isoformat())
+        if labels:
+            lines.append(regime_line(labels))
     except Exception:
         return []
-    if not total:
-        return []
-    if not added:
-        return ["", "■ 재무 스크리닝", f"신규 통과 없음 (전체 {total}종목)"]
-    names = ", ".join(str(row.get("name") or row.get("ticker")) for row in added[:limit])
-    extra = f" 외 {len(added) - limit}종목" if len(added) > limit else ""
-    return ["", "■ 재무 스크리닝", f"신규 통과 {len(added)}종목: {names}{extra}", f"(전체 {total}종목)"]
+    return lines if len(lines) > 2 else []
 
 
 def market_comparison_line(daily_return_pct: float | None, whole_market: dict[str, str] | None) -> str | None:
@@ -161,11 +190,11 @@ def message() -> str:
     lines.extend(_trade_lines(buys, sales))
     lines.extend(unbought_recommendation_lines(recommendations, buys))
     lines.extend(shadow_lines())
-    lines.extend(screener_lines())
+    lines.extend(research_lines())
     lines.extend(["", "■ 내일 확인"])
     if sell_alerts:
         for row in sell_alerts[:2]:
-            lines.append(f"{row.get('name') or row.get('ticker')} · {row.get('reason') or '매도 조건 재점검'}")
+            lines.append(f"{row.get('name') or row.get('ticker')} · {short_reason(row.get('reason') or '') or '매도 조건 재점검'}")
     else:
         lines.append("특이사항 없음")
     lines.extend(["", f"가격 기준 {now:%H:%M} · 가상매매 결과"])

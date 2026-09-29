@@ -1054,7 +1054,7 @@ def screener_caption() -> str:
 
 
 @lru_cache(maxsize=1)
-def _regime_labels(as_of: str) -> list[dict[str, str]]:
+def regime_label_rows(as_of: str) -> list[dict[str, str]]:
     from datetime import date as date_type, timedelta
 
     from .app import env_float, naver_rows
@@ -1071,7 +1071,7 @@ def _regime_labels(as_of: str) -> list[dict[str, str]]:
 def regime_labels() -> dict[str, str]:
     """KOSPI regime per session (same rule the sell check and backtests use), {} if unavailable."""
     try:
-        return {row["date"]: row["regime"] for row in _regime_labels(datetime.now().date().isoformat())}
+        return {row["date"]: row["regime"] for row in regime_label_rows(datetime.now().date().isoformat())}
     except Exception:
         return {}
 
@@ -1081,7 +1081,7 @@ REGIME_NAMES = {"bull": "상승장", "bear": "하락장", "sideways": "횡보장
 
 def market_regime_card() -> str:
     try:
-        labels = _regime_labels(datetime.now().date().isoformat())
+        labels = regime_label_rows(datetime.now().date().isoformat())
     except Exception:
         labels = []
     if not labels:

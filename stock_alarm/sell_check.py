@@ -403,6 +403,14 @@ def alert_urgency(alert: SellAlert) -> str:
     return "🟡 추세 이탈 매도"
 
 
+def short_reason(reason: str) -> str:
+    """The deciding condition first, the rest counted -- full text stays in the log."""
+    parts = [part.strip() for part in str(reason or "").split(",") if part.strip()]
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    return f"{parts[0]} 외 {len(parts) - 1}건"
+
+
 def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) -> str:
     if not alerts:
         return "오늘 매도 검토 조건에 걸린 보유 종목이 없습니다."
@@ -418,7 +426,7 @@ def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) 
             f"{alert_urgency(alert)} · {action}",
             f"{alert.name}({alert.ticker}) 수익률 {alert.return_pct:+.2f}%{held}",
             f"현재가 {alert.close:,}원 (진입 {alert.entry_price:,}원)",
-            f"사유: {alert.reason}",
+            f"사유: {short_reason(alert.reason)}",
         ])
         if execution:
             realized_rate = execution["realized_profit_loss"] / execution["cost_basis"] * 100 if execution["cost_basis"] else 0

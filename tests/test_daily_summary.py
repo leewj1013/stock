@@ -4,14 +4,14 @@ from unittest.mock import patch
 
 from stock_alarm.daily_summary import latest_recommendations, market_comparison_line, message, run
 # bound at import, before setUp swaps the module attributes for stubs
-from stock_alarm.daily_summary import screener_lines as real_screener_lines, shadow_lines as real_shadow_lines
+from stock_alarm.daily_summary import regime_line, shadow_lines as real_shadow_lines
 
 
 class DailySummaryTest(unittest.TestCase):
     def setUp(self):
-        # message() also reads today's shadow orders and the saved screener
-        # result; keep those off the real DB and reports folder.
-        for name in ("shadow_lines", "screener_lines"):
+        # message() also reads today's shadow orders and the experiment
+        # accounts; keep those off the real DBs and network.
+        for name in ("shadow_lines", "research_lines"):
             patcher = patch(f"stock_alarm.daily_summary.{name}", return_value=[])
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -64,14 +64,18 @@ class DailySummaryTest(unittest.TestCase):
         rows.return_value = []
         self.assertEqual("주문 없음", real_shadow_lines()[-1])
 
-    @patch("stock_alarm.screener.new_matches")
-    def test_screener_lines_list_only_new_entrants(self, new_matches):
-        new_matches.return_value = ([{"ticker": "A", "name": "Alpha"}], 37)
-        self.assertEqual(["", "■ 재무 스크리닝", "신규 통과 1종목: Alpha", "(전체 37종목)"], real_screener_lines())
-        new_matches.return_value = ([], 37)
-        self.assertEqual("신규 통과 없음 (전체 37종목)", real_screener_lines()[-1])
-        new_matches.return_value = ([], 0)
-        self.assertEqual([], real_screener_lines())
+    def test_sell_reason_keeps_the_deciding_condition_and_counts_the_rest(self):
+        from stock_alarm.sell_check import short_reason
+
+        self.assertEqual("20일선 2회 연속 이탈 외 2건", short_reason("20일선 2회 연속 이탈, 직전 평가 대비 수익률 3.5%p 악화, 24일 보유 후 기대수익 미달"))
+        self.assertEqual("손절 기준 -5.0% 이탈", short_reason("손절 기준 -5.0% 이탈"))
+        self.assertEqual("", short_reason(""))
+
+    def test_regime_line_says_what_a_bull_label_still_needs(self):
+        bear = [{"regime": "bear", "close": "6874.00", "ma120": "7133.00", "return_60d_pct": "-17.2"}]
+        self.assertEqual("국면 하락장 · KOSPI 6,874 / 120일선 7,133 (-3.6%) · 60일 -17.2% (상승장은 +5% 이상)", regime_line(bear))
+        bull = [{"regime": "bull", "close": "7500.00", "ma120": "7000.00", "return_60d_pct": "8.0"}]
+        self.assertEqual("국면 상승장 · KOSPI 7,500 / 120일선 7,000 (+7.1%)", regime_line(bull))
 
     def test_market_comparison_line_shows_gap_versus_whole_market_average(self):
         line = market_comparison_line(1.5, {"up_ratio_pct": "40.0", "avg_change_pct": "-0.5"})
