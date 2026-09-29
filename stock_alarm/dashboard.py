@@ -84,6 +84,7 @@ NUMERIC_COLUMNS = {
     "total_return_pct",
     "mdd_pct",
     "sharpe",
+    "bear_return_pct",
     "current_price",
     "sell_alert_return_pct",
     "sell_alert_price",
@@ -108,7 +109,7 @@ def dashboard_logo_data_uri() -> str:
     """Embed the project logo so the generated dashboard remains one portable HTML file."""
     with open(LOGO_PATH, "rb") as file:
         return "data:image/png;base64," + base64.b64encode(file.read()).decode("ascii")
-RETURN_COLUMNS = {"revenue_growth_pct", "operating_income_growth_pct", "return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct"}
+RETURN_COLUMNS = {"revenue_growth_pct", "operating_income_growth_pct", "return_pct", "avg_1d_return_pct", "return_1d_pct", "sell_return_pct", "return_3d_pct", "return_5d_pct", "return_10d_pct", "return_20d_pct", "avg_realized_return_pct", "total_return_pct", "mdd_pct", "sell_alert_return_pct", "bear_return_pct"}
 TIMESTAMP_COLUMNS = {"created_at", "started_at", "finished_at", "evaluated_at", "checked_at", "alert_created_at", "ordered_at"}
 BOOLEAN_COLUMNS = {"passed", "selected", "legacy_passed", "time_stop_triggered"}
 # Enum-valued columns whose Korean label depends on which table they're in --
@@ -295,6 +296,12 @@ LABELS = {
     "cash_pct": "현금비중",
     "risk_state": "상태",
     "sharpe": "샤프지수",
+    "bear_return_pct": "하락장 구간 수익률",
+    "criterion": "판단 기준",
+    "progress": "진행",
+    "decision_date": "날짜",
+    "decision_title": "결정",
+    "decision_summary": "내용",
     "tracking_status": "추적 상태",
     "sell_alert_date": "매도 알림일",
     "sell_alert_return_pct": "매도 알림 수익률",
@@ -419,6 +426,7 @@ NAV_ICONS = {
     "list": '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     "chart": '<path d="M6 20V14M12 20V6M18 20v-8"/>',
     "settings": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
+    "flask": '<path d="M9 3h6M10 3v6L4.5 18.5A1.5 1.5 0 0 0 5.8 21h12.4a1.5 1.5 0 0 0 1.3-2.5L14 9V3"/><path d="M7 15h10"/>',
     "wallet": '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16" cy="14" r="1"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
@@ -897,8 +905,8 @@ def time_weighted_returns(path: str) -> dict[str, float]:
     return curve
 
 
-def benchmark_returns(days: list[str]) -> dict[str, float]:
-    """KOSPI cumulative % over the same days, or {} when the index is unavailable."""
+def benchmark_returns(days: list[str], symbol: str = "KOSPI") -> dict[str, float]:
+    """An index/ETF's cumulative % over the same days, or {} when unavailable."""
     if not days:
         return {}
     try:
@@ -906,7 +914,7 @@ def benchmark_returns(days: list[str]) -> dict[str, float]:
 
         from .app import naver_rows
         rows = naver_rows(
-            "KOSPI", date_type.fromisoformat(days[0]) - timedelta(days=5),
+            symbol, date_type.fromisoformat(days[0]) - timedelta(days=5),
             date_type.fromisoformat(days[-1]), max_cache_age_seconds=6 * 60 * 60,
         )
     except Exception:
@@ -922,27 +930,44 @@ def benchmark_returns(days: list[str]) -> dict[str, float]:
     return {day: round((closes[day] / base - 1) * 100, 2) for day in days if day in closes}
 
 
-CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "exp_candidate": "#BA7517", "benchmark": "#888780"}
-CURVE_ACCOUNTS = (("aggressive", "적극투자형"), ("neutral", "위험중립형"), ("exp_candidate", "비교(후보 규칙)"))
+CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "core30": "#BA7517", "benchmark": "#888780", "kodex200": "#B4B2A9"}
+# exp_candidate is left off: it trades like exp_control until a bull regime or a
+# drawdown halt, so its line would only duplicate aggressive's until then.
+CURVE_ACCOUNTS = (("aggressive", "적극투자형"), ("neutral", "위험중립형"))
+
+
+def core30_returns() -> dict[str, float]:
+    """The index-core experiment's cumulative % per day (it starts later, at 0)."""
+    from . import core_satellite_tracker as core30
+
+    rows = query_rows("SELECT created_at, return_pct FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.DB_PATH)
+    return {str(row["created_at"])[:10]: round(float(row["return_pct"]), 2) for row in rows}
 
 
 def equity_curve_series(limit_days: int = 90) -> dict:
-    """Comparable return curves for the virtual accounts and KOSPI."""
+    """Comparable return curves for the virtual accounts, the index-core
+    experiment, KOSPI and KODEX 200 (the core's actual instrument)."""
     from .trading_profiles import PROFILES
 
     curves = {name: time_weighted_returns(PROFILES[name]["db_path"]) for name, _label in CURVE_ACCOUNTS if name in PROFILES}
     days = sorted({day for curve in curves.values() for day in curve})[-limit_days:]
     if len(days) < 2:
         return {"days": [], "series": []}
+    try:
+        curves["core30"] = core30_returns()
+    except Exception:
+        curves["core30"] = {}
     series = []
-    for name, label in CURVE_ACCOUNTS:
+    core_start = min(curves["core30"], default="")
+    for name, label in (*CURVE_ACCOUNTS, ("core30", f"지수30%+전략70% ({core_start[5:].replace('-', '/')}~)")):
         points = [curves.get(name, {}).get(day) for day in days]
         if len([point for point in points if point is not None]) >= 2:
             series.append({"key": name, "label": label, "color": CURVE_COLORS.get(name, "#888780"), "points": points})
-    benchmark = benchmark_returns(days)
-    if benchmark:
-        series.append({"key": "benchmark", "label": "KOSPI", "color": CURVE_COLORS["benchmark"],
-                       "points": [benchmark.get(day) for day in days], "dashed": True})
+    for key, symbol, label in (("benchmark", "KOSPI", "KOSPI"), ("kodex200", "069500", "KODEX 200")):
+        benchmark = benchmark_returns(days, symbol)
+        if benchmark:
+            series.append({"key": key, "label": label, "color": CURVE_COLORS[key],
+                           "points": [benchmark.get(day) for day in days], "dashed": True})
     return {"days": days, "series": series}
 
 
@@ -1023,21 +1048,114 @@ def screener_caption() -> str:
             f"(자료부족 {result.get('incomplete', 0)}) · 갱신 {str(result.get('generated_at', ''))[:16].replace('T', ' ')}")
 
 
+@lru_cache(maxsize=1)
+def _regime_labels(as_of: str) -> list[dict[str, str]]:
+    from datetime import date as date_type, timedelta
+
+    from .app import env_float, naver_rows
+    from .backtest_data import label_market_regimes
+
+    ma_days = int(env_float("BACKTEST_REGIME_MA_DAYS", 120))
+    return_days = int(env_float("BACKTEST_REGIME_RETURN_DAYS", 60))
+    trend_pct = env_float("BACKTEST_REGIME_TREND_PCT", 5)
+    end = date_type.fromisoformat(as_of)
+    rows = naver_rows("KOSPI", end - timedelta(days=400), end, max_cache_age_seconds=6 * 60 * 60)
+    return label_market_regimes(rows, ma_days, return_days, trend_pct)
+
+
+def regime_labels() -> dict[str, str]:
+    """KOSPI regime per session (same rule the sell check and backtests use), {} if unavailable."""
+    try:
+        return {row["date"]: row["regime"] for row in _regime_labels(datetime.now().date().isoformat())}
+    except Exception:
+        return {}
+
+
+REGIME_NAMES = {"bull": "상승장", "bear": "하락장", "sideways": "횡보장"}
+
+
+def market_regime_card() -> str:
+    try:
+        labels = _regime_labels(datetime.now().date().isoformat())
+    except Exception:
+        labels = []
+    if not labels:
+        return home_note("시장 국면을 불러오지 못했습니다.")
+    last = labels[-1]
+    close, ma, momentum = float(last["close"]), float(last["ma120"]), float(last["return_60d_pct"])
+    bull_days = sum(1 for row in labels[-60:] if row["regime"] == "bull")
+    ma_gap = (close / ma - 1) * 100
+    need = []
+    if close <= ma:
+        need.append(f"KOSPI가 120일선 {ma:,.0f} 위로 ({ma_gap:+.1f}%)")
+    if momentum < 5:
+        need.append(f"60일 수익률 +5% 이상 (현재 {momentum:+.1f}%)")
+    to_bull = " · ".join(need) if need else "충족"
+    return (
+        "<section class='regime-card'><div class='table-heading'><h2>시장 국면</h2>"
+        f"<span class='table-count'>{e(last['date'])} 종가 기준 · 120일선+60일 수익률 규칙</span></div>"
+        "<div class='operation-grid'>"
+        f"<div><span>현재 국면</span><b>{e(REGIME_NAMES.get(last['regime'], last['regime']))}</b></div>"
+        f"<div><span>KOSPI / 120일선</span><b>{close:,.0f} / {ma:,.0f}</b></div>"
+        f"<div><span>60일 수익률</span><b>{momentum:+.1f}%</b></div>"
+        f"<div><span>최근 60거래일 상승장</span><b>{bull_days}일</b></div>"
+        "</div>"
+        f"<p class='muted'>상승장 전환 조건: {e(to_bull)}. 비교(후보 규칙)의 익절 해제는 직전 거래일이 상승장일 때만 작동합니다.</p>"
+        "<p class='muted'>장중 신규매수 한도의 상승종목 비율은 시가총액 상위 표본 기준이라 전체 시장보다 평균 +4.5%p 높게 나옵니다(2026-09 KRX 대조).</p>"
+        "</section>"
+    )
+
+
+def _daily_equities(rows: list[dict]) -> list[tuple[str, int]]:
+    per_day: dict[str, int] = {}
+    for row in rows:
+        per_day[str(row["created_at"])[:10]] = int(row["equity"])
+    return sorted(per_day.items())
+
+
+def risk_adjusted(start: int, daily: list[tuple[str, int]], regimes: dict[str, str]) -> tuple[str, str]:
+    """(annualized Sharpe, bear-regime cumulative %) from day-end equities.
+
+    Sharpe needs 20+ daily returns (fewer is noise); each day's regime is the previous
+    session's label, matching how the exit rules read it."""
+    returns, bear = [], 1.0
+    previous_equity = start
+    sessions = sorted(regimes)
+    for day, equity in daily:
+        daily_return = equity / previous_equity - 1 if previous_equity else 0.0
+        returns.append(daily_return)
+        index = next((i for i in range(len(sessions) - 1, -1, -1) if sessions[i] < day), None)
+        if index is not None and regimes[sessions[index]] == "bear":
+            bear *= 1 + daily_return
+        previous_equity = equity
+    sharpe = ""
+    if len(returns) >= 20:
+        average = mean(returns)
+        deviation = (sum((value - average) ** 2 for value in returns) / (len(returns) - 1)) ** 0.5
+        sharpe = f"{average / deviation * 252 ** 0.5:.2f}" if deviation else ""
+    return sharpe, (f"{(bear - 1) * 100:.2f}" if regimes and daily else "")
+
+
 def experiment_account_rows() -> list[dict[str, str]]:
     """Forward rule experiments -- comparison only, never real orders."""
     from . import core_satellite_tracker as core30
     from .trading_profiles import PROFILES
 
-    def summary(label: str, rule: str, since: str, start: int, equities: list[int], cash_pct: str, risk_state: str) -> dict[str, str]:
-        row = {"experiment": label, "rule": rule, "since": since, "equity": f"{start:,}원", "total_return_pct": "", "mdd_pct": "", "cash_pct": "-", "risk_state": "기록 대기"}
+    regimes = regime_labels()
+
+    def summary(label: str, rule: str, since: str, start: int, snapshots: list[dict], cash_pct: str, risk_state: str) -> dict[str, str]:
+        row = {"experiment": label, "rule": rule, "since": since, "equity": f"{start:,}원", "total_return_pct": "", "mdd_pct": "",
+               "sharpe": "", "bear_return_pct": "", "cash_pct": "-", "risk_state": "기록 대기"}
+        equities = [int(snapshot["equity"]) for snapshot in snapshots]
         if not equities:
             return row
         peak, mdd = start, 0.0
         for value in equities:
             peak = max(peak, value)
             mdd = min(mdd, value / peak - 1)
+        sharpe, bear = risk_adjusted(start, _daily_equities(snapshots), regimes)
         return {**row, "equity": f"{equities[-1]:,}원", "total_return_pct": f"{(equities[-1] / start - 1) * 100:.2f}",
-                "mdd_pct": f"{mdd * 100:.2f}", "cash_pct": cash_pct, "risk_state": risk_state}
+                "mdd_pct": f"{mdd * 100:.2f}", "sharpe": sharpe, "bear_return_pct": bear, "cash_pct": cash_pct, "risk_state": risk_state}
 
     rows = []
     for name, label, rule in (
@@ -1049,16 +1167,132 @@ def experiment_account_rows() -> list[dict[str, str]]:
         start = int(deposit[0]["total"]) if deposit else 0
         if not start:
             continue
-        snapshots = query_rows("SELECT cash, equity FROM virtual_valuation_snapshots ORDER BY snapshot_id", path=path)
+        snapshots = query_rows("SELECT created_at, cash, equity FROM virtual_valuation_snapshots ORDER BY snapshot_id", path=path)
         last = snapshots[-1] if snapshots else {}
         cash_pct = f"{last['cash'] / last['equity'] * 100:.1f}%" if last.get("equity") else "-"
         risk_state = "신규매수 중단" if latest_portfolio_risk(path).get("status") == "halted" else "정상"
-        rows.append(summary(label, rule, str(deposit[0]["since"] or "")[:10], start, [int(r["equity"]) for r in snapshots], cash_pct, risk_state))
+        rows.append(summary(label, rule, str(deposit[0]["since"] or "")[:10], start, snapshots, cash_pct, risk_state))
     snapshots = query_rows("SELECT created_at, equity FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.DB_PATH)
     since = str(snapshots[0]["created_at"])[:10] if snapshots else ""
     rows.append(summary("지수30%+전략70%", "KODEX 200 30% · 비교(현재 규칙) 70% · 분기 리밸런싱", since,
-                        core30.START_CAPITAL, [int(r["equity"]) for r in snapshots], "-", "정상"))
+                        core30.START_CAPITAL, snapshots, "-", "정상"))
     return rows
+
+
+LEARNING_MIN_SAMPLES = 300
+# Dates fixed in STRATEGY_NOTES.md "진행 중인 실험".
+PROFILE_REVALIDATION_DUE = "2026-11-15"
+CORE30_REVIEW_DUE = "2026-11-15"
+
+
+def experiment_progress_rows() -> list[dict[str, str]]:
+    """Each running experiment against the decision criterion it was started with."""
+    from . import core_satellite_tracker as core30
+    from .trading_profiles import PROFILES
+
+    today = datetime.now().date()
+    regimes = regime_labels()
+
+    def last_equity(path: str) -> int:
+        row = query_rows("SELECT equity FROM virtual_valuation_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=path)
+        return int(row[0]["equity"]) if row else 0
+
+    def days_left(due: str) -> str:
+        return f"D-{(datetime.fromisoformat(due).date() - today).days}"
+
+    control, candidate = (last_equity(PROFILES[name]["db_path"]) for name in ("exp_control", "exp_candidate"))
+    bull_days = sum(1 for day, regime in regimes.items() if day >= "2026-09-16" and regime == "bull")
+    rows = [{
+        "experiment": "비교(후보 규칙) vs 비교(현재 규칙)",
+        "criterion": "최대낙폭·샤프지수를 상승장/횡보장 나눠서 비교 (총수익만으로 판단하지 않음)",
+        "progress": f"시작 후 상승장 {bull_days}일 · 평가액 차이 {candidate - control:+,}원",
+        "risk_state": "상승장 대기" if bull_days == 0 else "비교 중",
+    }]
+    core = query_rows("SELECT created_at, return_pct FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.DB_PATH)
+    sessions = len({str(row["created_at"])[:10] for row in core})
+    # Same simple return on deposits as the experiment table.
+    funded = query_rows("SELECT COALESCE(SUM(amount), 0) AS total FROM virtual_deposits", path=PROFILES["exp_control"]["db_path"])
+    funded_total = int(funded[0]["total"]) if funded else 0
+    control_return = (control / funded_total - 1) * 100 if control and funded_total else None
+    rows.append({
+        "experiment": "지수30%+전략70% vs 전략 단독",
+        "criterion": "같은 기준 + 하락장 구간 방어력",
+        "progress": (f"{sessions}거래일 기록 · 지수30% {float(core[-1]['return_pct']):+.2f}% / 전략 {control_return:+.2f}%"
+                     if core and control_return is not None else "기록 대기"),
+        "risk_state": f"축적 중 ({days_left(CORE30_REVIEW_DUE)})",
+    })
+    matured = query_rows("SELECT COUNT(*) AS n FROM recommendation_outcomes WHERE return_20d_pct IS NOT NULL")
+    count = int(matured[0]["n"]) if matured else 0
+    rows.append({
+        "experiment": "자동 학습 (가중치 승격)",
+        "criterion": f"20일 성과 표본 {LEARNING_MIN_SAMPLES}건 이상에서 워크포워드 검증 통과",
+        "progress": f"{count} / {LEARNING_MIN_SAMPLES}건",
+        "risk_state": "검증 가능" if count >= LEARNING_MIN_SAMPLES else "축적 중",
+    })
+    rows.append({
+        "experiment": "성향별 가중치 재검증",
+        "criterion": "카테고리 가중치 재정렬의 통계적 유의성",
+        "progress": f"예정일 {PROFILE_REVALIDATION_DUE}",
+        "risk_state": "검증 가능" if today.isoformat() >= PROFILE_REVALIDATION_DUE else days_left(PROFILE_REVALIDATION_DUE),
+    })
+    return rows
+
+
+DAILY_REVIEW_DIR = os.path.join("reports", "daily_review")
+
+
+def latest_daily_review_section() -> str:
+    try:
+        name = max(f for f in os.listdir(DAILY_REVIEW_DIR) if f.endswith(".md"))
+        with open(os.path.join(DAILY_REVIEW_DIR, name), encoding="utf-8") as file:
+            text = file.read()
+    except (OSError, ValueError):
+        return ("<section class='empty-section'><h2>매일 점검 보고서</h2><div class='empty-state'><b>아직 보고서가 없습니다</b>"
+                "<span>평일 17:36 점검 작업이 reports/daily_review/에 남깁니다.</span></div></section>")
+    return ("<section><div class='table-heading'><h2>매일 점검 보고서</h2>"
+            f"<span class='table-count'>{e(name[:-3])}</span></div><pre class='review-text'>{e(text)}</pre></section>")
+
+
+def decision_log_rows(path: str = "STRATEGY_NOTES.md") -> list[dict[str, str]]:
+    """'### date · title' entries under '## 결정 기록', newest first as written,
+    with the entry's '결정:' bullet (or its first bullet) as the summary."""
+    try:
+        with open(path, encoding="utf-8") as file:
+            lines = file.read().splitlines()
+    except OSError:
+        return []
+    rows, inside = [], False
+    for line in lines:
+        if line.startswith("## "):
+            inside = line.strip() == "## 결정 기록"
+            continue
+        if not inside:
+            continue
+        if line.startswith("### "):
+            date_part, _, title = line[4:].partition("·")
+            rows.append({"decision_date": date_part.strip(), "decision_title": title.strip(), "decision_summary": ""})
+        elif rows and line.startswith("- "):
+            bullet = line[2:].strip()
+            if bullet.startswith("결정:") or bullet.startswith("변경:"):
+                rows[-1]["decision_summary"] = bullet.split(":", 1)[1].strip()
+            elif not rows[-1]["decision_summary"]:
+                rows[-1]["decision_summary"] = bullet
+    for row in rows:
+        for key in ("decision_title", "decision_summary"):
+            row[key] = row[key].replace("**", "").replace("`", "")
+    return rows
+
+
+def research_tab() -> str:
+    return (
+        "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
+        "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
+        + market_regime_card()
+        + table("실험 진행 현황", experiment_progress_rows(), ["experiment", "criterion", "progress", "risk_state"])
+        + latest_daily_review_section()
+        + user_table("결정 기록 (STRATEGY_NOTES.md)", decision_log_rows(), ["decision_date", "decision_title", "decision_summary"],
+                     "STRATEGY_NOTES.md를 찾지 못했습니다.")
+    )
 
 
 def header_cell(column: str) -> str:
@@ -1439,7 +1673,7 @@ def render() -> str:
   <div><span>위험관리</span><b id="trader-risk">초기화 전</b></div>
 </div>
 <div class="trader-status" aria-live="polite"><span id="trader-price-status">가격 기준시각 확인 중</span><span>적용 전략 <b id="trader-strategy">기본 전략</b> · 일간 <b id="trader-daily-return">0.00%</b> · 주간 <b id="trader-weekly-return">0.00%</b> · 최대낙폭 <b id="trader-drawdown">0.00%</b></span></div></section>
-""" + equity_curve_section() + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "cash_pct", "risk_state"]) + """
+""" + equity_curve_section() + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state"]) + """
 <section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
@@ -1561,8 +1795,8 @@ def render() -> str:
 .highlight-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}}
 .highlight{{background:var(--bg-surface);color:var(--text-primary);border-radius:14px;padding:16px;box-shadow:0 1px 4px var(--shadow-color);border:1px solid var(--border)}} .highlight b{{display:block;color:var(--text-strong)}} .highlight span{{display:block;color:var(--text-primary);font-size:24px;font-weight:800;margin-top:8px}}
 .tabs{{margin-top:20px}} .tab-input{{display:none}} .tab-labels{{display:flex;flex-direction:column;gap:4px;width:200px;position:fixed;top:118px;left:max(24px,calc((100vw - 1648px)/2 + 24px));z-index:20;background:var(--bg-accent-card);border-radius:12px;padding:10px;box-shadow:0 1px 4px var(--shadow-color)}} .tab-label{{display:flex;align-items:center;gap:10px;border-radius:8px;padding:11px 14px;cursor:pointer;font-weight:600;color:var(--text-on-accent-muted)}} .tab-label:hover{{background:var(--hover-overlay)}} .tab-label svg{{flex-shrink:0}}
-.tab-panel{{display:none;margin-left:228px;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-real-account:checked~.tab-labels label[for="tab-real-account"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
-#tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-real-account:checked~#real-account-panel,#tab-system:checked~#system-panel{{display:block}}
+.tab-panel{{display:none;margin-left:228px;min-width:0}} #tab-stocks:checked~.tab-labels label[for="tab-stocks"],#tab-tracking:checked~.tab-labels label[for="tab-tracking"],#tab-trader:checked~.tab-labels label[for="tab-trader"],#tab-research:checked~.tab-labels label[for="tab-research"],#tab-real-account:checked~.tab-labels label[for="tab-real-account"],#tab-system:checked~.tab-labels label[for="tab-system"]{{background:var(--accent-bg);color:var(--accent-text)}}
+#tab-stocks:checked~#stocks-panel,#tab-tracking:checked~#tracking-panel,#tab-trader:checked~#trader-panel,#tab-research:checked~#research-panel,#tab-real-account:checked~#real-account-panel,#tab-system:checked~#system-panel{{display:block}}
 section{{min-width:0;background:var(--bg-section);border:1px solid var(--section-border);border-radius:12px;padding:20px;margin:20px 0;box-shadow:0 1px 4px var(--shadow-color);overflow-x:auto;overflow-y:hidden}} section h2{{margin:0 0 16px}}
 details{{min-width:0;background:var(--details-bg);border-radius:12px;margin:20px 0}} details summary{{cursor:pointer;padding:16px 18px;font-weight:700}} .details-body{{padding:0 18px 2px}} .details-body section{{box-shadow:none;border:1px solid var(--section-border)}}
 table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom:1px solid var(--table-border);text-align:left;padding:10px 12px;white-space:nowrap}} th{{background:var(--table-header-bg);position:sticky;top:0}} .num{{text-align:right;font-variant-numeric:tabular-nums}}
@@ -1571,7 +1805,7 @@ table{{border-collapse:collapse;width:100%;font-size:14px}} th,td{{border-bottom
 .nav-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:999px;background:var(--danger-bg);color:var(--danger-text);font-size:11px;font-weight:700}} .nav-badge[hidden]{{display:none}}
 .table-heading{{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 16px}} .table-heading h2{{margin:0}} .table-count{{color:var(--text-secondary);font-size:13px;font-weight:600;white-space:nowrap}}
 .pager{{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:10px}} .pager button{{border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-primary);border-radius:8px;padding:6px 10px;cursor:pointer}} .pager button.active{{background:var(--pager-active-bg);color:#fff;border-color:var(--pager-active-bg)}}
-.home-note{{margin:-6px 0 18px;font-size:13px}} .curve-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .equity-curve{{width:100%;height:auto;margin-top:6px}} .curve-grid{{stroke:var(--table-border)}} .curve-axis{{fill:var(--text-secondary);font-size:11px}} .curve-legend{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:10px;font-size:13px;color:var(--text-secondary)}} .curve-legend-item{{display:inline-flex;align-items:center;gap:7px}} .curve-legend-item i{{width:14px;height:3px;border-radius:2px;display:inline-block}} .curve-legend-item b{{font-weight:700}}
+.home-note{{margin:-6px 0 18px;font-size:13px}} .curve-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .equity-curve{{width:100%;height:auto;margin-top:6px}} .curve-grid{{stroke:var(--table-border)}} .curve-axis{{fill:var(--text-secondary);font-size:11px}} .curve-legend{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:10px;font-size:13px;color:var(--text-secondary)}} .curve-legend-item{{display:inline-flex;align-items:center;gap:7px}} .curve-legend-item i{{width:14px;height:3px;border-radius:2px;display:inline-block}} .curve-legend-item b{{font-weight:700}} .regime-card{{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 20px}} .regime-card p{{margin:10px 0 0;font-size:13px}} .review-text{{white-space:pre-wrap;word-break:break-word;background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;font-size:13px;line-height:1.6;max-height:520px;overflow:auto;margin:0}}
 .trader-profile-toggle{{display:flex;gap:8px;margin:0 0 18px}} .profile-button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-surface);color:var(--text-secondary);font-weight:600;cursor:pointer}} .profile-button[aria-pressed="true"]{{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}}
 .trader-account-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}} .trader-balance{{min-width:0;background:var(--bg-accent-card);color:var(--text-on-accent);border-radius:14px;padding:20px;box-shadow:0 1px 4px var(--shadow-color)}} .trader-balance span{{display:block;color:var(--text-on-accent-muted)}} .trader-balance strong{{display:block;font-size:clamp(21px,2vw,28px);margin-top:8px;overflow-wrap:anywhere}} .trader-status{{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;margin:18px 0}} .trader-form{{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap}} .trader-form label{{font-weight:600}} .trader-form input{{min-width:0;width:min(100%,320px);padding:10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text-primary)}} .trader-form button{{padding:10px 14px;border:0;border-radius:8px;background:var(--bg-accent-card);color:var(--text-on-accent);cursor:pointer}} .trader-form button:disabled{{opacity:.4;cursor:not-allowed}}
 .trader-breakdown{{display:flex;gap:12px 24px;justify-content:flex-end;flex-wrap:wrap;margin:0 2px 18px;color:var(--text-strong)}}
@@ -1601,18 +1835,21 @@ li{{margin:4px 0}}
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-tracking" name="tabs" type="radio">
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
+<input class="tab-input" id="tab-research" name="tabs" type="radio">
 <input class="tab-input" id="tab-real-account" name="tabs" type="radio">
 <input class="tab-input" id="tab-system" name="tabs" type="radio">
 <div class="tab-labels" role="tablist" aria-label="대시보드 화면">
 <label class="tab-label" for="tab-stocks" role="tab" tabindex="0">{nav_icon("home")}홈</label>
 <label class="tab-label" for="tab-tracking" role="tab" tabindex="0">{nav_icon("list")}추천 추적</label>
 <label class="tab-label" for="tab-trader" role="tab" tabindex="0">{nav_icon("chart")}가상 트레이더<span class="nav-badge" id="nav-badge-trader" hidden></span></label>
+<label class="tab-label" for="tab-research" role="tab" tabindex="0">{nav_icon("flask")}전략 연구</label>
 <label class="tab-label" for="tab-real-account" role="tab" tabindex="0">{nav_icon("wallet")}실제 계좌{f'<span class="nav-badge">{real_account_warning_count}</span>' if real_account_warning_count else ''}</label>
 <label class="tab-label" for="tab-system" role="tab" tabindex="0">{nav_icon("settings")}시스템 관리</label>
 </div>
 <div class="tab-panel" id="stocks-panel" role="tabpanel">{stock_tab}</div>
 <div class="tab-panel" id="tracking-panel" role="tabpanel">{tracking_tab}</div>
 <div class="tab-panel" id="trader-panel" role="tabpanel">{trader_tab}</div>
+<div class="tab-panel" id="research-panel" role="tabpanel">{research_tab()}</div>
 <div class="tab-panel" id="real-account-panel" role="tabpanel">{real_account_tab}</div>
 <div class="tab-panel" id="system-panel" role="tabpanel">{system_tab}</div>
 </div>
