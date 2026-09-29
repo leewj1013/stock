@@ -17,6 +17,8 @@ $shadowTraderPath = Join-Path $runtimeRoot "scripts\run_shadow_trader.ps1"
 $shadowTraderAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$shadowTraderPath`""
 $financialStatementsPath = Join-Path $runtimeRoot "scripts\run_financial_statements.ps1"
 $financialStatementsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$financialStatementsPath`""
+$consensusPath = Join-Path $runtimeRoot "scripts\run_consensus.ps1"
+$consensusAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$consensusPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -165,3 +167,7 @@ Register-ScheduledTask -TaskName "stockAlarmShadowTrader" -Action $shadowTraderA
 # collection (400+ tickers, ~30 minutes) runs once a week on Friday evening
 # rather than daily; the screener then reads whatever was last collected.
 Register-ScheduledTask -TaskName "stockAlarmFinancialStatements" -Action $financialStatementsAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "19:00") -Settings $taskSettings -Description "Collect full DART financial statements weekly (read-only)" -Force
+
+# WiseReport only serves the last ~13 weekly consensus points, so history is
+# kept only by collecting at least that often; weekly after the statements run.
+Register-ScheduledTask -TaskName "stockAlarmConsensus" -Action $consensusAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "20:00") -Settings $taskSettings -Description "Collect weekly analyst consensus history (read-only)" -Force
