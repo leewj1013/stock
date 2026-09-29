@@ -6,6 +6,10 @@ the exp_control account's equity (same rules as aggressive, 1억 funded), so
 no second copy of the strategy has to trade. Rebalanced to 30/70 on the first
 run of each quarter, paying MOVE_COST on the amount moved -- the same
 assumptions as the 2026-09-15 core-satellite backtest.
+
+A second record, index 70% + cash 30% (started 2026-09-29 after the
+fair-universe study found the index beat every strategy mix), uses the same
+code with a satellite that is plain cash: a constant "equity" that never moves.
 """
 from __future__ import annotations
 
@@ -20,6 +24,10 @@ CORE_TICKER = "069500"
 CORE_WEIGHT = 0.3
 START_CAPITAL = 100_000_000
 MOVE_COST = 0.0005
+INDEX70_DB_PATH = "data/stock_alarm_exp_index70.db"
+INDEX70_CORE_WEIGHT = 0.7
+# ponytail: idle cash earns 0%; add an MMF/CD rate if the comparison gets close
+CASH_UNIT_VALUE = START_CAPITAL
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS core_satellite_snapshots (
     snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +48,7 @@ def quarter(timestamp: str) -> tuple[int, int]:
     return int(timestamp[:4]), (int(timestamp[5:7]) - 1) // 3
 
 
-def next_snapshot(previous: dict | None, core_price: int, satellite_equity: int, now: str) -> dict:
+def next_snapshot(previous: dict | None, core_price: int, satellite_equity: int, now: str, core_weight: float = CORE_WEIGHT) -> dict:
     # ponytail: fractional ETF shares/units; integer shares only matter below ~1억 scale
     if previous is None:
         total, moved = START_CAPITAL, START_CAPITAL
@@ -49,12 +57,12 @@ def next_snapshot(previous: dict | None, core_price: int, satellite_equity: int,
         core_value = previous["core_shares"] * core_price
         total = core_value + previous["satellite_units"] * satellite_equity
         rebalance = quarter(now) != quarter(previous["created_at"])
-        moved = abs(core_value - total * CORE_WEIGHT) if rebalance else 0
+        moved = abs(core_value - total * core_weight) if rebalance else 0
     if rebalance:
         if previous is not None:
             total -= moved * MOVE_COST
-        core_shares = total * CORE_WEIGHT / core_price
-        satellite_units = total * (1 - CORE_WEIGHT) / satellite_equity
+        core_shares = total * core_weight / core_price
+        satellite_units = total * (1 - core_weight) / satellite_equity
     else:
         core_shares, satellite_units = previous["core_shares"], previous["satellite_units"]
     core_value = round(core_shares * core_price)
@@ -68,12 +76,12 @@ def next_snapshot(previous: dict | None, core_price: int, satellite_equity: int,
     }
 
 
-def record(core_price: int, satellite_equity: int, path: str = DB_PATH, now: str | None = None) -> dict:
+def record(core_price: int, satellite_equity: int, path: str = DB_PATH, now: str | None = None, core_weight: float = CORE_WEIGHT) -> dict:
     now = now or datetime.now().isoformat(timespec="seconds")
     with closing(connect(path)) as connection:
         connection.execute(SCHEMA)
         row = connection.execute("SELECT * FROM core_satellite_snapshots ORDER BY snapshot_id DESC LIMIT 1").fetchone()
-        snapshot = next_snapshot(dict(row) if row else None, core_price, satellite_equity, now)
+        snapshot = next_snapshot(dict(row) if row else None, core_price, satellite_equity, now, core_weight)
         columns = list(snapshot)
         connection.execute(
             f"INSERT INTO core_satellite_snapshots ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
@@ -92,6 +100,8 @@ def run() -> dict | None:
         return None
     snapshot = record(int(rows[-1][4]), int(satellite[0]["equity"]))
     print(f"core_satellite[core30] equity={snapshot['equity']:,} return={snapshot['return_pct']:.2f}% rebalanced={snapshot['rebalanced']}")
+    index70 = record(int(rows[-1][4]), CASH_UNIT_VALUE, path=INDEX70_DB_PATH, core_weight=INDEX70_CORE_WEIGHT)
+    print(f"core_satellite[index70] equity={index70['equity']:,} return={index70['return_pct']:.2f}% rebalanced={index70['rebalanced']}")
     return snapshot
 
 
