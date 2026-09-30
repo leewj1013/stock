@@ -1266,7 +1266,7 @@ def latest_daily_review_section() -> str:
             text = file.read()
     except (OSError, ValueError):
         return ("<section class='empty-section'><h2>매일 점검 보고서</h2><div class='empty-state'><b>아직 보고서가 없습니다</b>"
-                "<span>평일 17:36 점검 작업이 reports/daily_review/에 남깁니다.</span></div></section>")
+                "<span>평일 17:30 점검 작업(stockAlarmDailyReview)이 reports/daily_review/에 남깁니다.</span></div></section>")
     return ("<section><div class='table-heading'><h2>매일 점검 보고서</h2>"
             f"<span class='table-count'>{e(name[:-3])}</span></div><pre class='review-text'>{e(text)}</pre></section>")
 

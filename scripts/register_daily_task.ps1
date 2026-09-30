@@ -21,6 +21,8 @@ $consensusPath = Join-Path $runtimeRoot "scripts\run_consensus.ps1"
 $consensusAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$consensusPath`""
 $investorFlowPath = Join-Path $runtimeRoot "scripts\run_investor_flow.ps1"
 $investorFlowAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$investorFlowPath`""
+$dailyReviewPath = Join-Path $runtimeRoot "scripts\run_daily_review.ps1"
+$dailyReviewAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$dailyReviewPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -177,3 +179,8 @@ Register-ScheduledTask -TaskName "stockAlarmConsensus" -Action $consensusAction 
 # Investor net-buy history for future re-tests; resumable, so a weekly run
 # only fetches the sessions added since the last one.
 Register-ScheduledTask -TaskName "stockAlarmInvestorFlow" -Action $investorFlowAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "20:30") -Settings $taskSettings -Description "Collect weekly investor net-buy history (read-only)" -Force
+
+# Weekday review after the close and the 16:15 shadow pass; writes
+# reports/daily_review and alerts only on problems. Plain script, so it never
+# stalls on a permission prompt the way the Claude-run review did.
+Register-ScheduledTask -TaskName "stockAlarmDailyReview" -Action $dailyReviewAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "17:30") -Settings $taskSettings -Description "Write the daily review report; Telegram only on problems (read-only)" -Force
