@@ -1133,7 +1133,7 @@ def latest_full_sell_events(path: str) -> dict[str, dict]:
                 continue
             existing = result.get(ticker)
             if existing is None or event_time > existing["time"]:
-                result[ticker] = {"time": event_time, "reason": row.get("reason", ""), "stage": row.get("stage", "")}
+                result[ticker] = {"time": event_time, "reason": row.get("reason", ""), "stage": row.get("stage", ""), "close": row.get("close", "")}
     return result
 
 

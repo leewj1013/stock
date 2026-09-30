@@ -457,6 +457,76 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
             writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason, alert.sale_type, alert.stage, f"{alert.quantity_fraction:.4f}"])
 
 
+def real_account_holdings() -> dict[str, dict]:
+    """Domestic holdings in the real Toss account by ticker; {} on any failure
+    (no keys, network) so a Toss outage never blocks the sell check."""
+    try:
+        from .toss_client import shared_client
+        client = shared_client()
+        accounts = client.accounts()
+        if not accounts:
+            return {}
+        items = client.holdings(accounts[0]["accountSeq"]).get("items", [])
+    except Exception:
+        return {}
+    return {
+        str(item["symbol"]): item for item in items
+        if item.get("symbol") and item.get("marketCountry") == "KR" and float(item.get("quantity") or 0) > 0
+    }
+
+
+def unfilled_sell_reminders(
+    holdings: dict[str, dict],
+    positions: list[dict[str, str]],
+    skip: set[str],
+    now: datetime,
+    path: str = SELL_ALERTS_LOG,
+) -> list[dict]:
+    """Recent full-sell alerts whose ticker is still held in the real account.
+
+    Only full sells: a missed partial take-profit leaves the rest held by
+    design, and the holdings API can't tell which shares were meant to go.
+    Tickers re-recommended after the alert are skipped -- that newer entry
+    gets its own sell monitoring.
+    """
+    from .app import latest_full_sell_events
+
+    window = timedelta(days=env_float("REAL_SELL_REMIND_DAYS", 5))
+    by_ticker = {position["ticker"].strip(): position for position in positions}
+    reminders = []
+    for ticker, event in latest_full_sell_events(path).items():
+        held = holdings.get(ticker)
+        if not held or ticker in skip or now - event["time"] > window:
+            continue
+        position = by_ticker.get(ticker)
+        if position and not position_was_alerted(position, path=path):
+            continue
+        reminders.append({
+            "ticker": ticker,
+            "name": str(held.get("name") or ticker),
+            "quantity": held.get("quantity"),
+            "alerted_at": event["time"],
+            "alert_price": int(float(event["close"] or 0)),
+            "last_price": int(float(held.get("lastPrice") or 0)),
+            "reason": event["reason"],
+        })
+    return reminders
+
+
+def format_reminder_message(reminders: list[dict]) -> str:
+    lines = [f"[매도 미체결 · {datetime.now().strftime('%H:%M')}] 실계좌 보유 중 {len(reminders)}건"]
+    for row in reminders:
+        change = f" ({(row['last_price'] / row['alert_price'] - 1) * 100:+.2f}%)" if row["alert_price"] and row["last_price"] else ""
+        lines.extend([
+            "",
+            f"🔁 {row['name']}({row['ticker']}) {row['quantity']}주 아직 보유",
+            f"매도 알림 {row['alerted_at'].strftime('%m-%d %H:%M')} {row['alert_price']:,}원 → 현재 {row['last_price']:,}원{change}",
+            f"사유: {short_reason(row['reason'])}",
+        ])
+    lines.append("매도 전까지 점검마다 다시 알립니다.")
+    return "\n".join(lines)
+
+
 def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict, set[str]]:
     from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
     state = virtual_trader_state(path=profile["db_path"])
@@ -519,10 +589,18 @@ def run() -> str:
     # account never bought (tracked for the 추천 추적 tab); those still get
     # logged above but shouldn't page as a "sell" alert with nothing to sell.
     notify_alerts = [alert for alert in alerts if alert.ticker in held_tickers]
-    if not notify_alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
-        return "no_alerts"
     from .notifier import send_notification
 
+    # Tickers alerted in this very run are skipped: the user hasn't had a
+    # chance to act yet, and the fresh alert already covers them.
+    reminders = unfilled_sell_reminders(
+        real_account_holdings(), positions, {alert.ticker for alert in alerts}, datetime.now(),
+        PROFILES["aggressive"]["sell_alerts_log"],
+    )
+    if reminders:
+        send_notification(format_reminder_message(reminders), event_type="sell_reminder", tickers=[row["ticker"] for row in reminders])
+    if not notify_alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
+        return "no_alerts"
     return send_notification(format_message(notify_alerts, virtual_result), event_type="sell", tickers=[alert.ticker for alert in notify_alerts])
 
 

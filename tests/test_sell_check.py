@@ -5,10 +5,41 @@ import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, active_positions, alert_summary, alerted_tickers, check_position, find_alerts, format_message, max_returns, previous_returns, read_positions, run, write_log
+from stock_alarm.sell_check import SellAlert, active_positions, alert_summary, alerted_tickers, check_position, find_alerts, format_message, format_reminder_message, max_returns, previous_returns, read_positions, run, unfilled_sell_reminders, write_log
 
 
 class SellCheckTest(unittest.TestCase):
+    def setUp(self):
+        # run() must never reach the real Toss account from tests.
+        holdings = patch("stock_alarm.sell_check.real_account_holdings", return_value={})
+        holdings.start()
+        self.addCleanup(holdings.stop)
+
+    def _sell_log(self, rows: str) -> str:
+        with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
+            file.write("created_at,ticker,name,entry_price,close,return_pct,summary,reason,sale_type,stage,quantity_fraction\n" + rows)
+        self.addCleanup(lambda: os.path.exists(file.name) and os.unlink(file.name))
+        return file.name
+
+    def test_unfilled_sell_reminders_only_for_recent_full_sells_still_held(self):
+        path = self._sell_log(
+            "2026-09-29T10:00:00,005930,Samsung,70000,65000,-7.14,손실,손절 기준 -5.0% 이탈,full,,1.0000\n"
+            "2026-09-29T10:00:00,000660,SK,150000,165000,10.00,익절,1차 익절,partial,take_profit_1,0.5000\n"
+            "2026-09-10T10:00:00,035420,NAVER,200000,190000,-5.00,손실,손절,full,,1.0000\n"
+            "2026-09-29T10:00:00,051910,LG화학,300000,280000,-6.67,손실,손절,full,,1.0000\n"
+            "2026-09-29T10:00:00,068270,셀트리온,180000,170000,-5.56,손실,손절,full,,1.0000\n"
+        )
+        holdings = {ticker: {"symbol": ticker, "name": ticker, "quantity": 3, "lastPrice": "64000"}
+                    for ticker in ("005930", "000660", "035420", "068270")}
+        # 068270 was re-recommended after its alert: the new entry is monitored on its own.
+        positions = [{"ticker": "068270", "entry_price": "171000", "entry_date": "2026-09-30T09:30:00"}]
+        # 051910 isn't held (sold), 000660 was partial, 035420 is past the window.
+        rows = unfilled_sell_reminders(holdings, positions, set(), datetime(2026, 9, 30, 11), path)
+        self.assertEqual(["005930"], [row["ticker"] for row in rows])
+        self.assertEqual(65000, rows[0]["alert_price"])
+        self.assertIn("-1.54%", format_reminder_message(rows))
+        self.assertEqual([], unfilled_sell_reminders(holdings, positions, {"005930"}, datetime(2026, 9, 30, 11), path))
+
     def test_read_positions(self):
         with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:
             file.write("ticker,name,entry_price,entry_date\n005930,Samsung,80000,2026-07-25\n")
