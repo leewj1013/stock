@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import uuid
+from pathlib import Path
 from contextlib import closing
 from datetime import datetime
 from typing import Any, Iterable
@@ -778,7 +779,8 @@ def query_rows(sql: str, parameters: tuple = (), path: str = DB_PATH) -> list[di
     if not os.path.exists(path):
         return []
     try:
-        with closing(sqlite3.connect(path)) as connection:
+        # Read-only: a query can never modify (or create) the database.
+        with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as connection:
             connection.row_factory = sqlite3.Row
             return [dict(row) for row in connection.execute(sql, parameters).fetchall()]
     except sqlite3.DatabaseError:

@@ -1,4 +1,6 @@
 import os
+import sqlite3
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -23,3 +25,47 @@ def isolated_env(tmp_path, monkeypatch):
     with patch.dict(os.environ), patch("stock_alarm.shadow_trader.sync_shadow_sells", return_value=0):
         os.environ.pop("STOCK_ALARM_SECURE_ENV_PATH", None)
         yield
+
+
+REAL_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+@pytest.fixture(autouse=True)
+def no_writes_to_real_data(monkeypatch):
+    # The real DBs hold live virtual accounts (and real deposits in the neutral
+    # one). Any test that opens one for writing fails here instead of quietly
+    # changing live data; read-only URIs (file:...?mode=ro) stay allowed.
+    real_connect = sqlite3.connect
+
+    def guarded(database, *args, **kwargs):
+        text = os.fspath(database) if not isinstance(database, str) else database
+        read_only = kwargs.get("uri") and "mode=ro" in text
+        path = Path(text[5:].split("?", 1)[0] if text.startswith("file:") else text)
+        if not read_only and text != ":memory:" and path.suffix == ".db":
+            resolved = (Path.cwd() / path).resolve() if not path.is_absolute() else path.resolve()
+            if REAL_DATA_DIR in resolved.parents:
+                raise AssertionError(f"test tried to open real data for writing: {resolved}")
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", guarded)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def redirect_default_db(tmp_path, monkeypatch):
+    # Most code reaches the DB through data_store.connect() with the real
+    # default path (bound as a default argument, so patching DB_PATH is not
+    # enough). Send those to a throwaway DB; the guard above still catches
+    # anything that bypasses data_store.
+    from stock_alarm import data_store
+
+    real = data_store.connect
+
+    def redirected(path=data_store.DB_PATH):
+        resolved = Path(path).resolve()
+        if REAL_DATA_DIR in resolved.parents:
+            path = str(tmp_path / "redirected" / resolved.name)
+        return real(path)
+
+    monkeypatch.setattr(data_store, "connect", redirected)
+    yield

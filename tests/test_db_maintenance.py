@@ -46,7 +46,15 @@ class DbMaintenanceTest(unittest.TestCase):
             "missing": {"db_path": str(Path(self.directory.name) / "does_not_exist.db")},
         }
 
-        with patch("stock_alarm.trading_profiles.PROFILES", profiles):
+        from stock_alarm import db_maintenance
+
+        real_backup = db_maintenance.backup_database
+        backups = str(Path(self.directory.name) / "backups")
+        # The default backup_dir is the real data/backups, and backup_database
+        # prunes by file-name prefix -- a test run there used to push out the
+        # real stock_alarm / stock_alarm_neutral backups.
+        with patch("stock_alarm.trading_profiles.PROFILES", profiles), \
+             patch.object(db_maintenance, "backup_database", lambda path, **kw: real_backup(path, backup_dir=backups, **kw)):
             results = run_all_profiles()
 
         self.assertEqual({"aggressive", "neutral"}, set(results.keys()))
