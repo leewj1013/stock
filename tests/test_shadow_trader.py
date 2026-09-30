@@ -7,7 +7,7 @@ from unittest.mock import patch
 from stock_alarm.data_store import connect, virtual_buy, virtual_deposit
 from stock_alarm.shadow_trader import (
     _size_buy_orders, compute_shadow_sell_orders, latest_trade_id, plan_shadow_buys, record_intraday_buys,
-    record_shadow_orders, run,
+    record_shadow_orders, run, shadow_ledger, sync_shadow_sells,
 )
 
 
@@ -133,6 +133,45 @@ class ShadowTraderTest(unittest.TestCase):
         self.assertEqual(5_000_000, context["budget"])
         self.assertEqual([], orders)
         self.assertIn("목표의 50% 미만", decisions[0]["verdict"])
+
+    def _seed_mirror_case(self):
+        with closing(connect(self.path)) as db:
+            db.execute("INSERT INTO shadow_orders(created_at,ticker,name,side,order_type,quantity,price,cost,reason) VALUES('2026-09-17T09:10:00','A','Alpha','BUY','MARKET',100,10000,1000000,'recommendation')")
+            db.execute("INSERT INTO virtual_trades(created_at,ticker,name,price,quantity,cost,allocation_pct,score,source) VALUES('2026-09-17T09:09:00','A','Alpha',10000,200,2000000,10,70,'recommendation')")
+            db.execute("INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason,sale_type,stage) VALUES('2026-09-18T09:20:00','A','Alpha',11000,100,1100000,1000000,100000,'1차 익절 목표 +10.0% 도달','partial','take_profit_1')")
+            db.execute("INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason,sale_type,stage) VALUES('2026-09-22T09:08:00','A','Alpha',9500,100,950000,1000000,-50000,'20일선 2회 연속 이탈, 직전 평가 대비 수익률 악화','full','')")
+            db.commit()
+
+    def test_virtual_sells_are_mirrored_once_at_the_same_fraction_and_price(self):
+        from datetime import datetime
+        self._seed_mirror_case()
+        self.assertEqual(2, sync_shadow_sells(self.path, now=datetime(2026, 9, 30, 12, 0)))
+        self.assertEqual(0, sync_shadow_sells(self.path, now=datetime(2026, 9, 30, 12, 5)))  # idempotent
+        with closing(connect(self.path)) as db:
+            sells = db.execute("SELECT quantity, price, reason FROM shadow_orders WHERE side='SELL' ORDER BY created_at").fetchall()
+        self.assertEqual([(50, 11000), (50, 9500)], [(q, p) for q, p, _ in sells])
+        self.assertTrue(sells[0][2].startswith("[사후 보정] 1차 익절"))
+        self.assertIn("20일선 2회 연속 이탈 외 1건", sells[1][2])
+        ledger = shadow_ledger(self.path, capital=10_000_000)
+        self.assertEqual([], ledger["holdings"])
+        self.assertEqual(50 * 1000 - 50 * 500, ledger["realized"])  # +50k then -25k
+        self.assertEqual(10_000_000 + 25_000, ledger["cash"])
+
+    @patch.dict(os.environ, {"VIRTUAL_TRADER_MAX_POSITION_PCT": "100", "RISK_MAX_EXPOSURE_PCT": "100"})
+    @patch("stock_alarm.app.current_market_regime", return_value="bull")
+    @patch("stock_alarm.app.naver_market_up_ratio", return_value=0.5)  # 40% market limit
+    @patch("stock_alarm.dashboard.real_account_state")
+    def test_assumed_capital_counts_shadow_positions_from_earlier_days(self, real_state, _breadth, _regime):
+        real_state.return_value = {"connected": True, "cash": 0, "total_equity": 0, "holdings": []}
+        with closing(connect(self.path)) as db:
+            db.execute("INSERT INTO shadow_orders(created_at,ticker,name,side,order_type,quantity,price,cost,reason) VALUES('2026-09-01T09:10:00','OLD','Old','BUY','MARKET',3500,10000,35000000,'recommendation')")
+            db.commit()
+        trades = [{"trade_id": 2, "ticker": "NEW", "name": "New", "price": 10_000, "allocation_pct": 15.0}]
+        with patch.dict(os.environ, {"SHADOW_TRADER_ASSUMED_CAPITAL": "100000000"}):
+            orders, decisions, context = plan_shadow_buys(trades, path=self.path)
+        # 40% of 1억 = 4,000만원; the 3,500만원 bought on an earlier day still counts.
+        self.assertEqual(5_000_000, context["budget"])
+        self.assertEqual([], orders)
 
     @patch("stock_alarm.shadow_trader.log_decisions")
     @patch("stock_alarm.shadow_trader.plan_shadow_buys", return_value=([], [], {}))

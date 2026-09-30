@@ -80,6 +80,128 @@ def _shadow_buys_today(path: str) -> dict[str, int]:
     return spent
 
 
+def shadow_ledger(path: str = DB_PATH, until: str | None = None, capital: int | None = None) -> dict:
+    """The hypothetical real account implied by shadow_orders (up to `until`).
+
+    Cash starts from SHADOW_TRADER_ASSUMED_CAPITAL; buys add at cost, sells
+    remove shares at their average cost and book the difference as realized.
+    """
+    from .app import env_float
+    from .data_store import query_rows
+
+    capital = int(env_float("SHADOW_TRADER_ASSUMED_CAPITAL", 0)) if capital is None else capital
+    rows = query_rows("SELECT * FROM shadow_orders ORDER BY created_at, shadow_order_id", path=path)
+    held: dict[str, dict] = {}
+    cash, realized = capital, 0
+    for row in rows:
+        if until and str(row["created_at"]) > until:
+            break
+        ticker, quantity, price = str(row["ticker"]), int(row["quantity"] or 0), int(row["price"] or 0)
+        position = held.setdefault(ticker, {"ticker": ticker, "name": row.get("name") or ticker, "quantity": 0, "cost": 0})
+        if row["side"] == "BUY":
+            position["quantity"] += quantity
+            position["cost"] += int(row["cost"] or price * quantity)
+            cash -= int(row["cost"] or price * quantity)
+        elif row["side"] == "SELL" and position["quantity"]:
+            quantity = min(quantity, position["quantity"])
+            cost_out = round(position["cost"] * quantity / position["quantity"])
+            realized += price * quantity - cost_out
+            cash += price * quantity
+            position["quantity"] -= quantity
+            position["cost"] -= cost_out
+    holdings = [position for position in held.values() if position["quantity"] > 0]
+    return {"capital": capital, "cash": cash, "realized": realized, "holdings": holdings}
+
+
+def shadow_portfolio(path: str = DB_PATH) -> dict:
+    """Shadow ledger valued at the latest close, next to the virtual account
+    over the same stretch (from the first shadow order), or {} if none."""
+    from datetime import timedelta
+
+    from .app import naver_rows
+    from .dashboard import time_weighted_returns
+    from .data_store import query_rows
+
+    first = query_rows("SELECT MIN(created_at) AS first FROM shadow_orders", path=path)
+    if not first or not first[0]["first"]:
+        return {}
+    since = str(first[0]["first"])[:10]
+    ledger = shadow_ledger(path)
+    if ledger["capital"] <= 0:
+        return {}  # no assumed capital: nothing to measure a return against
+    holdings = []
+    for row in ledger["holdings"]:
+        try:
+            rows = naver_rows(row["ticker"], date.today() - timedelta(days=10), date.today(), max_cache_age_seconds=300)
+            price = int(rows[-1][4]) if rows else 0
+        except Exception:
+            price = 0
+        value = price * row["quantity"] if price else row["cost"]
+        holdings.append({**row, "average_price": round(row["cost"] / row["quantity"]), "current_price": price or "",
+                         "valuation": value, "profit_loss": value - row["cost"],
+                         "return_pct": f"{(value / row['cost'] - 1) * 100:.2f}" if row["cost"] else ""})
+    equity = ledger["cash"] + sum(row["valuation"] for row in holdings)
+    curve = time_weighted_returns(path)
+    before = [value for day, value in curve.items() if day < since]
+    virtual = ((1 + list(curve.values())[-1] / 100) / (1 + (before[-1] if before else 0) / 100) - 1) * 100 if curve else None
+    return {
+        "since": since, "capital": ledger["capital"], "cash": ledger["cash"], "equity": equity,
+        "realized": ledger["realized"], "unrealized": sum(row["profit_loss"] for row in holdings),
+        "return_pct": (equity / ledger["capital"] - 1) * 100 if ledger["capital"] else None,
+        "virtual_return_pct": virtual, "holdings": holdings,
+    }
+
+
+MIRROR_TAG = "virtual sale_id="
+
+
+def sync_shadow_sells(path: str = DB_PATH, now: datetime | None = None) -> int:
+    """Mirror every aggressive virtual sale onto the shadow position it maps to.
+
+    Sells the same fraction of the shadow holding that the virtual account
+    sold of its own (all of it on a full exit), at the virtual sale price and
+    time. Idempotent: each mirror carries its sale_id, so the intraday hook and
+    a one-off backfill can share this. Sales older than a few minutes when
+    first mirrored are tagged as a backfill.
+    """
+    from .data_store import query_rows
+
+    orders = query_rows("SELECT created_at, reason FROM shadow_orders ORDER BY created_at", path=path)
+    if not orders:
+        return 0
+    first = str(orders[0]["created_at"])
+    mirrored = {str(row["reason"]).split(MIRROR_TAG, 1)[1].split()[0] for row in orders if MIRROR_TAG in str(row["reason"] or "")}
+    sales = query_rows("SELECT * FROM virtual_sales WHERE created_at >= ? ORDER BY sale_id", (first,), path)
+    now = now or datetime.now()
+    recorded = 0
+    for sale in sales:
+        if str(sale["sale_id"]) in mirrored:
+            continue
+        ticker, at = str(sale["ticker"]), str(sale["created_at"])
+        bought = query_rows("SELECT COALESCE(SUM(quantity), 0) AS q FROM virtual_trades WHERE ticker=? AND created_at <= ?", (ticker, at), path)
+        sold_before = query_rows("SELECT COALESCE(SUM(quantity), 0) AS q FROM virtual_sales WHERE ticker=? AND sale_id < ?", (ticker, sale["sale_id"]), path)
+        virtual_before = int(bought[0]["q"]) - int(sold_before[0]["q"])
+        shadow = next((row for row in shadow_ledger(path, until=at)["holdings"] if row["ticker"] == ticker), None)
+        if not shadow or virtual_before <= 0:
+            continue
+        fraction = min(1.0, int(sale["quantity"]) / virtual_before)
+        quantity = shadow["quantity"] if sale["sale_type"] == "full" or fraction >= 0.999 else int(shadow["quantity"] * fraction)
+        if quantity < 1:
+            continue
+        backfill = "[사후 보정] " if (now - datetime.fromisoformat(at)).total_seconds() > 600 else ""
+        from .sell_check import short_reason
+        with closing(connect(path)) as connection:
+            connection.execute(
+                """INSERT INTO shadow_orders(created_at, ticker, name, side, order_type, quantity, price, cost, reason)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (at, ticker, sale["name"], "SELL", "MARKET", quantity, int(sale["price"]), int(sale["price"]) * quantity,
+                 f"{backfill}{short_reason(sale['reason'])} ({MIRROR_TAG}{sale['sale_id']} )"),
+            )
+            connection.commit()
+        recorded += 1
+    return recorded
+
+
 def plan_shadow_buys(trades: list[dict], path: str = DB_PATH) -> tuple[list[dict], list[dict], dict]:
     """(orders, per-candidate decisions, context) for the real account.
 
@@ -118,8 +240,13 @@ def plan_shadow_buys(trades: list[dict], path: str = DB_PATH) -> tuple[list[dict
         open_costs[ticker] = open_costs.get(ticker, 0) + cost
     spent_today = sum(earlier_today.values())
     if assumed_capital > 0:
-        account_equity = assumed_capital + int(sum(float(row.get("valuation") or 0) for row in state.get("holdings", [])))
-        cash = assumed_capital - spent_today
+        # No real money yet: the shadow account's own earlier buys are its
+        # holdings, not just today's -- otherwise every day spends the full
+        # assumed capital again.
+        ledger = shadow_ledger(path, capital=assumed_capital)
+        open_costs = {row["ticker"]: row["cost"] for row in ledger["holdings"]}
+        account_equity = assumed_capital + ledger["realized"]
+        cash = ledger["cash"]
     else:
         account_equity = int(state["total_equity"])
         cash = int(state["cash"]) - spent_today

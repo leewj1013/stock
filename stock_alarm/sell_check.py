@@ -604,6 +604,13 @@ def run() -> str:
     except Exception:
         finish_run(run_id, "failed")
         raise
+    try:
+        # Observation only: mirror the virtual sells just made onto the shadow
+        # (hypothetical real-account) positions, like the buys are.
+        from .shadow_trader import sync_shadow_sells
+        sync_shadow_sells()
+    except Exception as error:
+        print(f"shadow_trader sell mirror failed {error!r}")
 
     # Secondary profiles are comparison-only: they share the aggressive
     # account's run_id/audit trail only when it's their turn to log

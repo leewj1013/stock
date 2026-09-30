@@ -17,6 +17,9 @@ def isolated_env(tmp_path, monkeypatch):
     for name in ("DEFAULT_ENV_PATH", "DEFAULT_SECURE_ENV_PATH"):
         if hasattr(app, name):  # the secure store path only exists in newer app.py
             monkeypatch.setattr(app, name, missing)
-    with patch.dict(os.environ):
+    # sell_check.run() mirrors virtual sells onto shadow_orders in the default
+    # (real) DB; tests that drive run() must never write there. Unit tests of
+    # the mirror import the real function directly and pass a temp path.
+    with patch.dict(os.environ), patch("stock_alarm.shadow_trader.sync_shadow_sells", return_value=0):
         os.environ.pop("STOCK_ALARM_SECURE_ENV_PATH", None)
         yield

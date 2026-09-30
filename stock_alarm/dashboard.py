@@ -1728,6 +1728,27 @@ def render() -> str:
         }
         for row in recent_shadow_orders(30)
     ]
+    try:
+        from .shadow_trader import shadow_portfolio
+        shadow = shadow_portfolio()
+    except Exception:
+        shadow = {}
+    if shadow:
+        virtual = f"{shadow['virtual_return_pct']:+.2f}%" if shadow.get("virtual_return_pct") is not None else "-"
+        shadow_section = (
+            "<section><div class='table-heading'><h2>섀도 포트폴리오 (관찰 전용 · 실제 주문 없음)</h2>"
+            f"<span class='table-count'>{e(shadow['since'])}부터 · 가정금액 {shadow['capital']:,}원 · 가상계좌 매도를 같은 비율로 따라 팝니다</span></div>"
+            "<div class='trader-account-grid'>"
+            f"<div class='trader-balance primary'><span>섀도 총자산</span><strong>{shadow['equity']:,}원</strong></div>"
+            f"<div class='trader-balance'><span>섀도 수익률</span><strong>{shadow['return_pct']:+.2f}%</strong></div>"
+            f"<div class='trader-balance'><span>가상계좌(같은 기간)</span><strong>{virtual}</strong></div>"
+            f"<div class='trader-balance'><span>실현 / 평가손익</span><strong>{shadow['realized']:+,} / {shadow['unrealized']:+,}원</strong></div>"
+            "</div></section>"
+            + user_table("섀도 보유종목", shadow["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct"],
+                         "섀도 보유종목이 없습니다.")
+        )
+    else:
+        shadow_section = ""
     real_account_tab = f"""
 <div class="home-heading"><div><h2>실제 계좌</h2><p class="muted">토스증권 API로 연결된 실제 증권 계좌입니다 (조회 전용, 자동 매매 없음, 국내주식만 표시).</p></div><span class="system-pill {'ok' if real_account['connected'] else 'bad'}">{'연결됨 · ' + display_value(real_account.get('account_type', '')) if real_account['connected'] else '연결 안 됨'}</span></div>
 {f'''<div class="trader-account-grid">
@@ -1739,6 +1760,7 @@ def render() -> str:
 {user_table("보유종목", real_account["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct", "watch_state"], "보유 중인 종목이 없습니다.")}
 {user_table("최근 주문 내역", real_account["orders"], ["ordered_at", "ticker", "order_side", "order_type", "order_status", "order_quantity", "filled_price", "filled_amount", "commission_amount"], "최근 체결/취소된 주문이 없습니다.")}
 {user_table("수수료율", real_account["commissions"], ["commission_rate", "start_date", "end_date"], "수수료율 정보를 확인할 수 없습니다.")}''' if real_account['connected'] else f'''<section class="empty-section"><h2>{e(display_label("실제 계좌"))}</h2><div class="empty-state"><b>계좌에 연결할 수 없습니다</b><span>{e(real_account.get("reason", ""))}</span></div></section>'''}
+{shadow_section}
 {user_table("섀도 주문 로그 (관찰 전용 · 실제 주문 없음)", shadow_order_rows, ["created_at", "ticker", "name", "order_side", "order_type", "order_quantity", "price", "cost", "reason"], "자동매매가 켜져 있었다면 나갔을 주문을 계산만 해서 기록합니다. 아직 기록된 항목이 없습니다.")}
 """
     market_calendar = market_calendar_state()

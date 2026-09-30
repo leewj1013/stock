@@ -95,10 +95,17 @@ def shadow_lines() -> list[str]:
     )
     buys = [row for row in rows if row.get("side") == "BUY"]
     sells = [row for row in rows if row.get("side") == "SELL"]
-    if not rows:
-        return ["", "■ 실계좌였다면(섀도)", "주문 없음"]
     spent = sum(int(row.get("cost") or 0) for row in buys)
-    return ["", "■ 실계좌였다면(섀도)", f"매수 {len(buys)}건 · {_won(spent)} · 매도 {len(sells)}건"]
+    lines = ["", "■ 실계좌였다면(섀도)", f"매수 {len(buys)}건 · {_won(spent)} · 매도 {len(sells)}건" if rows else "주문 없음"]
+    try:
+        from .shadow_trader import shadow_portfolio
+        shadow = shadow_portfolio()
+    except Exception:
+        shadow = {}
+    if shadow and shadow.get("return_pct") is not None:
+        virtual = f" · 가상계좌 {shadow['virtual_return_pct']:+.2f}%" if shadow.get("virtual_return_pct") is not None else ""
+        lines.append(f"{shadow['since'][5:].replace('-', '/')} 이후 섀도 {shadow['return_pct']:+.2f}%{virtual} · 보유 {len(shadow['holdings'])}종목")
+    return lines
 
 
 def regime_line(labels: list[dict[str, str]]) -> str:
