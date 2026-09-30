@@ -50,12 +50,20 @@ def fetch_page(ticker: str, bizdate: str) -> list[dict]:
 
 
 def collect_ticker(connection, ticker: str, start: str, pause: float = 0.3) -> int:
-    oldest = connection.execute("SELECT MIN(bizdate) FROM investor_flow WHERE ticker=?", (ticker,)).fetchone()[0]
+    oldest, newest = connection.execute("SELECT MIN(bizdate), MAX(bizdate) FROM investor_flow WHERE ticker=?", (ticker,)).fetchone()
     # bizdate is exclusive: the API returns sessions strictly before it, so
-    # starting at today skips today's still-changing row.
-    cursor = oldest or date.today().strftime("%Y%m%d")
+    # starting at today skips today's still-changing row. Fill forward from
+    # today down to what is stored, then keep backfilling below the oldest.
+    today = date.today().strftime("%Y%m%d")
+    added = _walk_back(connection, ticker, today, newest or start, pause)
+    if oldest:
+        added += _walk_back(connection, ticker, oldest, start, pause)
+    return added
+
+
+def _walk_back(connection, ticker: str, cursor: str, stop: str, pause: float) -> int:
     added = 0
-    while cursor > start:
+    while cursor > stop:
         for attempt in range(3):
             try:
                 items = fetch_page(ticker, cursor)

@@ -19,6 +19,8 @@ $financialStatementsPath = Join-Path $runtimeRoot "scripts\run_financial_stateme
 $financialStatementsAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$financialStatementsPath`""
 $consensusPath = Join-Path $runtimeRoot "scripts\run_consensus.ps1"
 $consensusAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$consensusPath`""
+$investorFlowPath = Join-Path $runtimeRoot "scripts\run_investor_flow.ps1"
+$investorFlowAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$investorFlowPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -171,3 +173,7 @@ Register-ScheduledTask -TaskName "stockAlarmFinancialStatements" -Action $financ
 # WiseReport only serves the last ~13 weekly consensus points, so history is
 # kept only by collecting at least that often; weekly after the statements run.
 Register-ScheduledTask -TaskName "stockAlarmConsensus" -Action $consensusAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "20:00") -Settings $taskSettings -Description "Collect weekly analyst consensus history (read-only)" -Force
+
+# Investor net-buy history for future re-tests; resumable, so a weekly run
+# only fetches the sessions added since the last one.
+Register-ScheduledTask -TaskName "stockAlarmInvestorFlow" -Action $investorFlowAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At "20:30") -Settings $taskSettings -Description "Collect weekly investor net-buy history (read-only)" -Force
