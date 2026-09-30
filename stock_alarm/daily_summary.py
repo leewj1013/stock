@@ -12,7 +12,7 @@ from .data_store import (
 )
 from .notifier import send_notification
 from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv
-from .sell_check import short_reason
+from .sell_check import real_account_holdings, short_reason
 from .virtual_trader_report import current_prices
 
 
@@ -64,6 +64,26 @@ def unbought_recommendation_lines(recommendations: list[dict], buys: list[dict],
         return []
     extra = f" 외 {len(names) - limit}종목" if len(names) > limit else ""
     return ["", "■ 오늘 추천(미매수)", ", ".join(names[:limit]) + extra]
+
+
+def missed_buy_lines(buys: list[dict], real_holdings: dict[str, dict], close_for=None) -> list[str]:
+    """Today's virtual buys the real account never filled -- expired, not chased.
+
+    Silent while the real account holds nothing: before real trading starts
+    every virtual buy would otherwise show up as missed.
+    """
+    if not real_holdings:
+        return []
+    if close_for is None:
+        from .toss_client import latest_close_for as close_for
+    lines = []
+    for row in {str(row["ticker"]): row for row in buys}.values():
+        if row["ticker"] in real_holdings:
+            continue
+        price, close = int(row.get("price") or 0), close_for(row["ticker"])
+        change = f" → 종가 {close:,}원({(close / price - 1) * 100:+.1f}%)" if price and close else ""
+        lines.append(f"{row.get('name') or row['ticker']} 신호가 {price:,}원{change}")
+    return ["", "■ 실계좌 미매수(만료 · 내일 추격 금지)", *lines] if lines else []
 
 
 def shadow_lines() -> list[str]:
@@ -189,6 +209,7 @@ def message() -> str:
     lines.append("")
     lines.extend(_trade_lines(buys, sales))
     lines.extend(unbought_recommendation_lines(recommendations, buys))
+    lines.extend(missed_buy_lines(buys, real_account_holdings()))
     lines.extend(shadow_lines())
     lines.extend(research_lines())
     lines.extend(["", "■ 내일 확인"])

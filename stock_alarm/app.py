@@ -1567,11 +1567,15 @@ def format_message(picks: list[Pick], virtual_result: dict | None = None, fundam
         stop_price, stop_pct, target_price, target_pct = stop_and_target(pick)
         lines.extend(["", f"{index}. {pick.name}({pick.ticker})"])
         execution = executions.get(pick.ticker)
+        price = int(execution.get("price") or pick.close) if execution else pick.close
         if execution:
-            price = int(execution.get("price") or pick.close)
             lines.append(f"매수 {execution['quantity']:,}주 × {price:,}원 = {execution['cost']:,}원")
         else:
             lines.append(f"현재가 {pick.close:,}원 · 목표 비중 {allocations.get(pick.ticker, 0):.0f}%")
+        # ponytail: fixed chase cap, not backtested -- revisit once real fills
+        # vs alert prices accumulate.
+        chase_pct = env_float("BUY_CHASE_LIMIT_PCT", 2)
+        lines.append(f"매수 상한 {int(price * (1 + chase_pct / 100)):,}원(+{chase_pct:g}%) · 넘으면 추격 매수 금지")
         lines.append(f"손절 {stop_price:,}원(-{stop_pct:.1f}%) · 1차 익절 {target_price:,}원(+{target_pct:.0f}%)")
         signal = reason_summary(pick.volume_ratio, pick.news_score, pick.disclosure_score, pick.performance_penalty)
         detail = f"신호: {signal} · 거래량 {pick.volume_ratio:.1f}배"

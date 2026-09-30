@@ -11,8 +11,8 @@ class DailySummaryTest(unittest.TestCase):
     def setUp(self):
         # message() also reads today's shadow orders and the experiment
         # accounts; keep those off the real DBs and network.
-        for name in ("shadow_lines", "research_lines"):
-            patcher = patch(f"stock_alarm.daily_summary.{name}", return_value=[])
+        for name, value in (("shadow_lines", []), ("research_lines", []), ("real_account_holdings", {})):
+            patcher = patch(f"stock_alarm.daily_summary.{name}", return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -56,6 +56,15 @@ class DailySummaryTest(unittest.TestCase):
         many = [{"ticker": str(i), "name": f"N{i}"} for i in range(7)]
         self.assertEqual("N0, N1, N2, N3, N4 외 2종목", unbought_recommendation_lines(many, [])[-1])
         self.assertEqual([], unbought_recommendation_lines(recommendations[:1], [{"ticker": "A"}]))
+
+    def test_missed_real_buys_expire_instead_of_being_chased(self):
+        from stock_alarm.daily_summary import missed_buy_lines
+
+        buys = [{"ticker": "A", "name": "Alpha", "price": 10000}, {"ticker": "B", "name": "Beta", "price": 5000}]
+        lines = missed_buy_lines(buys, {"B": {}}, close_for=lambda ticker: 10500)
+        self.assertEqual(["", "■ 실계좌 미매수(만료 · 내일 추격 금지)", "Alpha 신호가 10,000원 → 종가 10,500원(+5.0%)"], lines)
+        # Before real trading starts the account holds nothing: stay silent.
+        self.assertEqual([], missed_buy_lines(buys, {}, close_for=lambda ticker: 10500))
 
     @patch("stock_alarm.data_store.query_rows")
     def test_shadow_lines_summarise_what_the_real_account_would_have_done(self, rows):

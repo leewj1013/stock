@@ -58,6 +58,7 @@ class FormatMessageTest(unittest.TestCase):
         self.assertIn("현재가 80,000원 · 목표 비중 10%", message)
         # stop is the wider of SELL_LOSS_PCT (5%) and ATR x2; target is TAKE_PROFIT_1_PCT (10%)
         self.assertIn("손절 76,000원(-5.0%) · 1차 익절 88,000원(+10%)", message)
+        self.assertIn("매수 상한 81,600원(+2%) · 넘으면 추격 매수 금지", message)
         self.assertIn("신호: 거래량 급증 · 거래량 2.3배", message)
         self.assertIn("투자 자문이 아닙니다", message)
         # internal figures a reader cannot act on are gone
