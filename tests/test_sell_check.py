@@ -5,15 +5,30 @@ import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
-from stock_alarm.sell_check import SellAlert, active_positions, alert_summary, alerted_tickers, check_position, find_alerts, format_message, format_reminder_message, max_returns, previous_returns, read_positions, run, unfilled_sell_reminders, write_log
+from stock_alarm.sell_check import SellAlert, active_positions, alert_summary, alerted_tickers, check_position, find_alerts, format_message, format_open_orders_message, format_reminder_message, max_returns, previous_returns, read_positions, run, unfilled_sell_reminders, write_log
 
 
 class SellCheckTest(unittest.TestCase):
     def setUp(self):
         # run() must never reach the real Toss account from tests.
-        holdings = patch("stock_alarm.sell_check.real_account_holdings", return_value={})
-        holdings.start()
-        self.addCleanup(holdings.stop)
+        for name, value in (("real_account_holdings", {}), ("real_open_orders", [])):
+            patcher = patch(f"stock_alarm.sell_check.{name}", return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @patch("stock_alarm.sell_check.stock_name", side_effect=lambda ticker, default: {"005930": "삼성전자"}.get(ticker, default))
+    def test_open_orders_message_is_stable_within_a_day(self, _name):
+        orders = [
+            {"symbol": "005930", "side": "SELL", "orderType": "LIMIT", "price": "70000", "quantity": "10",
+             "execution": {"filledQuantity": "3"}},
+            {"symbol": "000660", "side": "BUY", "orderType": "MARKET", "quantity": "2"},
+        ]
+        text = format_open_orders_message(orders, date(2026, 9, 30))
+        self.assertIn("[미체결 주문 · 09/30] 장 마감 전 2건", text)
+        self.assertIn("매도 삼성전자(005930) 70,000원 · 10주 중 3주 체결", text)
+        self.assertIn("매수 000660(000660) MARKET · 2주", text)
+        # the notifier dedupes on exact text, so it must not carry a clock time
+        self.assertEqual(text, format_open_orders_message(orders, date(2026, 9, 30)))
 
     def _sell_log(self, rows: str) -> str:
         with tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8") as file:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from statistics import mean
 
 from .app import (
@@ -457,16 +457,22 @@ def write_log(alerts: list[SellAlert], path: str = SELL_ALERTS_LOG) -> None:
             writer.writerow([datetime.now().isoformat(timespec="seconds"), alert.ticker, alert.name, alert.entry_price, alert.close, f"{alert.return_pct:.2f}", alert_summary(alert), alert.reason, alert.sale_type, alert.stage, f"{alert.quantity_fraction:.4f}"])
 
 
+def _real_account():
+    """(client, account_seq) of the first Toss account, like the dashboard."""
+    from .toss_client import shared_client
+    client = shared_client()
+    accounts = client.accounts()
+    if not accounts:
+        raise LookupError("no Toss account")
+    return client, accounts[0]["accountSeq"]
+
+
 def real_account_holdings() -> dict[str, dict]:
     """Domestic holdings in the real Toss account by ticker; {} on any failure
     (no keys, network) so a Toss outage never blocks the sell check."""
     try:
-        from .toss_client import shared_client
-        client = shared_client()
-        accounts = client.accounts()
-        if not accounts:
-            return {}
-        items = client.holdings(accounts[0]["accountSeq"]).get("items", [])
+        client, account_seq = _real_account()
+        items = client.holdings(account_seq).get("items", [])
     except Exception:
         return {}
     return {
@@ -524,6 +530,32 @@ def format_reminder_message(reminders: list[dict]) -> str:
             f"사유: {short_reason(row['reason'])}",
         ])
     lines.append("매도 전까지 점검마다 다시 알립니다.")
+    return "\n".join(lines)
+
+
+def real_open_orders() -> list[dict]:
+    """Working (unfilled or partly filled) KRW orders; [] on any failure."""
+    try:
+        client, account_seq = _real_account()
+        orders = client.order_history(account_seq, "OPEN").get("orders", [])
+    except Exception:
+        return []
+    return [order for order in orders if order.get("currency", "KRW") == "KRW"]
+
+
+def format_open_orders_message(orders: list[dict], today: date) -> str:
+    # No clock time in the text: the notifier drops an identical message, so
+    # the every-5-minute sell run pages once a day per distinct set of orders.
+    lines = [f"[미체결 주문 · {today:%m/%d}] 장 마감 전 {len(orders)}건"]
+    for order in orders:
+        ticker = str(order.get("symbol") or "")
+        side = {"BUY": "매수", "SELL": "매도"}.get(str(order.get("side")), str(order.get("side") or ""))
+        price = order.get("price")
+        price_text = f"{int(float(price)):,}원" if price else str(order.get("orderType") or "")
+        filled = (order.get("execution") or {}).get("filledQuantity")
+        filled_text = f" 중 {filled}주 체결" if filled not in (None, "", "0") else ""
+        lines.append(f"{side} {stock_name(ticker, ticker)}({ticker}) {price_text} · {order.get('quantity', '')}주{filled_text}")
+    lines.extend(["", "매도는 정정(시장가)으로 오늘 정리, 매수는 상한 넘었으면 취소를 검토하세요."])
     return "\n".join(lines)
 
 
@@ -599,6 +631,12 @@ def run() -> str:
     )
     if reminders:
         send_notification(format_reminder_message(reminders), event_type="sell_reminder", tickers=[row["ticker"] for row in reminders])
+    now = datetime.now()
+    if now.time() >= dt_time(15, 0):
+        orders = real_open_orders()
+        if orders:
+            send_notification(format_open_orders_message(orders, now.date()), event_type="open_orders",
+                              tickers=[str(order.get("symbol") or "") for order in orders])
     if not notify_alerts and os.environ.get("SEND_EMPTY_SELL_ALERT", "0") != "1":
         return "no_alerts"
     return send_notification(format_message(notify_alerts, virtual_result), event_type="sell", tickers=[alert.ticker for alert in notify_alerts])
