@@ -1,7 +1,51 @@
 import unittest
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 
 class ScriptTest(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell regression")
+    def test_native_stderr_does_not_abort_optional_steps(self):
+        source = Path("scripts/run_stock_alarm.ps1").resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = root / "fake.py"
+            runner.write_text(
+                "import sys\n"
+                "module = sys.argv[1]\n"
+                "if module != 'stock_alarm.daily_summary':\n"
+                "    print('simulated KRX failure', file=sys.stderr)\n"
+                "sys.exit(7 if module in ('stock_alarm.screener', 'stock_alarm.failure_alert') else 0)\n",
+                encoding="utf-8",
+            )
+            def quote(value):
+                return "'" + str(value).replace("'", "''") + "'"
+            harness = root / "check.ps1"
+            harness.write_text(
+                '$ErrorActionPreference = "Stop"\n'
+                "$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'\n"
+                f'$ast = [System.Management.Automation.Language.Parser]::ParseFile({quote(source)}, [ref]$null, [ref]$null)\n'
+                '$ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst]}, $true) | ForEach-Object { Invoke-Expression $_.Extent.Text }\n'
+                f'$python = {quote(sys.executable)}\n$runner = {quote(runner)}\n'
+                f'$stdout = {quote(root / "out.log")}\n$stderr = {quote(root / "err.log")}\n'
+                'RunStep "warning" "stock_alarm.warning"\n'
+                'RunOptionalStep "screener" "stock_alarm.screener"\n'
+                'RunStep "daily_summary" "stock_alarm.daily_summary"\n'
+                'if ($ErrorActionPreference -ne "Stop") { throw "preference leaked" }\n'
+                'RunStep "required_failure" "stock_alarm.screener"\n'
+                'throw "required failure was ignored"\n', encoding="utf-8-sig",
+            )
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness)], capture_output=True, timeout=30)
+            output = (root / "out.log").read_text(encoding="utf-8-sig")
+            self.assertEqual(7, result.returncode, output + (root / "err.log").read_text(encoding="utf-8-sig"))
+            self.assertIn("DONE warning", output)
+            self.assertIn("WARN screener exit=7", output)
+            self.assertIn("DONE daily_summary", output)
+            self.assertIn("simulated KRX failure", (root / "err.log").read_text(encoding="utf-8-sig"))
+
     def test_screener_runs_after_market_close_and_before_the_dashboard(self):
         # The dashboard only displays the screener's saved result, so a run
         # ordered after the dashboard build would always show yesterday's list.
@@ -58,7 +102,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('RunOptionalStep "issue_alert" "stock_alarm.issue_alert"', script)
         self.assertIn("} finally {", script)
         self.assertIn("stock_alarm.failure_alert", script)
-        self.assertIn("stock_alarm.run_gate $mode", script)
+        self.assertIn("InvokeAlarmPython stock_alarm.run_gate @($mode)", script)
         self.assertIn("SKIP $mode", script)
         self.assertIn("-I $runner", script)
         self.assertIn("stock_alarm\\isolated_runner.py", script)

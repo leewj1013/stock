@@ -26,7 +26,8 @@ class TrackPositionsTest(unittest.TestCase):
             path = file.name
         self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
 
-        added = track_positions([Pick("005930", "Samsung", 80000, 2, 100, 90)], path)
+        # No sell in this scenario; never consult the live workspace sell log.
+        added = track_positions([Pick("005930", "Samsung", 80000, 2, 100, 90)], path, path + ".alerts.csv")
 
         with open(path, newline="", encoding="utf-8-sig") as file:
             rows = list(csv.DictReader(file))

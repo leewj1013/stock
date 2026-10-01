@@ -20,10 +20,11 @@ from .app import is_trading_day, load_env, write_error_log
 REPORT_DIR = os.path.join("reports", "daily_review")
 
 
-def health_issues(today: str, path: str | None = None, errors_log: str = os.path.join("logs", "errors.log")) -> list[str]:
+def health_issues(today: str, path: str | None = None, errors_log: str = os.path.join("logs", "errors.log"), deliveries_log: str = "logs/deliveries.csv") -> list[str]:
     """What looks broken today: failed runs, missing valuations, new errors."""
     from .data_store import DB_PATH, query_rows
     from .trading_profiles import PROFILES
+    from .report import tail_csv
 
     issues = []
     runs = query_rows("SELECT run_type, status, COUNT(*) AS n FROM strategy_runs WHERE started_at LIKE ? GROUP BY 1, 2", (f"{today}%",), path or DB_PATH)
@@ -43,6 +44,14 @@ def health_issues(today: str, path: str | None = None, errors_log: str = os.path
         errors_today = 0
     if errors_today:
         issues.append(f"오늘 오류 로그 {errors_today}건 (logs/errors.log)")
+    if not any(
+        row.get("created_at", "").startswith(today)
+        and row.get("event_type") == "daily_summary"
+        and row.get("channel") == "telegram"
+        and row.get("status") == "delivered"
+        for row in tail_csv(deliveries_log, 10000)
+    ):
+        issues.append("오늘 마감 브리핑 텔레그램 발송 성공 기록 없음")
     return issues
 
 

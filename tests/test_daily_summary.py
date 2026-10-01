@@ -1,4 +1,7 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from datetime import datetime as real_datetime
 from unittest.mock import patch
 
@@ -8,6 +11,26 @@ from stock_alarm.daily_summary import regime_line, shadow_lines as real_shadow_l
 
 
 class DailySummaryTest(unittest.TestCase):
+    def test_screener_failure_or_stale_result_is_visible_in_brief(self):
+        from stock_alarm.daily_summary import screener_lines
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "screen.json"
+            with patch("stock_alarm.screener.LATEST_RESULT", result), patch("stock_alarm.screener.new_matches", return_value=([], 3)):
+                self.assertIn("자료 조회 실패", screener_lines()[-1])
+                result.write_text(json.dumps({"generated_at": "2000-01-01", "as_of": "20000101"}), encoding="utf-8")
+                self.assertIn("자료 조회 실패", screener_lines()[-1])
+                result.write_text(json.dumps({"generated_at": real_datetime.now().isoformat(), "as_of": "20261001"}), encoding="utf-8")
+                self.assertIn("통과 3종목", " ".join(screener_lines()))
+
+    @patch("stock_alarm.daily_summary.load_env")
+    @patch("stock_alarm.daily_summary.is_trading_day", return_value=True)
+    @patch("stock_alarm.daily_summary.message", return_value="brief")
+    @patch("stock_alarm.daily_summary.send_notification", return_value="telegram")
+    def test_brief_delivery_has_its_own_event_type(self, send, *_):
+        self.assertEqual("telegram", run())
+        send.assert_called_once_with("brief", event_type="daily_summary")
+
     def setUp(self):
         # message() also reads today's shadow orders and the experiment
         # accounts; keep those off the real DBs and network.

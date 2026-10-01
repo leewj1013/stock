@@ -39,21 +39,29 @@ if (Test-Path (Join-Path $runtimeRoot ".venv\Scripts\python.exe")) {
 }
 $runner = Join-Path $runtimeRoot "stock_alarm\isolated_runner.py"
 
-& $python -I $runner stock_alarm.run_gate $mode 1>> $stdout 2>> $stderr
-if ($LASTEXITCODE -eq 2) {
+function InvokeAlarmPython($module, [string[]]$moduleArguments = @()) {
+    # Windows PowerShell 5.1 treats redirected native stderr as an error.
+    # Let the process finish and use its exit code, even when it prints warnings.
+    $ErrorActionPreference = "Continue"
+    $global:LASTEXITCODE = 1
+    & $python -I $runner $module @moduleArguments 1>> $stdout 2>> $stderr
+    return $LASTEXITCODE
+}
+
+$code = InvokeAlarmPython stock_alarm.run_gate @($mode)
+if ($code -eq 2) {
     "[$(Get-Date -Format s)] SKIP $mode" | Out-File -FilePath $stdout -Append -Encoding utf8
     exit 0
 }
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if ($code -ne 0) {
+    exit $code
 }
 
 function RunStep($name, $module) {
     "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
-    & $python -I $runner $module 1>> $stdout 2>> $stderr
-    if ($LASTEXITCODE -ne 0) {
-        $code = $LASTEXITCODE
-        & $python -I $runner stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
+    $code = InvokeAlarmPython $module
+    if ($code -ne 0) {
+        $null = InvokeAlarmPython stock_alarm.failure_alert @($name, "$code")
         exit $code
     }
     "[$(Get-Date -Format s)] DONE $name" | Out-File -FilePath $stdout -Append -Encoding utf8
@@ -61,10 +69,9 @@ function RunStep($name, $module) {
 
 function RunOptionalStep($name, $module) {
     "[$(Get-Date -Format s)] START $name" | Out-File -FilePath $stdout -Append -Encoding utf8
-    & $python -I $runner $module 1>> $stdout 2>> $stderr
-    if ($LASTEXITCODE -ne 0) {
-        $code = $LASTEXITCODE
-        & $python -I $runner stock_alarm.failure_alert $name $code 1>> $stdout 2>> $stderr
+    $code = InvokeAlarmPython $module
+    if ($code -ne 0) {
+        $null = InvokeAlarmPython stock_alarm.failure_alert @($name, "$code")
         "[$(Get-Date -Format s)] WARN $name exit=$code" | Out-File -FilePath $stdout -Append -Encoding utf8
         return
     }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 from .app import is_trading_day, load_env, write_error_log
 from .data_store import (
@@ -158,6 +159,21 @@ def market_comparison_line(daily_return_pct: float | None, whole_market: dict[st
     return f"계좌 대비 시장: {gap:+.2f}%p (시장 평균 {float(whole_market['avg_change_pct']):+.2f}%)"
 
 
+def screener_lines() -> list[str]:
+    from .screener import LATEST_RESULT, new_matches
+
+    try:
+        result = json.loads(LATEST_RESULT.read_text(encoding="utf-8"))
+        if not str(result.get("generated_at", "")).startswith(datetime.now().date().isoformat()) or not result.get("as_of"):
+            raise ValueError("no current screening result")
+        added, total = new_matches()
+        names = ", ".join(str(row.get("name") or row["ticker"]) for row in added[:5])
+        detail = f"신규 통과: {names}" if names else "신규 통과 없음"
+        return ["", "■ 재무 스크리닝", f"자료 기준 {result['as_of']} · 통과 {total}종목", detail]
+    except (OSError, ValueError, TypeError, KeyError):
+        return ["", "■ 재무 스크리닝", "자료 조회 실패 · 오늘 스크리닝 결과 없음"]
+
+
 def message() -> str:
     from .market_summary import whole_market_summary
 
@@ -219,6 +235,7 @@ def message() -> str:
     lines.extend(missed_buy_lines(buys, real_account_holdings()))
     lines.extend(shadow_lines())
     lines.extend(research_lines())
+    lines.extend(screener_lines())
     lines.extend(["", "■ 내일 확인"])
     if sell_alerts:
         for row in sell_alerts[:2]:
@@ -233,7 +250,7 @@ def run() -> str:
     load_env()
     if not is_trading_day():
         return "market_closed"
-    return send_notification(message())
+    return send_notification(message(), event_type="daily_summary")
 
 
 def main() -> None:
