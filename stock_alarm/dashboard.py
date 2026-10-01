@@ -930,7 +930,7 @@ def benchmark_returns(days: list[str], symbol: str = "KOSPI") -> dict[str, float
     return {day: round((closes[day] / base - 1) * 100, 2) for day in days if day in closes}
 
 
-CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "core30": "#BA7517", "index70": "#D4537E", "benchmark": "#888780", "kodex200": "#B4B2A9"}
+CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "core30": "#BA7517", "index70": "#D4537E", "benchmark": "#888780", "kodex200": "#7F77DD"}
 # exp_candidate is left off: it trades like exp_control until a bull regime or a
 # drawdown halt, so its line would only duplicate aggressive's until then.
 CURVE_ACCOUNTS = (("aggressive", "적극투자형"), ("neutral", "위험중립형"))
