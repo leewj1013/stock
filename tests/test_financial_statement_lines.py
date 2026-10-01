@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from stock_alarm.financial_statement_lines import (
     DartQuotaExceeded,
+    annual_periods,
     collect_ticker,
     collected_tickers,
     fetch_report,
@@ -40,6 +41,20 @@ class FinancialStatementLinesTest(unittest.TestCase):
     def test_report_periods_returns_most_recent_first(self):
         periods = report_periods(4, today=date(2026, 9, 16))
         self.assertEqual([(2026, "11011"), (2026, "11014"), (2026, "11012"), (2026, "11013")], periods)
+
+    def test_annual_periods_cover_last_year_back_to_the_start(self):
+        self.assertEqual([(2025, "11011"), (2024, "11011"), (2023, "11011")], annual_periods(2023, today=date(2026, 10, 1)))
+
+    def test_skip_stored_only_fetches_missing_periods(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with closing(connect(Path(directory) / "pit.sqlite3")) as db:
+                db.executescript(SCHEMA)
+                with patch("stock_alarm.financial_statement_lines.corp_code_by_stock", return_value="00126380"),                      patch("urllib.request.urlopen", return_value=FakeResponse(ROW)) as urlopen:
+                    collect_ticker("005930", [(2025, "11011")], db, "key", delay=0)
+                    urlopen.reset_mock()
+                    result = collect_ticker("005930", [(2025, "11011"), (2024, "11011")], db, "key", delay=0, skip_stored=True)
+        self.assertEqual(1, urlopen.call_count)  # only 2024 was fetched
+        self.assertEqual(1, result["periods"])
 
     def test_quota_status_raises_instead_of_silently_returning_nothing(self):
         with patch("urllib.request.urlopen", return_value=FakeResponse('{"status":"020","message":"limit"}')):

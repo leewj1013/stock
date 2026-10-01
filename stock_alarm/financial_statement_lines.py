@@ -103,10 +103,22 @@ def store_lines(db, ticker: str, year: int, reprt_code: str, fs_div: str, rows: 
     return len(rows)
 
 
-def collect_ticker(ticker: str, periods: list[tuple[int, str]], db, key: str, delay: float = 0.2) -> dict:
+def annual_periods(from_year: int, today: date | None = None) -> list[tuple[int, str]]:
+    """Business-report (annual) periods from last year back to `from_year`."""
+    today = today or date.today()
+    return [(year, "11011") for year in range(today.year - 1, from_year - 1, -1)]
+
+
+def collect_ticker(ticker: str, periods: list[tuple[int, str]], db, key: str, delay: float = 0.2,
+                   skip_stored: bool = False) -> dict:
     corp_code = corp_code_by_stock(ticker)
     if not corp_code:
         return {"ticker": ticker, "status": "no_corp_code", "periods": 0, "rows": 0}
+    if skip_stored:
+        # Resume a multi-day backfill without spending quota on periods already in.
+        done = {(int(row[0]), str(row[1])) for row in db.execute(
+            "SELECT DISTINCT bsns_year, reprt_code FROM financial_statement_lines WHERE ticker=?", (ticker,))}
+        periods = [period for period in periods if period not in done]
     stored_periods = stored_rows = 0
     for year, reprt_code in periods:
         rows = fetch_report(corp_code, key, year, reprt_code)
@@ -139,7 +151,8 @@ def universe_tickers(dynamic: bool = False) -> list[str]:
     return list(recommend_universe(int(_os.environ.get("MIN_TRADING_VALUE", "5000000000"))))
 
 
-def collect(tickers: list[str] | None = None, quarters: int = 8, path: Path = DEFAULT_PATH, delay: float = 0.2) -> dict:
+def collect(tickers: list[str] | None = None, quarters: int = 8, path: Path = DEFAULT_PATH, delay: float = 0.2,
+            periods: list[tuple[int, str]] | None = None, skip_stored: bool = False) -> dict:
     from .app import configured_stocks, load_env
 
     load_env()
@@ -147,13 +160,13 @@ def collect(tickers: list[str] | None = None, quarters: int = 8, path: Path = DE
     if not key:
         return {"error": "DART_API_KEY missing"}
     tickers = tickers or list(configured_stocks())
-    periods = report_periods(quarters)
+    periods = periods or report_periods(quarters)
     results, quota_hit = [], ""
     with closing(connect(path)) as db:
         db.executescript(SCHEMA)
         for ticker in tickers:
             try:
-                result = collect_ticker(ticker, periods, db, key, delay)
+                result = collect_ticker(ticker, periods, db, key, delay, skip_stored)
             except DartQuotaExceeded as error:
                 quota_hit = str(error)
                 break
@@ -186,6 +199,12 @@ def main() -> None:
     parser.add_argument("--dynamic-universe", action="store_true",
                         help="collect today's screening universe (DYNAMIC_SCREENING_TOP_N) instead of the watchlist")
     parser.add_argument("--skip-collected", action="store_true", help="skip tickers that already have stored lines")
+    parser.add_argument("--annual-from", type=int, default=0,
+                        help="collect annual reports only, from last year back to this year (history backfill)")
+    parser.add_argument("--tickers-file", type=Path, default=None,
+                        help="CSV with a ticker column (e.g. the delisted-inclusive pit_universe/tickers.csv)")
+    parser.add_argument("--skip-stored-periods", action="store_true",
+                        help="skip (year, report) periods already stored for a ticker, to resume across days")
     parser.add_argument("--stored", action="store_true",
                         help="also refresh every ticker already stored, not just the chosen universe")
     args = parser.parse_args()
@@ -193,6 +212,10 @@ def main() -> None:
 
     load_env()
     tickers = [value.strip() for value in args.tickers.split(",") if value.strip()]
+    if args.tickers_file:
+        import csv as _csv
+        with open(args.tickers_file, encoding="utf-8-sig") as handle:
+            tickers += [row["ticker"] for row in _csv.DictReader(handle)]
     if not tickers:
         tickers = universe_tickers(args.dynamic_universe)
     if args.stored:
@@ -204,7 +227,9 @@ def main() -> None:
         tickers = [ticker for ticker in tickers if ticker not in done]
     if args.limit:
         tickers = tickers[:args.limit]
-    print(json.dumps(collect(tickers, args.quarters, args.db, args.delay), ensure_ascii=False, indent=2))
+    periods = annual_periods(args.annual_from) if args.annual_from else None
+    print(json.dumps(collect(tickers, args.quarters, args.db, args.delay, periods, args.skip_stored_periods),
+                     ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

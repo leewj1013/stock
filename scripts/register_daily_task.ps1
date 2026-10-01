@@ -23,6 +23,8 @@ $investorFlowPath = Join-Path $runtimeRoot "scripts\run_investor_flow.ps1"
 $investorFlowAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$investorFlowPath`""
 $dailyReviewPath = Join-Path $runtimeRoot "scripts\run_daily_review.ps1"
 $dailyReviewAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$dailyReviewPath`""
+$dartBackfillPath = Join-Path $runtimeRoot "scripts\run_dart_backfill.ps1"
+$dartBackfillAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$dartBackfillPath`""
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -184,3 +186,9 @@ Register-ScheduledTask -TaskName "stockAlarmInvestorFlow" -Action $investorFlowA
 # reports/daily_review and alerts only on problems. Plain script, so it never
 # stalls on a permission prompt the way the Claude-run review did.
 Register-ScheduledTask -TaskName "stockAlarmDailyReview" -Action $dailyReviewAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "17:30") -Settings $taskSettings -Description "Write the daily review report; Telegram only on problems (read-only)" -Force
+
+# Annual statements back to 2015 for every listed and delisted ticker, into a
+# separate DB so the weekly --stored refresh never picks them up. Resumes daily
+# until done (skips stored periods), after the other DART jobs so quota left
+# over is what it uses.
+Register-ScheduledTask -TaskName "stockAlarmDartBackfill" -Action $dartBackfillAction -Trigger (New-ScheduledTaskTrigger -Daily -At "22:00") -Settings $taskSettings -Description "Backfill annual DART statements since 2015 for the delisted-inclusive universe (read-only)" -Force
