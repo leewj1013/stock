@@ -26,6 +26,13 @@ START_CAPITAL = 100_000_000
 MOVE_COST = 0.0005
 INDEX70_DB_PATH = "data/stock_alarm_exp_index70.db"
 INDEX70_CORE_WEIGHT = 0.7
+# Index + cash layouts recorded side by side: (key, db, core weight, label).
+# index90 is Buffett's 2013-letter instruction (90% low-cost index, 10% short
+# government bonds), started 2026-10-01; cash stands in for the bonds.
+CASH_LAYOUTS = (
+    ("index70", INDEX70_DB_PATH, INDEX70_CORE_WEIGHT, "지수70%+현금30%"),
+    ("index90", "data/stock_alarm_exp_index90.db", 0.9, "지수90%+현금10%"),
+)
 # ponytail: idle cash earns 0%; add an MMF/CD rate if the comparison gets close
 CASH_UNIT_VALUE = START_CAPITAL
 
@@ -100,8 +107,9 @@ def run() -> dict | None:
         return None
     snapshot = record(int(rows[-1][4]), int(satellite[0]["equity"]))
     print(f"core_satellite[core30] equity={snapshot['equity']:,} return={snapshot['return_pct']:.2f}% rebalanced={snapshot['rebalanced']}")
-    index70 = record(int(rows[-1][4]), CASH_UNIT_VALUE, path=INDEX70_DB_PATH, core_weight=INDEX70_CORE_WEIGHT)
-    print(f"core_satellite[index70] equity={index70['equity']:,} return={index70['return_pct']:.2f}% rebalanced={index70['rebalanced']}")
+    for key, path, weight, _label in CASH_LAYOUTS:
+        layout = record(int(rows[-1][4]), CASH_UNIT_VALUE, path=path, core_weight=weight)
+        print(f"core_satellite[{key}] equity={layout['equity']:,} return={layout['return_pct']:.2f}% rebalanced={layout['rebalanced']}")
     return snapshot
 
 

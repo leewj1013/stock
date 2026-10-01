@@ -132,15 +132,17 @@ def research_lines() -> list[str]:
         control = PROFILES["exp_control"]["db_path"]
         funded = int(query_rows("SELECT COALESCE(SUM(amount), 0) AS total FROM virtual_deposits", path=control)[0]["total"])
         last = query_rows("SELECT equity FROM virtual_valuation_snapshots ORDER BY snapshot_id DESC LIMIT 1", path=control)
-        core, index70 = core30_returns(core30.DB_PATH), core30_returns(core30.INDEX70_DB_PATH)
+        core = core30_returns(core30.DB_PATH)
         parts = [f"전략 {(int(last[0]['equity']) / funded - 1) * 100:+.1f}%"] if last and funded else []
         if core:
             parts.append(f"지수30% {list(core.values())[-1]:+.1f}%")
             kodex = benchmark_returns(sorted(core), "069500")
             if kodex:
                 parts.append(f"KODEX 200 {list(kodex.values())[-1]:+.1f}%")
-        if index70:
-            parts.append(f"지수70%+현금 {list(index70.values())[-1]:+.1f}%({min(index70)[5:].replace('-', '/')}~)")
+        for _key, path, _weight, label in core30.CASH_LAYOUTS:
+            layout = core30_returns(path)
+            if layout:
+                parts.append(f"{label.replace('현금', '현금 ')} {list(layout.values())[-1]:+.1f}%({min(layout)[5:].replace('-', '/')}~)")
         if parts:
             since = f"{min(core)[5:].replace('-', '/')} 이후 · " if core else ""
             lines.append(since + " · ".join(parts))

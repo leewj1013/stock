@@ -930,7 +930,7 @@ def benchmark_returns(days: list[str], symbol: str = "KOSPI") -> dict[str, float
     return {day: round((closes[day] / base - 1) * 100, 2) for day in days if day in closes}
 
 
-CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "core30": "#BA7517", "index70": "#D4537E", "benchmark": "#888780", "kodex200": "#7F77DD"}
+CURVE_COLORS = {"aggressive": "#378ADD", "neutral": "#1D9E75", "core30": "#BA7517", "index70": "#D4537E", "index90": "#639922", "benchmark": "#888780", "kodex200": "#7F77DD"}
 # exp_candidate is left off: it trades like exp_control until a bull regime or a
 # drawdown halt, so its line would only duplicate aggressive's until then.
 CURVE_ACCOUNTS = (("aggressive", "적극투자형"), ("neutral", "위험중립형"))
@@ -955,7 +955,7 @@ def equity_curve_series(limit_days: int = 90) -> dict:
         return {"days": [], "series": []}
     from . import core_satellite_tracker as core30
 
-    for key, path in (("core30", core30.DB_PATH), ("index70", core30.INDEX70_DB_PATH)):
+    for key, path in (("core30", core30.DB_PATH), *((key, path) for key, path, _w, _l in core30.CASH_LAYOUTS)):
         try:
             curves[key] = core30_returns(path)
         except Exception:
@@ -964,7 +964,9 @@ def equity_curve_series(limit_days: int = 90) -> dict:
     def since(key: str) -> str:
         return min(curves[key], default="")[5:].replace("-", "/")
 
-    for name, label in (*CURVE_ACCOUNTS, ("core30", f"지수30%+전략70% ({since('core30')}~)"), ("index70", f"지수70%+현금30% ({since('index70')}~)")):
+    layouts = (("core30", f"지수30%+전략70% ({since('core30')}~)"),
+               *((key, f"{label} ({since(key)}~)") for key, _p, _w, label in core30.CASH_LAYOUTS))
+    for name, label in (*CURVE_ACCOUNTS, *layouts):
         points = [curves.get(name, {}).get(day) for day in days]
         if len([point for point in points if point is not None]) >= 2:
             series.append({"key": name, "label": label, "color": CURVE_COLORS.get(name, "#888780"), "points": points})
@@ -1181,10 +1183,12 @@ def experiment_account_rows() -> list[dict[str, str]]:
     since = str(snapshots[0]["created_at"])[:10] if snapshots else ""
     rows.append(summary("지수30%+전략70%", "KODEX 200 30% · 비교(현재 규칙) 70% · 분기 리밸런싱", since,
                         core30.START_CAPITAL, snapshots, "-", "정상"))
-    snapshots = query_rows("SELECT created_at, equity FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.INDEX70_DB_PATH)
-    since = str(snapshots[0]["created_at"])[:10] if snapshots else ""
-    rows.append(summary("지수70%+현금30%", "KODEX 200 70% · 현금 30%(무이자) · 분기 리밸런싱", since,
-                        core30.START_CAPITAL, snapshots, "30%", "정상"))
+    for _key, path, weight, label in core30.CASH_LAYOUTS:
+        snapshots = query_rows("SELECT created_at, equity FROM core_satellite_snapshots ORDER BY snapshot_id", path=path)
+        since = str(snapshots[0]["created_at"])[:10] if snapshots else ""
+        cash = f"{round((1 - weight) * 100)}%"
+        rows.append(summary(label, f"KODEX 200 {round(weight * 100)}% · 현금 {cash}(무이자) · 분기 리밸런싱", since,
+                            core30.START_CAPITAL, snapshots, cash, "정상"))
     return rows
 
 
@@ -1230,15 +1234,17 @@ def experiment_progress_rows() -> list[dict[str, str]]:
                      if core and control_return is not None else "기록 대기"),
         "risk_state": f"축적 중 ({days_left(CORE30_REVIEW_DUE)})",
     })
-    index70 = query_rows("SELECT created_at, return_pct FROM core_satellite_snapshots ORDER BY snapshot_id", path=core30.INDEX70_DB_PATH)
-    rows.append({
-        "experiment": "지수70%+현금30% vs 전략 단독",
-        "criterion": "공정 종목군 백테스트 권고안의 전진 확인: 수익·최대낙폭·샤프지수",
-        "progress": (f"{len({str(r['created_at'])[:10] for r in index70})}거래일 기록 · 지수70% {float(index70[-1]['return_pct']):+.2f}%"
-                     + (f" / 전략 {control_return:+.2f}%" if control_return is not None else "")
-                     if index70 else "기록 대기"),
-        "risk_state": f"축적 중 ({days_left(CORE30_REVIEW_DUE)})",
-    })
+    for key, path, _weight, label in core30.CASH_LAYOUTS:
+        layout = query_rows("SELECT created_at, return_pct FROM core_satellite_snapshots ORDER BY snapshot_id", path=path)
+        rows.append({
+            "experiment": f"{label} vs 전략 단독",
+            "criterion": ("버핏 2013 서한의 90/10 지시 전진 확인: 수익·최대낙폭·샤프지수" if key == "index90"
+                          else "공정 종목군 백테스트 권고안의 전진 확인: 수익·최대낙폭·샤프지수"),
+            "progress": (f"{len({str(r['created_at'])[:10] for r in layout})}거래일 기록 · {label.split('+')[0]} {float(layout[-1]['return_pct']):+.2f}%"
+                         + (f" / 전략 {control_return:+.2f}%" if control_return is not None else "")
+                         if layout else "기록 대기"),
+            "risk_state": f"축적 중 ({days_left(CORE30_REVIEW_DUE)})",
+        })
     matured = query_rows("SELECT COUNT(*) AS n FROM recommendation_outcomes WHERE return_20d_pct IS NOT NULL")
     count = int(matured[0]["n"]) if matured else 0
     rows.append({

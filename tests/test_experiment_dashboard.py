@@ -26,14 +26,15 @@ class ExperimentDashboardTest(unittest.TestCase):
                 connection.commit()
             with patch.dict(PROFILES["exp_control"], {"db_path": control}), \
                  patch.dict(PROFILES["exp_candidate"], {"db_path": candidate}), \
-                 patch.object(core_satellite_tracker, "DB_PATH", core),                  patch.object(core_satellite_tracker, "INDEX70_DB_PATH", index70):
+                 patch.object(core_satellite_tracker, "DB_PATH", core),                  patch.object(core_satellite_tracker, "CASH_LAYOUTS", (("index70", index70, 0.7, "지수70%+현금30%"), ("index90", index70 + "90", 0.9, "지수90%+현금10%"))):
                 rows = experiment_account_rows()
 
-        self.assertEqual(["비교(현재 규칙)", "비교(후보 규칙)", "지수30%+전략70%", "지수70%+현금30%"], [row["experiment"] for row in rows])
+        self.assertEqual(["비교(현재 규칙)", "비교(후보 규칙)", "지수30%+전략70%", "지수70%+현금30%", "지수90%+현금10%"], [row["experiment"] for row in rows])
         self.assertEqual(("99,000,000원", "-1.00", "-10.00", "50.5%"), tuple(rows[0][key] for key in ("equity", "total_return_pct", "mdd_pct", "cash_pct")))
         self.assertEqual("기록 대기", rows[1]["risk_state"])
         self.assertEqual("기록 대기", rows[2]["risk_state"])
         self.assertEqual("기록 대기", rows[3]["risk_state"])
+        self.assertEqual("기록 대기", rows[4]["risk_state"])
 
 
 if __name__ == "__main__":
