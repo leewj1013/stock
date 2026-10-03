@@ -308,6 +308,9 @@ LABELS = {
     "predicted_probability": "예측 확신도",
     "actual_verdict": "실제 판정",
     "hit": "적중",
+    "p_evidence": "근거 있음 확률",
+    "predicted_effect": "예상 효과",
+    "actual_effect": "실제 효과",
     "tracking_status": "추적 상태",
     "sell_alert_date": "매도 알림일",
     "sell_alert_return_pct": "매도 알림 수익률",
@@ -1321,7 +1324,8 @@ def research_results_section(directory: str = RESEARCH_DIR) -> str:
     hits = sum(row.get("hit") == "1" for row in rows)
     probability = mean(float(row["predicted_probability"]) for row in rows if row.get("predicted_probability"))
     table_rows = [{**row, "predicted_probability": f"{float(row['predicted_probability']) * 100:.0f}%" if row.get("predicted_probability") else "",
-                   "hit": "적중" if row.get("hit") == "1" else "빗나감"} for row in reversed(rows)]
+                   "hit": "적중" if row.get("hit") == "1" else "빗나감",
+                   "p_evidence": f"{float(row['p_evidence']) * 100:.0f}%" if row.get("p_evidence") else ""} for row in reversed(rows)]
     reports = sorted((f for f in os.listdir(directory) if f.endswith(".md") and f[:4].isdigit()), reverse=True)
     bodies = "".join(
         details(name[:-3], f"<pre class='review-text'>{e(read_text(os.path.join(directory, name)) or '')}</pre>") for name in reports
@@ -1329,7 +1333,8 @@ def research_results_section(directory: str = RESEARCH_DIR) -> str:
     return (
         f"<p class='muted'>사전 예측 {len(rows)}건 중 {hits}건 적중 · 평균 예측 확신도 {probability * 100:.0f}% "
         "(대부분 '기각' 예측이라 적중률은 실력을 과대평가할 수 있음)</p>"
-        + table("연구 결과 (사전 등록)", table_rows, ["date", "slug", "predicted_verdict", "predicted_probability", "actual_verdict", "hit"])
+        + table("연구 결과 (사전 등록)", table_rows, ["date", "slug", "predicted_verdict", "predicted_probability", "p_evidence",
+                                                      "predicted_effect", "actual_effect", "actual_verdict", "hit"])
         + (f"<section><h2>연구 보고서 전문</h2>{bodies}</section>" if bodies else "")
     )
 
