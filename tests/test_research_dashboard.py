@@ -42,6 +42,30 @@ class DecisionLogTest(unittest.TestCase):
         self.assertEqual([], decision_log_rows("does-not-exist.md"))
 
 
+class ResearchResultsTest(unittest.TestCase):
+    def test_table_summary_and_full_reports(self):
+        from stock_alarm.dashboard import research_results_section
+
+        with tempfile.TemporaryDirectory() as directory:
+            with open(os.path.join(directory, "predictions.csv"), "w", encoding="utf-8") as file:
+                file.write("date,slug,predicted_verdict,predicted_probability,actual_verdict,hit\n"
+                           "2026-09-30,low_vol,기각,0.60,근거 있음,0\n2026-10-03,holding,기각,0.55,기각,1\n")
+            with open(os.path.join(directory, "2026-09-30-low_vol.md"), "w", encoding="utf-8") as file:
+                file.write("# 저변동성 보고서 본문")
+            html = research_results_section(directory)
+
+        self.assertIn("사전 예측 2건 중 1건 적중", html)
+        self.assertIn("평균 예측 확신도 57%", html)  # (60+55)/2 = 57.5, formatted as 57
+        self.assertIn("빗나감", html)
+        self.assertIn("저변동성 보고서 본문", html)
+
+    def test_no_predictions_shows_empty_state(self):
+        from stock_alarm.dashboard import research_results_section
+
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIn("아직 사전 등록 연구가 없습니다", research_results_section(directory))
+
+
 class RiskAdjustedTest(unittest.TestCase):
     def test_bear_return_uses_the_previous_sessions_regime(self):
         regimes = {"2026-09-15": "bull", "2026-09-16": "bear", "2026-09-17": "bear"}

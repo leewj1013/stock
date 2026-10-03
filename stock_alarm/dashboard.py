@@ -302,6 +302,12 @@ LABELS = {
     "decision_date": "날짜",
     "decision_title": "결정",
     "decision_summary": "내용",
+    "date": "날짜",
+    "slug": "주제",
+    "predicted_verdict": "사전 예측",
+    "predicted_probability": "예측 확신도",
+    "actual_verdict": "실제 판정",
+    "hit": "적중",
     "tracking_status": "추적 상태",
     "sell_alert_date": "매도 알림일",
     "sell_alert_return_pct": "매도 알림 수익률",
@@ -1265,16 +1271,67 @@ def experiment_progress_rows() -> list[dict[str, str]]:
 DAILY_REVIEW_DIR = os.path.join("reports", "daily_review")
 
 
-def latest_daily_review_section() -> str:
+RESEARCH_DIR = os.path.join("reports", "research")
+MONTHLY_REVIEW_DIR = os.path.join("reports", "monthly_review")
+LEARNING_LOG = os.path.join("reports", "learning_log.md")
+
+
+def read_text(path: str) -> str | None:
     try:
-        name = max(f for f in os.listdir(DAILY_REVIEW_DIR) if f.endswith(".md"))
-        with open(os.path.join(DAILY_REVIEW_DIR, name), encoding="utf-8") as file:
-            text = file.read()
+        with open(path, encoding="utf-8") as file:
+            return file.read()
+    except OSError:
+        return None
+
+
+def latest_markdown(directory: str) -> tuple[str, str] | None:
+    """(name without .md, text) of the newest report by file name, or None."""
+    try:
+        name = max(f for f in os.listdir(directory) if f.endswith(".md"))
     except (OSError, ValueError):
-        return ("<section class='empty-section'><h2>매일 점검 보고서</h2><div class='empty-state'><b>아직 보고서가 없습니다</b>"
-                "<span>평일 17:30 점검 작업(stockAlarmDailyReview)이 reports/daily_review/에 남깁니다.</span></div></section>")
-    return ("<section><div class='table-heading'><h2>매일 점검 보고서</h2>"
-            f"<span class='table-count'>{e(name[:-3])}</span></div><pre class='review-text'>{e(text)}</pre></section>")
+        return None
+    text = read_text(os.path.join(directory, name))
+    return (name[:-3], text) if text is not None else None
+
+
+def report_section(title: str, found: tuple[str, str] | None, empty_hint: str, opened: bool = False) -> str:
+    """A collapsible section showing one markdown report verbatim."""
+    if not found:
+        return (f"<section class='empty-section'><h2>{e(title)}</h2><div class='empty-state'><b>아직 보고서가 없습니다</b>"
+                f"<span>{e(empty_hint)}</span></div></section>")
+    label, text = found
+    return (f"<section><details{' open' if opened else ''}><summary><b>{e(title)}</b> · {e(label)}</summary>"
+            f"<pre class='review-text'>{e(text)}</pre></details></section>")
+
+
+def latest_daily_review_section() -> str:
+    return report_section("매일 점검 보고서", latest_markdown(DAILY_REVIEW_DIR),
+                          "평일 17:30 점검 작업(stockAlarmDailyReview)이 reports/daily_review/에 남깁니다.")
+
+
+def research_results_section(directory: str = RESEARCH_DIR) -> str:
+    """Pre-registered research results from predictions.csv, plus each report in full."""
+    try:
+        with open(os.path.join(directory, "predictions.csv"), encoding="utf-8-sig") as file:
+            rows = list(csv.DictReader(file))
+    except OSError:
+        rows = []
+    if not rows:
+        return user_table("연구 결과", [], ["date"], "아직 사전 등록 연구가 없습니다.")
+    hits = sum(row.get("hit") == "1" for row in rows)
+    probability = mean(float(row["predicted_probability"]) for row in rows if row.get("predicted_probability"))
+    table_rows = [{**row, "predicted_probability": f"{float(row['predicted_probability']) * 100:.0f}%" if row.get("predicted_probability") else "",
+                   "hit": "적중" if row.get("hit") == "1" else "빗나감"} for row in reversed(rows)]
+    reports = sorted((f for f in os.listdir(directory) if f.endswith(".md") and f[:4].isdigit()), reverse=True)
+    bodies = "".join(
+        details(name[:-3], f"<pre class='review-text'>{e(read_text(os.path.join(directory, name)) or '')}</pre>") for name in reports
+    )
+    return (
+        f"<p class='muted'>사전 예측 {len(rows)}건 중 {hits}건 적중 · 평균 예측 확신도 {probability * 100:.0f}% "
+        "(대부분 '기각' 예측이라 적중률은 실력을 과대평가할 수 있음)</p>"
+        + table("연구 결과 (사전 등록)", table_rows, ["date", "slug", "predicted_verdict", "predicted_probability", "actual_verdict", "hit"])
+        + (f"<section><h2>연구 보고서 전문</h2>{bodies}</section>" if bodies else "")
+    )
 
 
 def decision_log_rows(path: str = "STRATEGY_NOTES.md") -> list[dict[str, str]]:
@@ -1313,9 +1370,14 @@ def research_tab() -> str:
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
         + market_regime_card()
         + table("실험 진행 현황", experiment_progress_rows(), ["experiment", "criterion", "progress", "risk_state"])
+        + research_results_section()
+        + report_section("학습 기록", ("reports/learning_log.md", text) if (text := read_text(LEARNING_LOG)) else None,
+                         "reports/learning_log.md에 검증·사실·관찰을 기록합니다.")
+        + report_section("월간 돌아보기", latest_markdown(MONTHLY_REVIEW_DIR), "매월 1일 월간 돌아보기가 reports/monthly_review/에 남깁니다.")
         + latest_daily_review_section()
-        + user_table("결정 기록 (STRATEGY_NOTES.md)", decision_log_rows(), ["decision_date", "decision_title", "decision_summary"],
-                     "STRATEGY_NOTES.md를 찾지 못했습니다.")
+        + details("결정 기록 (STRATEGY_NOTES.md)",
+                  user_table("결정 기록", decision_log_rows(), ["decision_date", "decision_title", "decision_summary"],
+                             "STRATEGY_NOTES.md를 찾지 못했습니다."))
     )
 
 
