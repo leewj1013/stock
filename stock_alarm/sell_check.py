@@ -246,9 +246,10 @@ def alerted_tickers(path: str = SELL_ALERTS_LOG) -> set[str]:
     return set(latest_sell_alert_times(path))
 
 
-def position_was_alerted(position: dict[str, str], path: str = SELL_ALERTS_LOG) -> bool:
+def position_was_alerted(position: dict[str, str], path: str = SELL_ALERTS_LOG, sell_times: dict | None = None) -> bool:
+    """Pass sell_times (latest_sell_alert_times) when checking many positions to parse the log once."""
     ticker = position.get("ticker", "").strip()
-    sell_time = latest_sell_alert_times(path).get(ticker)
+    sell_time = (latest_sell_alert_times(path) if sell_times is None else sell_times).get(ticker)
     if not sell_time:
         return False
     entry_time = parse_time(position.get("entry_date", ""))

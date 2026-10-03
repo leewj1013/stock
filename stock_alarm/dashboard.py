@@ -19,7 +19,7 @@ from .data_store import (
 from .health import lines as health_lines
 from .positions_check import active_position_tickers
 from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv, tail_text
-from .sell_check import position_was_alerted
+from .sell_check import SELL_ALERTS_LOG, latest_sell_alert_times, position_was_alerted
 
 
 OUT_PATH = "reports/dashboard.html"
@@ -723,6 +723,7 @@ def latest_position_rows(limit: int | None = None) -> list[dict[str, str]]:
     rows = []
     seen = set()
     active = active_position_tickers()
+    sell_times = latest_sell_alert_times(SELL_ALERTS_LOG)
     for row in reversed(tail_csv("logs/positions_report.csv", 1000)):
         ticker = row.get("ticker", "")
         if not ticker or ticker in seen or ticker not in active:
@@ -730,7 +731,7 @@ def latest_position_rows(limit: int | None = None) -> list[dict[str, str]]:
         # A ticker can be recommended again after a prior sell alert. Filter by
         # the individual entry date so the old, already-alerted entry is not
         # shown as an active recommendation for the newer entry.
-        if position_was_alerted(row):
+        if position_was_alerted(row, sell_times=sell_times):
             continue
         seen.add(ticker)
         rows.append(row)

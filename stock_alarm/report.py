@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import os
 import subprocess
 import sys
@@ -16,9 +17,22 @@ from .tune_report import lines as tuning_lines
 def tail_csv(path: str, count: int = 5) -> list[dict[str, str]]:
     if not os.path.exists(path):
         return []
-    with open(path, newline="", encoding="utf-8-sig") as file:
-        rows = list(csv.DictReader(file))
-    return rows[-count:]
+    # Read only the tail: positions_report.csv grows without bound and the
+    # dashboard asks for its last rows on every page load.
+    with open(path, "rb") as file:
+        header = file.readline()
+        start = file.tell()
+        position = file.seek(0, os.SEEK_END)
+        block = b""
+        while position > start and block.count(b"\n") <= count:
+            step = min(1 << 20, position - start)
+            position -= step
+            file.seek(position)
+            block = file.read(step) + block
+    if position > start:
+        block = block.split(b"\n", 1)[1]  # drop the partial first line
+    text = (header + block).decode("utf-8-sig")
+    return list(csv.DictReader(io.StringIO(text, newline="")))[-count:]
 
 
 def dedupe_ticker(rows: list[dict[str, str]]) -> list[dict[str, str]]:

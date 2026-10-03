@@ -523,7 +523,7 @@ class DashboardTest(unittest.TestCase):
             {"created_at": "2026-08-31T10:00:00", "ticker": "A", "entry_date": "2026-08-30", "position_id": "new"},
             {"created_at": "2026-08-31T10:00:00", "ticker": "A", "entry_date": "2026-08-20", "position_id": "old"},
         ]
-        was_alerted.side_effect = lambda row: row["position_id"] == "old"
+        was_alerted.side_effect = lambda row, **_: row["position_id"] == "old"
 
         rows = latest_position_rows()
 

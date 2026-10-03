@@ -283,6 +283,8 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
             ON candidate_snapshots(ticker, evaluated_at);
         CREATE INDEX IF NOT EXISTS idx_position_checks_ticker_time
             ON position_checks(ticker, checked_at);
+        CREATE INDEX IF NOT EXISTS idx_position_checks_time
+            ON position_checks(checked_at);
         CREATE TABLE IF NOT EXISTS shadow_orders (
             shadow_order_id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT NOT NULL,
