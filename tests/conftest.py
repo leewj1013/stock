@@ -25,6 +25,10 @@ def isolated_env(tmp_path, monkeypatch):
     with patch.dict(os.environ), patch("stock_alarm.shadow_trader.sync_shadow_sells", return_value=0):
         os.environ.pop("STOCK_ALARM_SECURE_ENV_PATH", None)
         yield
+    # The process-wide Toss client would otherwise carry one test's mock into the next.
+    from stock_alarm.toss_client import reset_shared_client
+
+    reset_shared_client()
 
 
 REAL_DATA_DIR = Path(__file__).resolve().parent.parent / "data"

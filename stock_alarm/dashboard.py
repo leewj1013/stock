@@ -772,8 +772,8 @@ def market_calendar_state() -> dict:
     -- not wired into is_trading_day()/is_market_alert_time(), which keep
     using their existing Naver-based check for now."""
     try:
-        from .toss_client import TossClient
-        today = TossClient().market_calendar_kr().get("today", {})
+        from .toss_client import shared_client
+        today = shared_client().market_calendar_kr().get("today", {})
         integrated = today.get("integrated")
         regular = (integrated or {}).get("regularMarket")
         return {
@@ -794,8 +794,8 @@ def real_account_state() -> dict:
     "not connected" state rather than breaking the whole dashboard.
     """
     try:
-        from .toss_client import TossClient
-        client = TossClient()
+        from .toss_client import shared_client
+        client = shared_client()  # one client per process, so the token is fetched once, not per page load
         accounts = client.accounts()
         if not accounts:
             return {"connected": False, "reason": "연결된 계좌 없음"}

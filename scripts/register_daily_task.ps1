@@ -125,6 +125,7 @@ $dashboardServerXml = @"
     <StartWhenAvailable>true</StartWhenAvailable>
     <WakeToRun>true</WakeToRun>
     <Hidden>true</Hidden>
+    <Priority>4</Priority>
   </Settings>
   <Triggers>
     <LogonTrigger>
