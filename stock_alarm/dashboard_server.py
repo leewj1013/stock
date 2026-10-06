@@ -17,6 +17,7 @@ from .data_store import active_strategy_version, import_legacy_virtual_trader, l
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 from .sector_reference import load_sector_mapping
 from .trading_profiles import PROFILES
+from .us_dashboard import render_us
 
 
 def profile_db_path(name: str) -> str:
@@ -305,8 +306,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             profile = parse_qs(parsed.query).get("profile", ["aggressive"])[0]
             self._json(200, trader_payload(profile if profile in PROFILES else "aggressive"))
             return
+        if path == "/us":
+            payload = render_us().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._security_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path in {"/", "/dashboard"}:
-            payload = render().encode("utf-8")
+            # The static dashboard.html (file:// / Pages) has no /us route, so the link is added only when served here.
+            payload = render().replace("</header>", '<a href="/us" style="align-self:center;margin-left:auto;margin-right:16px;font-weight:600">미국 &rarr;</a></header>', 1).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self._security_headers()
