@@ -203,6 +203,18 @@ class TossClient:
         }
 
     def _get(self, path: str, account_seq: int | None = None) -> dict:
+        try:
+            return self._get_once(path, account_seq)
+        except TossApiError as error:
+            if error.status != 401:
+                raise
+        # Toss keeps one live token per client: any other process that issues
+        # a token (every scheduled run does) revokes the one cached here, so a
+        # long-lived process must fetch a fresh token and retry once.
+        self._access_token = ""
+        return self._get_once(path, account_seq)
+
+    def _get_once(self, path: str, account_seq: int | None = None) -> dict:
         headers = {"Authorization": f"Bearer {self.access_token()}", "User-Agent": "stockAlarm/1.0"}
         if account_seq is not None:
             headers["X-Tossinvest-Account"] = str(account_seq)

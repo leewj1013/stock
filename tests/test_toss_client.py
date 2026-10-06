@@ -40,6 +40,26 @@ class TossClientTest(unittest.TestCase):
         self.assertEqual(["client-secret"], form["client_secret"])
 
     @patch("stock_alarm.toss_client._urlopen")
+    def test_revoked_token_is_refetched_once(self, urlopen):
+        def revoked():
+            body = io.BytesIO(json.dumps({"error": {"code": "token-revoked", "message": "replaced"}}).encode())
+            return urllib.error.HTTPError("https://example.invalid", 401, "Unauthorized", {}, body)
+
+        urlopen.side_effect = [
+            FakeResponse({"access_token": "old", "expires_in": 86400}),
+            revoked(),
+            FakeResponse({"access_token": "new", "expires_in": 86400}),
+            FakeResponse({"result": {"today": {"date": "2026-10-06"}}}),
+        ]
+        client = TossClient("client-id", "client-secret")
+        self.assertEqual("2026-10-06", client.market_calendar_kr()["today"]["date"])
+        self.assertEqual("Bearer new", urlopen.call_args_list[-1].args[0].get_header("Authorization"))
+        # A second 401 right after a fresh token is a real failure, not a stale token.
+        urlopen.side_effect = [revoked(), FakeResponse({"access_token": "newer", "expires_in": 86400}), revoked()]
+        with self.assertRaises(Exception):
+            client.market_calendar_kr()
+
+    @patch("stock_alarm.toss_client._urlopen")
     def test_connection_check_is_read_only_and_redacts_account_details(self, urlopen):
         urlopen.side_effect = [
             FakeResponse({"access_token": "token", "expires_in": 86400}),
