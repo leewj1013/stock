@@ -16,6 +16,8 @@ data/us_market_summary.json
 data/us_market_history.csv
 data/backtest/
 data/backtest_expanded/
+data/backtest_us/
+data/us_spy_hold.csv
 .venv/
 .tools/
 .cache/
