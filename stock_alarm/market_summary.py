@@ -244,6 +244,11 @@ def main() -> None:
     except Exception as error:
         write_error_log(error)
         raise
+    try:  # forward record of the US control account; must never break the briefing
+        from .us_spy_hold import update
+        update()
+    except Exception as error:
+        write_error_log(error)
 
 
 if __name__ == "__main__":
