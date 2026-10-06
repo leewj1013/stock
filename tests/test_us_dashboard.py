@@ -22,3 +22,10 @@ def test_render_without_ledger_degrades_to_empty_states():
 
 def test_max_drawdown():
     assert round(us_dashboard.max_drawdown_pct([100, 120, 90, 110]), 2) == -25.0
+
+
+def test_render_uses_the_shared_domestic_frame():
+    with patch.object(us_dashboard, "read_ledger", return_value=ROWS), patch.object(us_dashboard, "_read_us_cache", return_value=[]):
+        page = us_dashboard.render_us()
+    for marker in ("dashboard-header", "theme-toggle", 'class="tab-labels"', "stocks-panel", "const themeKey"):
+        assert marker in page
