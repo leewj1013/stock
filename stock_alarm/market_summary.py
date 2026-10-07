@@ -249,6 +249,11 @@ def main() -> None:
         update()
     except Exception as error:
         write_error_log(error)
+    try:  # second US record: forward replay of the strategy; state/problems go to data/us_strategy_status.json
+        from .us_strategy_account import update as update_us_strategy
+        update_us_strategy()
+    except Exception as error:
+        write_error_log(error)
 
 
 if __name__ == "__main__":

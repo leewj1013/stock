@@ -26,3 +26,4 @@ reports/
 __pycache__/
 *.pyc
 *.code-workspace
+data/us_strategy_*

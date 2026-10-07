@@ -33,7 +33,7 @@ def history(code: str) -> list[dict]:
     return get(f"chart/foreign/item/{code}/day?startDateTime=201801010000&endDateTime=202612310000")
 
 
-def main(n: int = 100) -> None:
+def write_universe(n: int) -> list[dict]:
     os.makedirs(f"{OUT_DIR}/ohlcv", exist_ok=True)
     universe = top_by_market_cap(n)
     with open(f"{OUT_DIR}/universe.csv", "w", newline="", encoding="utf-8") as f:
@@ -41,18 +41,34 @@ def main(n: int = 100) -> None:
         w.writerow(["code", "name_eng", "market_value_usd"])
         for s in universe:
             w.writerow([s["reutersCode"], s["stockNameEng"], s["marketValueRaw"]])
+    return universe
+
+
+def refresh(codes: list[str]) -> list[tuple[str, str]]:
+    """Re-download full daily history per code; a failed code keeps its previous file. Returns (code, error) failures."""
     failed = []
-    for code in [s["reutersCode"] for s in universe] + ETFS:
+    for code in codes:
         try:
             rows = history(code)
-            with open(f"{OUT_DIR}/ohlcv/{code}.csv", "w", newline="", encoding="utf-8") as f:
+            if not rows:
+                raise ValueError("empty series")
+            path = f"{OUT_DIR}/ohlcv/{code}.csv"
+            with open(path + ".tmp", "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(["date", "open", "high", "low", "close", "volume"])
                 for r in rows:
                     w.writerow([r["localDate"], r["openPrice"], r["highPrice"], r["lowPrice"], r["closePrice"], r["accumulatedTradingVolume"]])
+            os.replace(path + ".tmp", path)
         except Exception as exc:  # keep going; report at the end
             failed.append((code, str(exc)))
         time.sleep(0.2)
+    return failed
+
+
+def main(n: int = 100) -> None:
+    """Build today's top-N universe (overwrites universe.csv) and download it. Daily updates use refresh() instead."""
+    universe = write_universe(n)
+    failed = refresh([s["reutersCode"] for s in universe] + ETFS)
     print(f"universe={len(universe)} failed={failed}")
 
 

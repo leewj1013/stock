@@ -172,7 +172,7 @@ class PortfolioSimulator:
         return cache
 
     def run(self, strategy: str, candidates: dict[str, list[dict]], seed: int = 0,
-            unconstrained_sizing: bool = False) -> PortfolioResult:
+            unconstrained_sizing: bool = False, liquidate_at_end: bool = True) -> PortfolioResult:
         cash = self.initial_cash
         positions: dict[str, dict] = {}
         pending: dict[str, dict] = {}
@@ -431,11 +431,12 @@ class PortfolioSimulator:
                 "market_up_ratio": execution_breadth,
                 "market_exposure_limit_pct": execution_market_limit,
                 "positions_json": json.dumps({ticker: position["shares"] for ticker, position in positions.items()}, sort_keys=True),
+                "pending_json": json.dumps(sorted(pending)),
                 "position_values_json": json.dumps({ticker: round(value, 6) for ticker, value in position_values.items()}, sort_keys=True),
                 "position_weights_json": json.dumps({ticker: value / equity if equity else 0.0 for ticker, value in position_values.items()}, sort_keys=True),
             })
             previous_equity = equity
-        if self.days:
+        if self.days and liquidate_at_end:  # forward accounts keep positions open
             last_day = self.days[-1]
             for ticker, position in list(positions.items()):
                 close = self._close(ticker, last_day, position["entry_price"])
