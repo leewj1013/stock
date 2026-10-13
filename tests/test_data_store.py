@@ -177,6 +177,22 @@ class DataStoreTest(unittest.TestCase):
         self.assertEqual([], result["holdings"])
         self.assertEqual(103_000, result["cash"])
 
+    def test_rebought_ticker_reports_the_entry_time_of_the_current_holding(self):
+        virtual_deposit(100_000, self.path)
+        candidate = {"ticker": "A", "name": "Alpha", "close": 10_000, "score": 80, "allocation_pct": 100}
+        virtual_buy([candidate], self.path)
+        virtual_sell([{"ticker": "A", "name": "Alpha", "close": 11_000, "reason": "take profit"}], self.path)
+        virtual_buy([candidate], self.path)
+        with closing(connect(self.path)) as connection, connection:
+            connection.execute("UPDATE virtual_sales SET created_at='2026-09-14T10:02:00'")
+            ids = [row[0] for row in connection.execute("SELECT trade_id FROM virtual_trades ORDER BY trade_id")]
+            connection.execute("UPDATE virtual_trades SET created_at='2026-09-08T09:06:00' WHERE trade_id=?", (ids[0],))
+            connection.execute("UPDATE virtual_trades SET created_at='2026-09-22T09:12:00' WHERE trade_id=?", (ids[1],))
+
+        holding = virtual_trader_state(path=self.path)["holdings"][0]
+
+        self.assertEqual("2026-09-22T09:12:00", holding["first_entry_at"])
+
     def test_virtual_sell_does_not_double_sell_the_same_ticker_within_one_batch(self):
         # A stale duplicate row in data/positions.csv can make find_alerts()
         # emit two alerts for the same ticker in a single sell-check run.

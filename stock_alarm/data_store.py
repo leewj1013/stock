@@ -363,8 +363,15 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
     with closing(connect(path)) as connection:
         account = connection.execute("SELECT cash FROM virtual_accounts WHERE account_id = 1").fetchone()
         rows = connection.execute(
+            # first_entry_at is the first buy of the *current* holding: a ticker
+            # sold in full and bought again must not inherit the old entry date,
+            # or the sell check treats the old sell alert as covering the new position.
             """WITH buys AS (
-                 SELECT ticker, MAX(name) AS name, MIN(created_at) AS first_entry_at,
+                 SELECT ticker, MAX(name) AS name,
+                        MIN(CASE WHEN created_at > COALESCE((
+                          SELECT MAX(created_at) FROM virtual_sales
+                          WHERE virtual_sales.ticker = virtual_trades.ticker AND sale_type = 'full'
+                        ), '') THEN created_at END) AS first_entry_at,
                         SUM(quantity) AS bought_quantity, SUM(cost) AS bought_cost
                  FROM virtual_trades GROUP BY ticker
                ), sales AS (
