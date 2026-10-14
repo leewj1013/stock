@@ -23,8 +23,9 @@ def get(path: str):
 def top_by_market_cap(n: int) -> list[dict]:
     rows = []
     for exchange in ("NASDAQ", "NYSE"):
-        data = get(f"stock/exchange/{exchange}/marketValue?page=1&pageSize={n}")
-        rows += [s for s in data["stocks"] if s.get("stockEndType") == "stock"]
+        for page in range(1, -(-n // 100) + 1):  # the API serves at most 100 per page
+            data = get(f"stock/exchange/{exchange}/marketValue?page={page}&pageSize=100")
+            rows += [s for s in data["stocks"] if s.get("stockEndType") == "stock"]
     rows.sort(key=lambda s: int(s["marketValueRaw"]), reverse=True)
     return rows[:n]
 

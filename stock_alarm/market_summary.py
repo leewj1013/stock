@@ -249,9 +249,9 @@ def main() -> None:
         update()
     except Exception as error:
         write_error_log(error)
-    try:  # second US record: forward replay of the strategy; state/problems go to data/us_strategy_status.json
-        from .us_strategy_account import update as update_us_strategy
-        update_us_strategy()
+    try:  # forward replays of the strategy (100/300 names); state in data/us_strategy*_status.json, problems are pushed once
+        from .us_strategy_account import update_all as update_us_strategies
+        update_us_strategies()
     except Exception as error:
         write_error_log(error)
 
