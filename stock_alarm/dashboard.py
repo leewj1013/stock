@@ -5,7 +5,7 @@ import html
 import json
 import os
 import csv
-from datetime import datetime
+from datetime import datetime, time
 from functools import lru_cache
 from statistics import mean
 
@@ -759,8 +759,8 @@ def market_calendar_state() -> dict:
     -- not wired into is_trading_day()/is_market_alert_time(), which keep
     using their existing Naver-based check for now."""
     try:
-        from .toss_client import shared_client
-        today = shared_client().market_calendar_kr().get("today", {})
+        from .toss_client import TossClient
+        today = TossClient().market_calendar_kr().get("today", {})
         integrated = today.get("integrated")
         regular = (integrated or {}).get("regularMarket")
         return {
@@ -770,6 +770,43 @@ def market_calendar_state() -> dict:
         }
     except Exception as error:
         return {"connected": False, "reason": str(error)}
+
+
+def market_session_label(state: dict, now: datetime | None = None) -> str:
+    """Return an unambiguous, user-facing market session state."""
+    now = now or datetime.now()
+    if not state.get("connected"):
+        return "장 운영 정보 확인 불가"
+    if not state.get("open"):
+        return "휴장"
+    try:
+        start = time.fromisoformat(str(state.get("start_time") or "09:00"))
+        end = time.fromisoformat(str(state.get("end_time") or "15:30"))
+    except ValueError:
+        return "개장일"
+    if now.time() < start:
+        return "개장 전"
+    if now.time() <= end:
+        return "정규장 운영 중"
+    return "장 종료"
+
+
+def latest_operational_status() -> dict[str, dict[str, str]]:
+    """Summarize the services users need to trust the dashboard."""
+    run_rows = user_run_rows()
+    failed_runs = [row for row in run_rows if str(row.get("status") or "").lower() in {"error", "failed", "not-ok"}]
+    run_time = next((str(row.get("finished_at") or "") for row in recent_runs(10) if row.get("finished_at")), "기록 없음")
+    deliveries = tail_csv("logs/deliveries.csv", 100)
+    telegram = next((row for row in reversed(deliveries) if row.get("channel") == "telegram"), {})
+    telegram_ok = telegram.get("status") == "delivered"
+    prices = recent_price_quality(100)
+    price_time = next((str(row.get("created_at") or "") for row in prices if row.get("created_at")), "기록 없음")
+    price_invalid = any(row.get("status") == "invalid" for row in prices[:20])
+    return {
+        "batch": {"label": "정상" if not failed_runs else "오류", "time": run_time},
+        "telegram": {"label": "정상" if telegram_ok else "확인 필요", "time": str(telegram.get("created_at") or "기록 없음")},
+        "price": {"label": "정상" if prices and not price_invalid else "확인 필요", "time": price_time},
+    }
 
 
 def real_account_state() -> dict:
@@ -998,10 +1035,13 @@ def equity_curve_section(limit_days: int = 90) -> str:
             f"{x_of(index):.1f},{y_of(point):.1f}" for index, point in enumerate(item["points"]) if point is not None
         )
         dash = " stroke-dasharray='5 4'" if item.get("dashed") else ""
-        lines.append(f"<polyline fill='none' stroke='{item['color']}' stroke-width='2'{dash} points='{points}'/>")
+        emphasis = " is-benchmark" if item["key"] == "benchmark" else " is-active" if item["key"] == "aggressive" else ""
+        lines.append(f"<polyline class='curve-series{emphasis}' data-series='{e(item['key'])}' "
+                     f"fill='none' stroke='{item['color']}'{dash} points='{points}'/>")
         last = next((point for point in reversed(item["points"]) if point is not None), 0.0)
         signed = "pos" if last > 0 else "neg" if last < 0 else "zero"
-        legend.append(f"<span class='curve-legend-item'><i style='background:{item['color']}'></i>"
+        legend.append(f"<span class='curve-legend-item{emphasis}' data-series='{e(item['key'])}'>"
+                      f"<i style='background:{item['color']}'></i>"
                       f"{e(item['label'])}<b class='{signed}'>{last:+.2f}%</b></span>")
     grid = "".join(
         f"<line x1='{left:.0f}' y1='{y_of(value):.1f}' x2='{width - 12:.0f}' y2='{y_of(value):.1f}' class='curve-grid'/>"
@@ -1395,6 +1435,13 @@ def cell(value: object, column: str = "") -> str:
         shown = COLUMN_VALUE_LABELS[column][str(display)]
     else:
         shown = format_number(display) if column in NUMERIC_COLUMNS else display_value(display)
+        if column in RETURN_COLUMNS and str(shown) and not str(shown).endswith("%"):
+            try:
+                float(str(display).replace(",", ""))
+            except ValueError:
+                pass
+            else:
+                shown = f"{shown}%"
         if column in TIMESTAMP_COLUMNS and isinstance(shown, str) and "T" in shown:
             shown = shown.replace("T", " ")
     if column == "tracking_status" and shown in STATUS_PILL_CLASSES:
@@ -1658,9 +1705,9 @@ def recommendation_tracking_summary(rows: list[dict[str, str]]) -> list[tuple[st
 
 def status_class(value: str) -> str:
     lowered = value.lower()
-    if lowered in {"ok", "none"} or " ok" in lowered:
+    if lowered in {"ok", "none", "정상"} or " ok" in lowered:
         return "ok"
-    if lowered in {"old"}:
+    if lowered in {"old", "확인 필요"}:
         return "warn"
     if any(word in lowered for word in ("missing", "error", "found", "not-ok")):
         return "bad"
@@ -1679,6 +1726,11 @@ def render() -> str:
     tracking_rows = recommendation_tracking_rows()
     issue_count = today_issue_count()
     progress = learning_progress()
+    market_calendar = market_calendar_state()
+    market_session = market_session_label(market_calendar)
+    operational = latest_operational_status()
+    operational_warning_count = sum(item["label"] != "정상" for item in operational.values())
+    overall_warning_count = issue_count + operational_warning_count
     trader_candidates = json.dumps(
         [{key: row.get(key, "") for key in ("ticker", "name", "close", "score", "allocation_pct")} for row in recommendation_rows],
         ensure_ascii=False,
@@ -1710,9 +1762,9 @@ def render() -> str:
 </div></section>
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
   <div><span>자동매매</span><b id="home-auto-status">확인 중</b></div>
-  <div><span>시장 모드</span><b id="home-market-mode">확인 중</b></div>
+  <div><span>장 운영 상태</span><b id="home-market-mode">{e(market_session)}</b></div>
   <div><span>오늘 추천</span><b>{len(recommendation_rows)}종목</b></div>
-  <div><span>최근 가격 갱신</span><b id="home-price-updated">확인 중</b></div>
+  <div><span>가격 기준일</span><b id="home-price-basis">확인 중</b><small>화면 조회 <span id="home-price-updated">확인 중</span></small></div>
 </div></section>
 {user_table("오늘 가상매수 체결", bought_rows, ["name", "close", "virtual_target_pct", "aggressive_order_status", "neutral_order_status"], "오늘 가상매수가 체결된 추천이 없습니다.")}
 {home_note(f"미매수 추천 {len(unbought_rows)}종목: " + ", ".join(row.get("name", "") for row in unbought_rows[:5]) + (f" 외 {len(unbought_rows) - 5}종목" if len(unbought_rows) > 5 else "") + " · 추천 추적 탭과 마감 브리핑에서 확인") if unbought_rows else ""}
@@ -1752,7 +1804,12 @@ def render() -> str:
   <div><span>위험관리</span><b id="trader-risk">초기화 전</b></div>
 </div>
 <div class="trader-status" aria-live="polite"><span id="trader-price-status">가격 기준시각 확인 중</span><span>적용 전략 <b id="trader-strategy">기본 전략</b> · 일간 <b id="trader-daily-return">0.00%</b> · 주간 <b id="trader-weekly-return">0.00%</b> · 최대낙폭 <b id="trader-drawdown">0.00%</b></span></div></section>
-""" + equity_curve_section() + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state"]) + """
+<div class="section-divider"><h2>현재 가상계좌 운용</h2><p class="muted">실제 알림과 가상 주문에 사용하는 계좌 상태입니다.</p></div>
+""" + equity_curve_section() + """
+<details class="observation-details"><summary>관찰용 전략 실험 보기</summary><div class="details-body">
+<p class="muted">알림과 주문에는 사용하지 않는 비교 실험입니다. 시작일이 다른 계좌의 성과는 같은 기간으로 직접 비교하지 마세요.</p>
+""" + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state"]) + """
+</div></details>
 <section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
@@ -1797,7 +1854,7 @@ def render() -> str:
     if shadow:
         virtual = f"{shadow['virtual_return_pct']:+.2f}%" if shadow.get("virtual_return_pct") is not None else "-"
         shadow_section = (
-            "<section><div class='table-heading'><h2>섀도 포트폴리오 (관찰 전용 · 실제 주문 없음)</h2>"
+            "<details class='observation-details'><summary>섀도 포트폴리오 보기 (관찰 전용 · 실제 주문 없음)</summary><div class='details-body'><section><div class='table-heading'><h2>섀도 포트폴리오</h2>"
             f"<span class='table-count'>{e(shadow['since'])}부터 · 가정금액 {shadow['capital']:,}원 · 가상계좌 매도를 같은 비율로 따라 팝니다</span></div>"
             "<div class='trader-account-grid'>"
             f"<div class='trader-balance primary'><span>섀도 총자산</span><strong>{shadow['equity']:,}원</strong></div>"
@@ -1807,6 +1864,7 @@ def render() -> str:
             "</div></section>"
             + user_table("섀도 보유종목", shadow["holdings"], ["name", "ticker", "quantity", "average_price", "current_price", "valuation", "profit_loss", "return_pct"],
                          "섀도 보유종목이 없습니다.")
+            + "</div></details>"
         )
     else:
         shadow_section = ""
@@ -1824,7 +1882,6 @@ def render() -> str:
 {shadow_section}
 {user_table("섀도 주문 로그 (관찰 전용 · 실제 주문 없음)", shadow_order_rows, ["created_at", "ticker", "name", "order_side", "order_type", "order_quantity", "price", "cost", "reason"], "자동매매가 켜져 있었다면 나갔을 주문을 계산만 해서 기록합니다. 아직 기록된 항목이 없습니다.")}
 """
-    market_calendar = market_calendar_state()
     market_calendar_card = (
         f'<section class="home-operation"><h2>오늘 장 운영 정보</h2><div class="operation-grid">'
         f'<div><span>날짜</span><b>{e(market_calendar["date"])}</b></div>'
@@ -1835,11 +1892,16 @@ def render() -> str:
         if market_calendar["connected"] else ""
     )
     system_tab = f"""
-<div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span class="system-pill {'bad' if issue_count else 'ok'}">{'경고 ' + str(issue_count) + '건' if issue_count else '모든 작업 정상'}</span></div>
+<div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span id="system-overall-status" class="system-pill {'bad' if overall_warning_count else 'ok'}">{'확인 필요 ' + str(overall_warning_count) + '건' if overall_warning_count else '모든 작업 정상'}</span></div>
+<section class="home-operation"><h2>핵심 서비스 상태</h2><div class="operation-grid health-grid">
+  <div><span>자동 배치</span><b class="{status_class(operational['batch']['label'])}">{e(operational['batch']['label'])}</b><small>마지막 실행 {e(operational['batch']['time']).replace('T', ' ')}</small></div>
+  <div><span>텔레그램</span><b class="{status_class(operational['telegram']['label'])}">{e(operational['telegram']['label'])}</b><small>마지막 성공 {e(operational['telegram']['time']).replace('T', ' ')}</small></div>
+  <div><span>가격 데이터</span><b class="{status_class(operational['price']['label'])}">{e(operational['price']['label'])}</b><small>마지막 검사 {e(operational['price']['time']).replace('T', ' ')}</small></div>
+  <div><span>가상계좌 API</span><b id="system-api-status">확인 중</b><small id="system-api-updated">화면에서 실시간 확인</small></div>
+</div></section>
 {market_calendar_card}
-<section class="learning-status"><h2>데이터 학습 준비</h2><div class="progress-heading"><b>20일 성과 표본 {progress['current']} / {progress['target']}</b><span>{progress['percent']}%</span></div><div class="progress-track"><span style="width:{progress['percent']}%"></span></div><p class="muted">최소 300개가 쌓이면 강화된 검증 절차를 통해 가중치 승격 여부를 판단합니다.</p></section>
-{table("데이터 축적 현황", data_accumulation_rows(), ["metric", "value", "status"])}
-{table("표본 진행 현황", sample_progress_rows(), ["horizon", "completed", "total", "percent"])}
+<section class="learning-status"><h2>데이터 학습 준비</h2><div class="progress-heading"><b>20일 성과 표본 {progress['current']} / {progress['target']}</b><span>{progress['percent']}%</span></div><div class="progress-track"><span style="width:{progress['percent']}%"></span></div><p class="muted">최소 300개가 쌓이면 강화된 검증 절차를 통해 가중치 승격 여부를 판단합니다. · 최근 수집 {e(next((row['value'] for row in data_accumulation_rows() if row['metric'] == '최근 수집 시각'), '기록 없음')).replace('T', ' ')}</p></section>
+{details("기간별 표본 상세", table("표본 진행 현황", sample_progress_rows(), ["horizon", "completed", "total", "percent"]))}
 {table("Issues", issue_rows(), ["source", "item", "status"])}
 {user_table("Today run details", user_run_rows(), ["step", "status"], "오늘 사용자 확인이 필요한 자동 작업은 없습니다.")}
 {details("데이터 품질과 발송 상태", table("Price quality", recent_price_quality(30), ["created_at", "ticker", "status", "reason"]) + table("Recent deliveries", tail_csv("logs/deliveries.csv", 10), ["created_at", "channel", "status", "error"]))}
@@ -1852,13 +1914,14 @@ def render() -> str:
 <head>
 <meta charset="utf-8">
 <title>{e(display_label("stockAlarm Dashboard"))}</title>
+<link rel="icon" href="data:,">
 <style>
 {PAGE_CSS}
 </style>
 </head>
 <body>
 {shell_header(logo_data_uri, e(display_label("generated")) + " " + e(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))}
-<div class="tabs">
+<main><div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-tracking" name="tabs" type="radio">
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
@@ -1879,9 +1942,10 @@ def render() -> str:
 <div class="tab-panel" id="research-panel" role="tabpanel">{research_tab()}</div>
 <div class="tab-panel" id="real-account-panel" role="tabpanel">{real_account_tab}</div>
 <div class="tab-panel" id="system-panel" role="tabpanel">{system_tab}</div>
-</div>
+</div></main>
 <script>
 const traderCandidates = {trader_candidates};
+const marketSessionLabel = {json.dumps(market_session, ensure_ascii=False)};
 const traderKey = "stockAlarm.virtualTrader.v1";
 const remoteMode = !(["file:","http:"].includes(location.protocol) && ["","127.0.0.1","localhost"].includes(location.hostname));
 const remoteTokenOriginKey = "stockAlarm.remoteTokenOrigin";
@@ -1942,9 +2006,13 @@ function renderCompare(name, state) {{
   document.getElementById(`${{prefix}}-orders`).textContent=`매수 ${{state.today_buys||0}} · 매도 ${{state.today_sells||0}}`;
 }}
 async function loadComparison() {{
-  await Promise.all(Object.keys(profileLabels).map(name =>
-    traderRequest("/api/trader", {{}}, name).then(state => renderCompare(name, state), () => renderCompare(name, null))
+  const results=await Promise.all(Object.keys(profileLabels).map(name =>
+    traderRequest("/api/trader", {{}}, name).then(state => {{renderCompare(name, state); return true;}}, () => {{renderCompare(name, null); return false;}})
   ));
+  const apiOk=results.every(Boolean), apiStatus=document.getElementById("system-api-status"), apiUpdated=document.getElementById("system-api-updated"), overall=document.getElementById("system-overall-status");
+  if(apiStatus) {{ apiStatus.textContent=apiOk?"정상":"연결 실패"; apiStatus.className=apiOk?"ok":"bad"; }}
+  if(apiUpdated) apiUpdated.textContent=`확인 ${{new Date().toLocaleString("ko-KR")}}`;
+  if(overall && !apiOk) {{ overall.textContent="가상계좌 API 확인 필요"; overall.className="system-pill bad"; }}
 }}
 function renderSales() {{
   const summary=trader.sale_summary || {{}};
@@ -2020,15 +2088,16 @@ function renderTrader(message="") {{
   const riskLabels={{active:"정상 운영",reduced:"축소 운영",halted:"신규매수 중단"}};
   document.getElementById("trader-risk").textContent = risk.status === "halted" ? `신규매수 중단 · ${{risk.reason || "위험 한도"}}` : (riskLabels[risk.status] || risk.status || "초기화 전");
   document.getElementById("trader-market-mode").textContent = trader.market_mode ? `${{trader.market_mode}}${{trader.market_up_ratio_pct == null ? "" : ` · 상승 ${{Number(trader.market_up_ratio_pct).toFixed(1)}}%`}}` : "데이터 대기";
-  document.getElementById("home-market-mode").textContent = trader.market_mode ? `${{trader.market_mode}}${{trader.market_exposure_limit_pct == null ? "" : ` · 한도 ${{Number(trader.market_exposure_limit_pct).toFixed(0)}}%`}}` : "데이터 대기";
+  document.getElementById("home-market-mode").textContent = marketSessionLabel;
   document.getElementById("trader-market-limit").textContent = trader.market_exposure_limit_pct == null ? "데이터 대기" : `${{Number(trader.market_exposure_limit_pct).toFixed(0)}}%`;
   document.getElementById("trader-exposure").textContent = `${{Number(risk.exposure_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-daily-return").textContent = `${{Number(risk.daily_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-weekly-return").textContent = `${{Number(risk.weekly_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-drawdown").textContent = `${{Number(risk.drawdown_pct || 0).toFixed(2)}}%`;
   document.getElementById("home-price-updated").textContent=(trader.price_updated_at||"확인 중").replace("T"," ");
+  document.getElementById("home-price-basis").textContent=trader.price_basis_date||"확인 불가";
   const unavailable=trader.price_unavailable_tickers || [];
-  document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · ${{trader.price_updated_at || ""}}`;
+  document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · 가격 기준 ${{trader.price_basis_date || "확인 불가"}} · 화면 조회 ${{(trader.price_updated_at || "").replace("T"," ")}}`;
   const body = document.getElementById("trader-holdings"); body.textContent = "";
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
@@ -2081,6 +2150,9 @@ const profileLabels={{aggressive:"적극투자형",neutral:"위험중립형"}};
 function syncProfileButtons() {{
   profileButtons.forEach(button=>button.setAttribute("aria-pressed", String(button.dataset.profile===currentProfile)));
   document.getElementById("trader-profile-label").textContent = profileLabels[currentProfile] || currentProfile;
+  document.querySelectorAll("[data-series]").forEach(item => {{
+    item.classList.toggle("is-active", item.dataset.series===currentProfile);
+  }});
 }}
 function loadTrader() {{
   const legacyTrader = currentProfile==="aggressive" ? localStorage.getItem(traderKey) : null;

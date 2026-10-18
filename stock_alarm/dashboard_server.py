@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
-from .app import effective_exposure_limit_pct, load_env, naver_rows, write_error_log
+from .app import effective_exposure_limit_pct, latest_naver_trading_day, load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
@@ -190,11 +190,16 @@ def trader_payload(profile: str = "aggressive") -> dict:
     wins = sum(int(row.get("realized_profit_loss") or 0) > 0 for row in sales)
     total_cost = sum(int(row.get("cost_basis") or 0) for row in sales)
     total_realized = sum(int(row.get("realized_profit_loss") or 0) for row in sales)
+    try:
+        price_basis_date = latest_naver_trading_day().isoformat()
+    except (OSError, ValueError, TypeError):
+        price_basis_date = ""
     return {
         **state,
         "profile": profile,
         "equity_trend": recent_equity_trend(7, path),
         "price_updated_at": datetime.now().isoformat(timespec="seconds"),
+        "price_basis_date": price_basis_date,
         "price_source": "네이버 금융 · 검증 실패 종목은 진입가 임시표시",
         "risk": risk,
         "strategy_version": strategy.get("version_id", "기본 전략"),

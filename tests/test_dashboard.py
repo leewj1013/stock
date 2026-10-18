@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from datetime import datetime
 
-from stock_alarm.dashboard import actionable_issue_rows, cell, dashboard_logo_data_uri, display_value, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
+from stock_alarm.dashboard import actionable_issue_rows, cell, dashboard_logo_data_uri, display_value, e, empty_value_label, issue_rows, latest_position_rows, market_calendar_state, market_session_label, reason_summary, real_account_state, recommendation_shape_rows, recommendation_tracking_rows, recommendation_tracking_summary, render, sample_progress_rows, settings_rows, signed_class, sort_table_rows, status_class, table, today_issue_count, today_recommendation_rows, today_run_rows, today_sell_alert_rows, watch_state_pill_class, write
 
 
 class DashboardTest(unittest.TestCase):
@@ -182,7 +182,7 @@ class DashboardTest(unittest.TestCase):
     def test_numeric_cell_formats_and_aligns(self):
         self.assertEqual("<td class='num'>1,234,500</td>", cell("1234500", "close"))
         self.assertEqual("<td class='num'>12.35</td>", cell("12.345", "score"))
-        self.assertEqual("<td class='num neg'>-10.30</td>", cell("-10.30", "return_1d_pct"))
+        self.assertEqual("<td class='num neg'>-10.30%</td>", cell("-10.30", "return_1d_pct"))
 
     @patch("stock_alarm.dashboard.tail_csv")
     def test_sample_progress_rows_breaks_down_completion_by_horizon(self, tail_csv):
@@ -224,6 +224,13 @@ class DashboardTest(unittest.TestCase):
         state = market_calendar_state()
         self.assertTrue(state["connected"])
         self.assertFalse(state["open"])
+
+    def test_market_session_label_distinguishes_holiday_and_session_phases(self):
+        self.assertEqual("휴장", market_session_label({"connected": True, "open": False}))
+        state = {"connected": True, "open": True, "start_time": "09:00", "end_time": "15:30"}
+        self.assertEqual("개장 전", market_session_label(state, datetime(2026, 10, 19, 8, 30)))
+        self.assertEqual("정규장 운영 중", market_session_label(state, datetime(2026, 10, 19, 10, 0)))
+        self.assertEqual("장 종료", market_session_label(state, datetime(2026, 10, 19, 16, 0)))
 
     def test_real_account_state_reports_not_connected_without_credentials(self):
         with patch.dict("os.environ", {"TOSS_CLIENT_ID": "", "TOSS_CLIENT_SECRET": ""}):
@@ -601,12 +608,14 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("오늘 실행 상세", html)
         self.assertIn("오늘 가상매수 체결", html)
         self.assertIn("추천 형태", html)
-        self.assertIn("데이터 축적 현황", html)
+        self.assertIn("기간별 표본 상세", html)
         self.assertIn("현재 운영 상태", html)
         self.assertIn("알고리즘 검증 결과", html)
         self.assertIn("데이터 학습 준비", html)
+        self.assertIn("핵심 서비스 상태", html)
+        self.assertIn("가격 기준일", html)
         self.assertIn("현재 항목이 없습니다", html)
-        self.assertIn("시장 모드", html)
+        self.assertIn("장 운영 상태", html)
         self.assertIn("매도 내역", html)
         self.assertIn("누적 실현손익", html)
         self.assertIn("가상계좌 자산 구성", html)
