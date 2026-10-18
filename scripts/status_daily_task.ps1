@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $rows = @(
-foreach ($name in "stockAlarmOpen", "stockAlarmIntradayEvery5Minutes", "stockAlarmSellEvery5Minutes", "stockAlarmDaily", "stockAlarmMaintenance") {
+foreach ($name in "stockAlarmOpen", "stockAlarmIntradayEvery5Minutes", "stockAlarmSellEvery5Minutes", "stockAlarmDaily", "stockAlarmMaintenance", "stockAlarmUSAccount", "stockAlarmUSAccountRetry") {
     $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
     $info = Get-ScheduledTaskInfo -TaskName $name
 

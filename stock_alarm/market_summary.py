@@ -244,16 +244,6 @@ def main() -> None:
     except Exception as error:
         write_error_log(error)
         raise
-    try:  # forward record of the US control account; must never break the briefing
-        from .us_spy_hold import update
-        update()
-    except Exception as error:
-        write_error_log(error)
-    try:  # forward replays of the strategy (100/300 names); state in data/us_strategy*_status.json, problems are pushed once
-        from .us_strategy_account import update_all as update_us_strategies
-        update_us_strategies()
-    except Exception as error:
-        write_error_log(error)
 
 
 if __name__ == "__main__":

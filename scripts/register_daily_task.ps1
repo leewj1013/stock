@@ -25,6 +25,9 @@ $dailyReviewPath = Join-Path $runtimeRoot "scripts\run_daily_review.ps1"
 $dailyReviewAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$dailyReviewPath`""
 $dartBackfillPath = Join-Path $runtimeRoot "scripts\run_dart_backfill.ps1"
 $dartBackfillAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$dartBackfillPath`""
+$usAccountPath = Join-Path $runtimeRoot "scripts\run_us_account.ps1"
+$usAccountAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$usAccountPath`""
+$usAccountRetryAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$hiddenLauncherPath`" `"$usAccountPath`" retry"
 $taskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 $escapedScriptPath = [System.Security.SecurityElement]::Escape($scriptPath)
 $escapedHiddenLauncherPath = [System.Security.SecurityElement]::Escape($hiddenLauncherPath)
@@ -193,3 +196,10 @@ Register-ScheduledTask -TaskName "stockAlarmDailyReview" -Action $dailyReviewAct
 # until done (skips stored periods), after the other DART jobs so quota left
 # over is what it uses.
 Register-ScheduledTask -TaskName "stockAlarmDartBackfill" -Action $dartBackfillAction -Trigger (New-ScheduledTaskTrigger -Daily -At "22:00") -Settings $taskSettings -Description "Backfill annual DART statements since 2015 for the delisted-inclusive universe (read-only)" -Force
+
+# A US Monday close is available on Tuesday morning in Korea; include Saturday
+# morning for the US Friday close. The later pass retries only incomplete days.
+$usDays = @([System.DayOfWeek]::Tuesday, [System.DayOfWeek]::Wednesday, [System.DayOfWeek]::Thursday, [System.DayOfWeek]::Friday, [System.DayOfWeek]::Saturday)
+$usTaskSettings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "stockAlarmUSAccount" -Action $usAccountAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $usDays -At "09:15") -Settings $usTaskSettings -Description "Update US SPY and strategy accounts after the US close" -Force | Out-Null
+Register-ScheduledTask -TaskName "stockAlarmUSAccountRetry" -Action $usAccountRetryAction -Trigger (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $usDays -At "10:15") -Settings $usTaskSettings -Description "Retry US account updates if the first pass did not reach the latest SPY session" -Force | Out-Null

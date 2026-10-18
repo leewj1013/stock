@@ -1397,20 +1397,44 @@ def decision_log_rows(path: str = "STRATEGY_NOTES.md") -> list[dict[str, str]]:
     return rows
 
 
+def decision_timeline(rows: list[dict[str, str]]) -> str:
+    if not rows:
+        return "<div class='empty-state'><b>결정 기록이 없습니다</b><span>STRATEGY_NOTES.md에 기록하면 여기에 표시됩니다.</span></div>"
+    items = "".join(
+        "<article class='decision-item'>"
+        f"<time>{e(row.get('decision_date'))}</time>"
+        f"<div><h3>{e(row.get('decision_title'))}</h3><p>{e(row.get('decision_summary'))}</p></div>"
+        "</article>"
+        for row in rows
+    )
+    return f"<div class='decision-timeline'>{items}</div>"
+
+
+def experiment_progress_cards(rows: list[dict[str, str]]) -> str:
+    cards = "".join(
+        "<article class='experiment-card'>"
+        f"<div class='experiment-card-heading'><h3>{e(row.get('experiment'))}</h3>"
+        f"<span class='status-pill pill-neutral'>{e(row.get('risk_state'))}</span></div>"
+        f"<b>{e(row.get('progress'))}</b>"
+        f"<p>{e(row.get('criterion'))}</p>"
+        "</article>"
+        for row in rows
+    )
+    return f"<section><h2>실험 진행 현황</h2><div class='experiment-grid'>{cards}</div></section>"
+
+
 def research_tab() -> str:
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
         + market_regime_card()
-        + table("실험 진행 현황", experiment_progress_rows(), ["experiment", "criterion", "progress", "risk_state"])
+        + experiment_progress_cards(experiment_progress_rows())
         + research_results_section()
         + report_section("학습 기록", ("reports/learning_log.md", text) if (text := read_text(LEARNING_LOG)) else None,
                          "reports/learning_log.md에 검증·사실·관찰을 기록합니다.")
         + report_section("월간 돌아보기", latest_markdown(MONTHLY_REVIEW_DIR), "매월 1일 월간 돌아보기가 reports/monthly_review/에 남깁니다.")
         + latest_daily_review_section()
-        + details("결정 기록 (STRATEGY_NOTES.md)",
-                  user_table("결정 기록", decision_log_rows(), ["decision_date", "decision_title", "decision_summary"],
-                             "STRATEGY_NOTES.md를 찾지 못했습니다."))
+        + details("결정 기록 (STRATEGY_NOTES.md)", decision_timeline(decision_log_rows()))
     )
 
 
@@ -1737,32 +1761,18 @@ def render() -> str:
     ).replace("</", "<\\/")
     bought_rows, unbought_rows = split_home_recommendations(recommendation_rows)
     held_sell_rows = home_sell_rows(sell_rows, held_or_sold_today_tickers())
+    home_notice = (
+        f"<div class='home-alert neutral'><b>{e(market_session)}</b><span>휴장일에는 신규 추천과 주문이 실행되지 않습니다.</span></div>"
+        if market_session == "휴장" else
+        f"<div class='home-alert {'warn' if held_sell_rows else 'ok'}'><b>{'확인할 매도 신호 ' + str(len(held_sell_rows)) + '건' if held_sell_rows else '지금 확인할 긴급 신호 없음'}</b><span>보유종목 기준</span></div>"
+    )
     stock_tab = f"""
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div></div>
 {us_overnight_note()}
-<section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
-  <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
-    <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
-    <div class="profile-compare-stats">
-      <span>수익률 <b id="compare-aggressive-return">-</b></span>
-      <span>오늘 손익 <b id="compare-aggressive-daily">-</b></span>
-      <span>위험관리 <b id="compare-aggressive-risk">-</b></span>
-      <span>오늘 매수·매도 <b id="compare-aggressive-orders">-</b></span>
-    </div>
-  </div>
-  <div class="profile-compare-card"><span class="profile-compare-label">위험중립형</span>
-    <div class="profile-compare-heading"><strong id="compare-neutral-equity">불러오는 중</strong><svg class="sparkline" id="compare-neutral-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
-    <div class="profile-compare-stats">
-      <span>수익률 <b id="compare-neutral-return">-</b></span>
-      <span>오늘 손익 <b id="compare-neutral-daily">-</b></span>
-      <span>위험관리 <b id="compare-neutral-risk">-</b></span>
-      <span>오늘 매수·매도 <b id="compare-neutral-orders">-</b></span>
-    </div>
-  </div>
-</div></section>
+{home_notice}
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
-  <div><span>자동매매</span><b id="home-auto-status">확인 중</b></div>
-  <div><span>장 운영 상태</span><b id="home-market-mode">{e(market_session)}</b></div>
+  <div><span>자동매매</span><b id="home-auto-status" class="state-badge state-neutral">확인 중</b></div>
+  <div><span>장 운영 상태</span><b id="home-market-mode" class="state-badge {'state-neutral' if market_session in {'휴장', '장 종료'} else 'state-ok'}">{e(market_session)}</b></div>
   <div><span>오늘 추천</span><b>{len(recommendation_rows)}종목</b></div>
   <div><span>가격 기준일</span><b id="home-price-basis">확인 중</b><small>화면 조회 <span id="home-price-updated">확인 중</span></small></div>
 </div></section>
@@ -1770,6 +1780,16 @@ def render() -> str:
 {home_note(f"미매수 추천 {len(unbought_rows)}종목: " + ", ".join(row.get("name", "") for row in unbought_rows[:5]) + (f" 외 {len(unbought_rows) - 5}종목" if len(unbought_rows) > 5 else "") + " · 추천 추적 탭과 마감 브리핑에서 확인") if unbought_rows else ""}
 {user_table("보유종목 매도 신호", held_sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
 {home_note(f"보유하지 않은 추천 종목의 매도 신호 {len(sell_rows) - len(held_sell_rows)}건은 추천 추적 탭에 있습니다.") if len(sell_rows) > len(held_sell_rows) else ""}
+<section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
+  <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
+    <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
+    <div class="profile-compare-stats"><span>수익률 <b id="compare-aggressive-return">-</b></span><span>오늘 손익 <b id="compare-aggressive-daily">-</b></span><span>위험관리 <b id="compare-aggressive-risk">-</b></span><span>오늘 매수·매도 <b id="compare-aggressive-orders">-</b></span></div>
+  </div>
+  <div class="profile-compare-card"><span class="profile-compare-label">위험중립형</span>
+    <div class="profile-compare-heading"><strong id="compare-neutral-equity">불러오는 중</strong><svg class="sparkline" id="compare-neutral-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>
+    <div class="profile-compare-stats"><span>수익률 <b id="compare-neutral-return">-</b></span><span>오늘 손익 <b id="compare-neutral-daily">-</b></span><span>위험관리 <b id="compare-neutral-risk">-</b></span><span>오늘 매수·매도 <b id="compare-neutral-orders">-</b></span></div>
+  </div>
+</div></section>
 """
     tracking_cards = "".join(
         f"<div class='tracking-card'><span>{e(label)}</span><b>{e(value)}</b></div>"
@@ -1810,7 +1830,7 @@ def render() -> str:
 <p class="muted">알림과 주문에는 사용하지 않는 비교 실험입니다. 시작일이 다른 계좌의 성과는 같은 기간으로 직접 비교하지 마세요.</p>
 """ + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state"]) + """
 </div></details>
-<section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">재무 수치는 최근 분기 · 잉여현금흐름은 최근 4개 분기</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th><th class="num fundamental-col">PER</th><th class="num fundamental-col">매출성장률</th><th class="num fundamental-col">영업이익률</th><th class="num fundamental-col">잉여현금흐름</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
+<section><div class="table-heading"><h2>가상계좌 보유종목</h2><span class="table-count">종목명 아래에서 재무 상세 확인</span></div><table><thead><tr><th>종목명</th><th class="num">보유수량</th><th class="num">투자비중</th><th class="num">보유일수</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">평가손익</th><th class="num">수익률</th><th>매도 감시상태</th><th>다음 매도 기준</th></tr></thead><tbody id="trader-holdings"></tbody></table></section>
 <section class="sales-history"><h2>매도 내역</h2><p class="muted">부분매도와 전량매도를 포함한 가상계좌 실현 결과입니다.</p>
   <div class="sale-summary-grid">
     <div><span>누적 실현손익</span><b id="sale-realized-profit">0원</b></div>
@@ -1818,12 +1838,12 @@ def render() -> str:
     <div><span>매도 승률</span><b id="sale-win-rate">0.00%</b></div>
     <div><span>평균 실현수익률</span><b id="sale-return">0.00%</b></div>
   </div>
-  <div class="table-scroll"><table><thead><tr><th>종목명</th><th>매수일</th><th>매도일</th><th>구분</th><th class="num">평균 매수가</th><th class="num">매도가</th><th class="num">수량</th><th class="num">실현손익</th><th class="num">실현수익률</th><th>매도 사유</th></tr></thead><tbody id="trader-sales"></tbody></table></div>
-  <div class="pager" id="trader-sales-pager" data-page-size="15"></div>
-</section><div class="trader-chart-grid">
+  <details class="compact-details"><summary>최근 매도 내역 보기</summary><div class="details-body"><div class="table-scroll"><table><thead><tr><th>종목명</th><th>매수일</th><th>매도일</th><th>구분</th><th class="num">평균 매수가</th><th class="num">매도가</th><th class="num">수량</th><th class="num">실현손익</th><th class="num">실현수익률</th><th>매도 사유</th></tr></thead><tbody id="trader-sales"></tbody></table></div>
+  <div class="pager" id="trader-sales-pager" data-page-size="5"></div></div></details>
+</section><details class="compact-details"><summary>자산 구성 상세 보기</summary><div class="details-body"><div class="trader-chart-grid">
   <section class="donut-card" aria-labelledby="asset-chart-title"><h2 id="asset-chart-title">가상계좌 자산 구성</h2><div class="donut-layout"><div class="donut-ring" id="asset-donut" role="img" aria-label="자산 구성 데이터 대기"><div class="donut-hole"><span>총자산</span><b id="asset-donut-total">0원</b></div></div><div class="donut-legend" id="asset-donut-legend"></div></div></section>
   <section class="donut-card" aria-labelledby="sector-chart-title"><h2 id="sector-chart-title">보유종목 업종 비중</h2><div class="donut-layout"><div class="donut-ring" id="sector-donut" role="img" aria-label="업종 비중 데이터 대기"><div class="donut-hole"><span>보유 업종</span><b id="sector-donut-count">0개</b></div></div><div class="donut-legend" id="sector-donut-legend"></div></div></section>
-</div>
+</div></div></details>
 <details class="account-actions"><summary>입금 및 수동 주문</summary><div class="details-body"><section class="trader-controls">
   <div class="trader-form"><label for="deposit-amount">입금금액(원)</label><input id="deposit-amount" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 10000000"><button id="deposit-button" type="button">현금 입금</button><button id="buy-button" type="button" title="자동매매 외에 지금 즉시 주문을 다시 계산합니다.">수동 주문 실행</button></div>
   <p class="muted">수동 주문은 자동매매와 별개로 지금 즉시 계산됩니다. 종목당 현재 목표 비중은 총자산의 10%이며 정수 수량만 주문합니다.</p>
@@ -1894,10 +1914,10 @@ def render() -> str:
     system_tab = f"""
 <div class="home-heading"><div><h2>시스템 관리</h2><p class="muted">문제가 있을 때만 확인하면 되는 운영 정보입니다.</p></div><span id="system-overall-status" class="system-pill {'bad' if overall_warning_count else 'ok'}">{'확인 필요 ' + str(overall_warning_count) + '건' if overall_warning_count else '모든 작업 정상'}</span></div>
 <section class="home-operation"><h2>핵심 서비스 상태</h2><div class="operation-grid health-grid">
-  <div><span>자동 배치</span><b class="{status_class(operational['batch']['label'])}">{e(operational['batch']['label'])}</b><small>마지막 실행 {e(operational['batch']['time']).replace('T', ' ')}</small></div>
-  <div><span>텔레그램</span><b class="{status_class(operational['telegram']['label'])}">{e(operational['telegram']['label'])}</b><small>마지막 성공 {e(operational['telegram']['time']).replace('T', ' ')}</small></div>
-  <div><span>가격 데이터</span><b class="{status_class(operational['price']['label'])}">{e(operational['price']['label'])}</b><small>마지막 검사 {e(operational['price']['time']).replace('T', ' ')}</small></div>
-  <div><span>가상계좌 API</span><b id="system-api-status">확인 중</b><small id="system-api-updated">화면에서 실시간 확인</small></div>
+  <div><span>자동 배치</span><b class="state-badge {'state-ok' if operational['batch']['label'] == '정상' else 'state-bad'}">{e(operational['batch']['label'])}</b><small>마지막 실행 {e(operational['batch']['time']).replace('T', ' ')}</small></div>
+  <div><span>텔레그램</span><b class="state-badge {'state-ok' if operational['telegram']['label'] == '정상' else 'state-warn'}">{e(operational['telegram']['label'])}</b><small>마지막 성공 {e(operational['telegram']['time']).replace('T', ' ')}</small></div>
+  <div><span>가격 데이터</span><b class="state-badge {'state-ok' if operational['price']['label'] == '정상' else 'state-warn'}">{e(operational['price']['label'])}</b><small>마지막 검사 {e(operational['price']['time']).replace('T', ' ')}</small></div>
+  <div><span>가상계좌 API</span><b id="system-api-status" class="state-badge state-neutral">확인 중</b><small id="system-api-updated">화면에서 실시간 확인</small></div>
 </div></section>
 {market_calendar_card}
 <section class="learning-status"><h2>데이터 학습 준비</h2><div class="progress-heading"><b>20일 성과 표본 {progress['current']} / {progress['target']}</b><span>{progress['percent']}%</span></div><div class="progress-track"><span style="width:{progress['percent']}%"></span></div><p class="muted">최소 300개가 쌓이면 강화된 검증 절차를 통해 가중치 승격 여부를 판단합니다. · 최근 수집 {e(next((row['value'] for row in data_accumulation_rows() if row['metric'] == '최근 수집 시각'), '기록 없음')).replace('T', ' ')}</p></section>
@@ -1921,7 +1941,7 @@ def render() -> str:
 </head>
 <body>
 {shell_header(logo_data_uri, e(display_label("generated")) + " " + e(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))}
-<main><div class="tabs">
+<main><h1 class="sr-only">국내주식 알림 대시보드</h1><div class="tabs">
 <input class="tab-input" id="tab-stocks" name="tabs" type="radio" checked>
 <input class="tab-input" id="tab-tracking" name="tabs" type="radio">
 <input class="tab-input" id="tab-trader" name="tabs" type="radio">
@@ -2010,7 +2030,7 @@ async function loadComparison() {{
     traderRequest("/api/trader", {{}}, name).then(state => {{renderCompare(name, state); return true;}}, () => {{renderCompare(name, null); return false;}})
   ));
   const apiOk=results.every(Boolean), apiStatus=document.getElementById("system-api-status"), apiUpdated=document.getElementById("system-api-updated"), overall=document.getElementById("system-overall-status");
-  if(apiStatus) {{ apiStatus.textContent=apiOk?"정상":"연결 실패"; apiStatus.className=apiOk?"ok":"bad"; }}
+  if(apiStatus) {{ apiStatus.textContent=apiOk?"정상":"연결 실패"; apiStatus.className=`state-badge ${{apiOk?"state-ok":"state-bad"}}`; }}
   if(apiUpdated) apiUpdated.textContent=`확인 ${{new Date().toLocaleString("ko-KR")}}`;
   if(overall && !apiOk) {{ overall.textContent="가상계좌 API 확인 필요"; overall.className="system-pill bad"; }}
 }}
@@ -2082,7 +2102,7 @@ function renderTrader(message="") {{
   const totalProfit=document.getElementById("trader-total-profit"); totalProfit.textContent=won(trader.total_profit_loss || 0); totalProfit.className=(trader.total_profit_loss>0?"pos":trader.total_profit_loss<0?"neg":"zero");
   renderPortfolioCharts();
   document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
-  document.getElementById("home-auto-status").textContent = trader.auto_trading ? "정상 작동" : "중단";
+  const homeAuto=document.getElementById("home-auto-status"); homeAuto.textContent=trader.auto_trading?"정상 작동":"중단"; homeAuto.className=`state-badge ${{trader.auto_trading?"state-ok":"state-bad"}}`;
   document.getElementById("trader-strategy").textContent = trader.strategy_version || "기본 전략";
   const risk=trader.risk || {{}};
   const riskLabels={{active:"정상 운영",reduced:"축소 운영",halted:"신규매수 중단"}};
@@ -2105,19 +2125,23 @@ function renderTrader(message="") {{
     const watchState=item.watch_state||'데이터 대기';
     const ratio=(value,suffix)=>value==null||value===""?"–":`${{Number(value).toFixed(suffix==="%"?1:2)}}${{suffix}}`;
     const eok=(value)=>value==null||value===""?"–":`${{Math.round(Number(value)/1e8).toLocaleString("ko-KR")}}억`;
-    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference,ratio(item.per,""),ratio(item.revenue_growth_pct,"%"),ratio(item.operating_margin_pct,"%"),eok(item.free_cash_flow)];
+    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference];
     values.forEach((value,index)=>{{
       const cell=document.createElement("td");
+      if(index===0){{
+        const name=document.createElement("span"); name.textContent=value; cell.appendChild(name);
+        const detail=document.createElement("details"); detail.className="inline-details";
+        const summary=document.createElement("summary"); summary.textContent="재무 보기";
+        const info=document.createElement("div"); info.textContent=`PER ${{ratio(item.per,"")}} · 매출성장 ${{ratio(item.revenue_growth_pct,"%")}} · 영업이익률 ${{ratio(item.operating_margin_pct,"%")}} · 잉여현금흐름 ${{eok(item.free_cash_flow)}}`;
+        detail.append(summary,info); cell.appendChild(detail);
+      }}
       if(index===8 && watchStatePillClass(watchState)) {{const pill=document.createElement("span"); pill.className=`status-pill ${{watchStatePillClass(watchState)}}`; pill.textContent=value; cell.appendChild(pill);}}
-      else cell.textContent=value;
+      else if(index!==0) cell.textContent=value;
       if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";
-      if(index>=10){{cell.className="num fundamental-col";}}
-      if(index===11&&item.revenue_growth_pct!=null)cell.className+=Number(item.revenue_growth_pct)>0?" pos":Number(item.revenue_growth_pct)<0?" neg":"";
-      if(index===13&&item.free_cash_flow!=null)cell.className+=Number(item.free_cash_flow)>0?" pos":Number(item.free_cash_flow)<0?" neg":"";
       row.appendChild(cell);
     }}); body.appendChild(row);
   }});
-  if (!body.children.length) body.innerHTML='<tr><td colspan="14" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
+  if (!body.children.length) body.innerHTML='<tr><td colspan="10" class="muted">가상계좌 보유종목이 없습니다.</td></tr>';
   const warningCount=(trader.holdings||[]).filter(item=>(item.watch_state||"").startsWith("종목")).length;
   const navBadge=document.getElementById("nav-badge-trader");
   navBadge.textContent=warningCount; navBadge.hidden=!warningCount;

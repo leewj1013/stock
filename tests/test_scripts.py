@@ -138,6 +138,21 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1330\"", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1500\"", script)
 
+    def test_us_account_has_independent_post_close_runs(self):
+        with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
+            register = file.read()
+        with open("scripts/run_us_account.ps1", encoding="utf-8-sig") as file:
+            runner = file.read()
+        with open("stock_alarm/market_summary.py", encoding="utf-8-sig") as file:
+            briefing = file.read()
+        self.assertIn('stockAlarmUSAccount"', register)
+        self.assertIn('stockAlarmUSAccountRetry"', register)
+        self.assertIn('run_us_account.ps1', register)
+        self.assertIn('09:15', register)
+        self.assertIn('10:15', register)
+        self.assertIn('stock_alarm.us_account_job', runner)
+        self.assertNotIn('update_us_strategies()', briefing)
+
     def test_status_task_shows_next_run(self):
         with open("scripts/status_daily_task.ps1", encoding="utf-8-sig") as file:
             script = file.read()

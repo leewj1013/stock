@@ -19,8 +19,11 @@ UNIVERSE_PATH = "data/backtest_us/universe.csv"
 STALE_DAYS = 5  # weekend + a US holiday still leaves a fresh row within 5 days
 DOMESTIC_LINK = ('<a href="/" style="align-self:center;margin-left:auto;margin-right:16px;font-weight:600">'
                  "&larr; 국내</a>")
-TABS = [("tab-stocks", "home", "요약", "stocks-panel"), ("tab-trader", "chart", "계좌", "trader-panel"),
-        ("tab-research", "flask", "전략 연구", "research-panel"), ("tab-system", "settings", "데이터 상태", "system-panel")]
+TABS = [("tab-stocks", "home", "홈", "stocks-panel"),
+        ("tab-tracking", "list", "성과 추적", "tracking-panel"),
+        ("tab-trader", "chart", "가상 트레이더", "trader-panel"),
+        ("tab-research", "flask", "전략 연구", "research-panel"),
+        ("tab-system", "settings", "시스템 관리", "system-panel")]
 STATE_LABELS = {"ok": "정상", "waiting": "시작 전", "diverged": "기록 불일치(갱신 중단)", "config_changed": "설정 변경됨(갱신 중단)",
                 "data_problem": "수집 데이터 이상(갱신 중단)", "error": "갱신 오류"}
 COLORS = {"100": "var(--accent)", "300": "#a78bfa"}
@@ -45,8 +48,16 @@ def read_strategy(account) -> dict:
             status = json.load(file)
     except (OSError, ValueError):
         status = {}
+    names = {row["code"]: (row.get("name_ko") or row.get("name_eng") or row["code"])
+             for row in read_csv(account.path("universe.csv"))}
     return {"account": account, "equity": read_csv(account.path("equity.csv")), "holdings": read_csv(account.path("holdings.csv")),
-            "trades": read_csv(account.path("trades.csv")), "status": status}
+            "trades": read_csv(account.path("trades.csv")), "status": status, "names": names}
+
+
+def stock_label(strategy: dict, row: dict) -> str:
+    ticker = row.get("ticker", "")
+    name = strategy.get("names", {}).get(ticker) or row.get("name") or ticker
+    return f"{name} ({ticker})" if ticker and name != ticker else ticker
 
 
 def signed(value: float, suffix: str = "%") -> str:
@@ -160,28 +171,66 @@ def strategy_cards(strategy: dict, spy_rows: list[dict[str, str]]) -> str:
             f"<div class='operation-grid'>{grid}</div></section>")
 
 
-def summary_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
-    out = (heading("미국 투자 현황", "미국 전략 계좌들과 SPY 보유 계좌(대조군), 미국 시황입니다. 달러 기준, 가격 수익률만 반영합니다(배당 제외).")
-           + "".join(strategy_cards(s, rows) for s in strategies))
+def strategy_readiness_section(strategies: list[dict]) -> str:
+    waiting = [s for s in strategies if not s["equity"]]
+    if not waiting:
+        return ""
+    cards = []
+    for strategy in waiting:
+        account, status = strategy["account"], strategy["status"]
+        state = status.get("state", "waiting")
+        state_text = "정상 대기" if state in ("", "waiting") else STATE_LABELS.get(state, state)
+        badge = "pill-neutral" if state in ("", "waiting") else "pill-warn"
+        updated = str(status.get("updated_at") or "")[:16].replace("T", " ") or "기록 없음"
+        cards.append(
+            "<article class='experiment-card'>"
+            f"<div class='experiment-card-heading'><h3>{e(account.label)}</h3><span class='status-pill {badge}'>{e(state_text)}</span></div>"
+            "<b>2026-10-19 이후 첫 거래일 시작</b>"
+            f"<p>종목군 {len(read_csv(account.path('universe.csv')))}종목 · 상태 확인 {e(updated)} · 첫 기록 후 자동으로 성과 화면으로 전환됩니다.</p>"
+            "</article>"
+        )
+    return f"<section><h2>전략 계좌 준비 상태</h2><div class='experiment-grid'>{''.join(cards)}</div></section>"
+
+
+def spy_account_section(rows: list[dict[str, str]]) -> str:
     if not rows:
-        return out + empty("SPY 보유 계좌", "장부(data/us_spy_hold.csv)가 아직 없습니다.") + market_section()
+        return empty("SPY 보유 계좌", "장부(data/us_spy_hold.csv)가 아직 없습니다.")
     last = rows[-1]
     cards = [
         ("평가금", e(f"${float(last['equity_usd']):,.2f}")), ("수익률", signed(float(last["return_pct"]))),
         ("최대낙폭", signed(max_drawdown_pct([float(r["equity_usd"]) for r in rows]))),
-        ("보유", e(f"SPY {last['shares']}주 · 현금 ${float(last['cash_usd']):,.2f}")), ("기준일", e(fmt_day(last["date"]))),
-        ("기록", e(f"{len(rows)}일 · 시작 {fmt_day(rows[0]['date'])} · 원금 ${CAPITAL_USD:,}")),
+        ("보유", e(f"SPY {last['shares']}주 · 현금 ${float(last['cash_usd']):,.2f}")),
+        ("기준일", e(fmt_day(last["date"]))), ("기록", e(f"{len(rows)}일 · 시작 {fmt_day(rows[0]['date'])}")),
     ]
     grid = "".join(f"<div><span>{e(label)}</span><b>{value}</b></div>" for label, value in cards)
-    return (out + "<section><div class='table-heading'><h2>SPY 보유 계좌 (대조군)</h2></div>"
-            f"<div class='operation-grid'>{grid}</div></section>" + market_section())
+    return ("<section><div class='table-heading'><h2>SPY 보유 계좌 (대조군)</h2>"
+            f"<span class='table-count'>원금 ${CAPITAL_USD:,} · 배당 제외</span></div><div class='operation-grid'>{grid}</div></section>")
+
+
+def freshness_section(rows: list[dict[str, str]]) -> str:
+    if not rows:
+        return "<div class='home-alert warn'><b>SPY 장부 확인 필요</b><span>아직 기준일이 없습니다.</span></div>"
+    last_day = datetime.strptime(rows[-1]["date"], "%Y%m%d").date()
+    age = (date.today() - last_day).days
+    state = "정상" if age <= STALE_DAYS else "갱신 지연"
+    klass = "ok" if age <= STALE_DAYS else "warn"
+    return (f"<div class='home-alert {klass}'><b>최종 거래일 {last_day.isoformat()} · {state}</b>"
+            f"<span>화면 생성 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 달력 기준 {age}일 전</span></div>")
+
+
+def summary_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
+    active = [s for s in strategies if s["equity"]]
+    return (heading("미국 투자 현황", "SPY는 S&P 500 비교용 보유 계좌이고, S&P 500·나스닥 수치는 시황 지표입니다. 별도 전략 계좌는 미국 개별주를 매매합니다. 달러 기준이며 배당은 제외합니다.")
+            + freshness_section(rows) + market_section() + spy_account_section(rows)
+            + strategy_readiness_section(strategies)
+            + "".join(strategy_cards(s, rows) for s in active))
 
 
 def account_tables(strategy: dict) -> str:
     label = strategy["account"].label
-    holdings = [[e(r["ticker"]), e(r["shares"]), e(r["entry_date"]), e(r["entry_usd"]), e(r["last_usd"] or "-"),
+    holdings = [[e(stock_label(strategy, r)), e(r["shares"]), e(r["entry_date"]), e(r["entry_usd"]), e(r["last_usd"] or "-"),
                  signed(float(r["return_pct"])) if r["return_pct"] else "-"] for r in strategy["holdings"]]
-    trades = [[e(r["ticker"]), e(r["entry_date"]), e(r["exit_date"]), e(r["entry_usd"]), e(r["exit_usd"]),
+    trades = [[e(stock_label(strategy, r)), e(r["entry_date"]), e(r["exit_date"]), e(r["entry_usd"]), e(r["exit_usd"]),
                signed(float(r["return_pct"])), e(r["reason"])] for r in reversed(strategy["trades"][-20:])]
     return ((simple_table(f"보유 종목 · {label}", ["종목", "수량", "매수일", "매수가($)", "현재가($)", "수익률"], holdings)
              if holdings else empty(f"보유 종목 · {label}", "현재 보유 종목이 없습니다."))
@@ -190,17 +239,61 @@ def account_tables(strategy: dict) -> str:
                if trades else empty(f"청산 내역 · {label}", "아직 청산된 거래가 없습니다.")))
 
 
-def account_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
+def account_overview(rows: list[dict[str, str]], strategies: list[dict]) -> str:
+    """Show each account's own latest balance; an unstarted strategy has no valuation yet."""
+    overview = []
+    if rows:
+        last = rows[-1]
+        overview.append(["SPY 보유 (대조군)", f"${CAPITAL_USD:,.2f}",
+                         f"${float(last['equity_usd']):,.2f}", signed(float(last["return_pct"])),
+                         f"SPY {last['shares']}주", f"${float(last['cash_usd']):,.2f}", fmt_day(last["date"])])
+    else:
+        overview.append(["SPY 보유 (대조군)", f"${CAPITAL_USD:,.2f}", "-", "-", "-", "-", "기록 없음"])
+    for strategy in strategies:
+        equity = strategy["equity"]
+        if equity:
+            last = equity[-1]
+            overview.append([strategy["account"].label, f"${CAPITAL_USD:,.2f}",
+                             f"${float(last['equity_usd']):,.2f}", signed(float(last["return_pct"])),
+                             f"{last['position_count']}종목", f"${float(last['cash_usd']):,.2f}", last["date"]])
+        else:
+            overview.append([strategy["account"].label, f"${CAPITAL_USD:,.2f}", "-", "-", "-", "-", "시작 전"])
+    return simple_table("계좌별 잔고·수익률", ["계좌", "설정 원금", "평가금", "수익률", "보유", "현금", "기준일"],
+                        [[e(value) if i != 3 else value for i, value in enumerate(row)] for row in overview], num_from=1)
+
+
+def tracking_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
     recent = [[e(fmt_day(r["date"])), e(r["spy_close"]), e(f"{float(r['equity_usd']):,.2f}"), signed(float(r["return_pct"]))]
               for r in reversed(rows[-30:])]
-    first, others = strategies[0], strategies[1:]
-    charts = curve_section(chart_series(rows, [first]), f"자산 추이 · {first['account'].label}")
-    if others and all(len(s["equity"]) >= 2 for s in others):  # side-by-side from the later account's start day
-        charts += curve_section(chart_series(rows, strategies), "자산 추이 · 계좌 비교 (늦게 시작한 계좌 기준)")
-    return (heading("미국 가상 계좌", "전략 계좌는 한국과 같은 규칙을 일봉으로 재현합니다(마감 후 신호, 다음 날 시가 체결). 계좌는 종목 수만 다릅니다. 2026-10-19 이후 첫 거래일 종가부터 수정 규칙으로 새로 기록하며, 이전 장부는 별도 보관합니다.")
-            + charts + "".join(strategy_cards(s, rows) + account_tables(s) for s in strategies)
-            + (simple_table("SPY 보유 일별 기록", ["날짜", "SPY 종가", "평가금($)", "수익률"], recent, f"최근 {len(recent)}일")
+    active = [s for s in strategies if s["equity"]]
+    if active:
+        charts = curve_section(chart_series(rows, active), "자산 추이 · 전략 계좌와 SPY (공통 기간)")
+    elif len(rows) >= 2:
+        base = float(rows[0]["equity_usd"])
+        charts = curve_section([{"label": "SPY 보유", "color": SPY_COLOR,
+                                 "points": [(fmt_day(r["date"]), (float(r["equity_usd"]) / base - 1) * 100) for r in rows]}],
+                               "자산 추이 · SPY 대조계좌")
+    else:
+        charts = empty("자산 추이", "기록이 2일 이상 쌓이면 그래프가 표시됩니다.")
+    strategy_history = "".join(
+        details(f"{s['account'].label} 일별 기록",
+                simple_table("최근 계좌 기록", ["날짜", "평가금($)", "수익률", "보유 종목"],
+                             [[e(r["date"]), e(f"{float(r['equity_usd']):,.2f}"), signed(float(r["return_pct"])),
+                               e(f"{r['position_count']}종목")] for r in reversed(s["equity"][-30:])],
+                             f"최근 {min(len(s['equity']), 30)}일"))
+        for s in active
+    )
+    return (heading("미국 성과 추적", "SPY 대조계좌와 전략 계좌의 동일 기간 수익률을 비교합니다. 각 계좌의 시작일이 다르면 공통 기간만 비교합니다.")
+            + freshness_section(rows) + charts + strategy_history
+            + (details("SPY 보유 일별 기록", simple_table("최근 SPY 기록", ["날짜", "SPY 종가", "평가금($)", "수익률"], recent, f"최근 {len(recent)}일"))
                if recent else empty("SPY 보유 일별 기록", "장부가 아직 없습니다.")))
+
+
+def account_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
+    active = [s for s in strategies if s["equity"]]
+    return (heading("미국 가상 트레이더", "SPY는 비교용 보유 계좌입니다. 100·300종목 전략 계좌는 미국 개별주를 마감 후 신호에 따라 다음 거래일 시가에 가상 매매합니다. 나스닥 지수·QQQ는 별도 매매하지 않습니다.")
+            + freshness_section(rows) + account_overview(rows, strategies) + strategy_readiness_section(strategies)
+            + "".join(strategy_cards(s, rows) + details(f"{s['account'].label} 보유·청산 상세", account_tables(s)) for s in active))
 
 
 def research_panel(directory: str = RESEARCH_DIR) -> str:
@@ -216,10 +309,12 @@ def research_panel(directory: str = RESEARCH_DIR) -> str:
         names = []
     if not predictions and not names:
         return title + empty("연구 결과", "미국 연구 결과가 아직 없습니다.")
-    rows = [[e(r["date"]), e(r["slug"]), e(r["predicted_verdict"]), e(r["actual_verdict"]),
-             "적중" if r.get("hit") == "1" else "빗나감", e(r.get("p_evidence", ""))] for r in reversed(predictions)]
+    rows = [[e(r["date"]), e(r["slug"]), pill(r["predicted_verdict"], r["predicted_verdict"] != "채택"),
+             pill(r["actual_verdict"], r["actual_verdict"] != "채택"),
+             pill("적중" if r.get("hit") == "1" else "빗나감", r.get("hit") != "1"),
+             f"{float(r['p_evidence']) * 100:.2f}%" if r.get("p_evidence") else "-"] for r in reversed(predictions)]
     bodies = "".join(details(n[:-3], f"<pre class='review-text'>{e(read_text(os.path.join(directory, n)) or '')}</pre>") for n in names)
-    return (title + simple_table("연구 결과 (사전 등록)", ["날짜", "연구", "예측", "결과", "적중", "p"], rows, num_from=99)
+    return (title + simple_table("연구 결과 (사전 등록)", ["날짜", "연구", "예측", "결과", "판정", "증거 확률"], rows, num_from=99)
             + (f"<section><h2>연구 보고서 전문</h2>{bodies}</section>" if bodies else ""))
 
 
@@ -246,7 +341,10 @@ def status_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
             items.append([account.label, f"{e(status.get('last_day', '-'))} 기준 · 갱신 {e(status['updated_at'][:16])} "
                                          f"{pill(STATE_LABELS.get(status['state'], status['state']), bad)}"])
             if status.get("detail"):
-                items.append([f"{account.label} 상세", e(str(status["detail"])[:300])])
+                raw_detail = str(status["detail"])
+                detail_text = ("신규 계좌: 2026-10-19 이후 첫 거래일에 시작하며 다음 거래일 시가에 체결합니다."
+                               if "Fresh account" in raw_detail else raw_detail[:300])
+                items.append([f"{account.label} 상세", e(detail_text)])
             if status.get("stale_holdings"):
                 items.append([f"{account.label} 시세 없는 보유", e(", ".join(status["stale_holdings"]) + " (진입가로 평가 중)")])
             if status.get("anomalies"):
@@ -269,13 +367,19 @@ def status_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
     except OSError:
         items.append(["백테스트 종목군", "수집 전"])
     state_pill = f"<span class='system-pill {'bad' if problem else 'ok'}'>{'확인 필요' if problem else '모든 데이터 정상'}</span>"
-    return (heading("데이터 상태", "미국 장부와 수집 데이터의 최신 여부입니다. 장부는 매일 아침 시황 작업 뒤에 갱신됩니다.", state_pill)
-            + simple_table("데이터", ["항목", "상태"], items, num_from=99))
+    cards = "".join(
+        "<article class='experiment-card'>"
+        f"<div class='experiment-card-heading'><h3>{item}</h3></div><p>{value}</p></article>"
+        for item, value in items
+    )
+    return (heading("시스템 관리", "미국 장부와 수집 데이터의 최신 여부입니다. 장부는 매일 아침 시황 작업 뒤에 갱신됩니다.", state_pill)
+            + f"<section><h2>핵심 데이터 상태</h2><div class='experiment-grid'>{cards}</div></section>")
 
 
 def render_us() -> str:
     rows, strategies = read_ledger(), [read_strategy(a) for a in ACCOUNTS]
-    panels = {"stocks-panel": summary_panel(rows, strategies), "trader-panel": account_panel(rows, strategies),
+    panels = {"stocks-panel": summary_panel(rows, strategies), "tracking-panel": tracking_panel(rows, strategies),
+              "trader-panel": account_panel(rows, strategies),
               "research-panel": research_panel(), "system-panel": status_panel(rows, strategies)}
     generated = f"{e(display_label('generated'))} {e(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
     return f"""<!doctype html>
@@ -290,7 +394,7 @@ def render_us() -> str:
 </head>
 <body>
 {shell_header(dashboard_logo_data_uri(), generated, DOMESTIC_LINK)}
-{shell_tabs(TABS, panels)}
+<main><h1 class="sr-only">미국주식 알림 대시보드</h1>{shell_tabs(TABS, panels)}</main>
 <script>
 {SHELL_JS}
 </script>

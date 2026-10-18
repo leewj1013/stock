@@ -39,9 +39,9 @@ def write_universe(n: int) -> list[dict]:
     universe = top_by_market_cap(n)
     with open(f"{OUT_DIR}/universe.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["code", "name_eng", "market_value_usd"])
+        w.writerow(["code", "name_ko", "name_eng", "market_value_usd"])
         for s in universe:
-            w.writerow([s["reutersCode"], s["stockNameEng"], s["marketValueRaw"]])
+            w.writerow([s["reutersCode"], s.get("stockName", ""), s["stockNameEng"], s["marketValueRaw"]])
     return universe
 
 

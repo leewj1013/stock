@@ -33,6 +33,7 @@ $pointer = Join-Path $secureRoot "current_runtime.path"
 Set-Content -LiteralPath $pointer -Value $runtimeRoot -Encoding UTF8 -NoNewline
 & icacls $pointer /inheritance:r /grant:r "${account}:(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Failed to protect the runtime pointer." }
+& (Join-Path $PSScriptRoot "rebind_scheduled_runtime.ps1") -RuntimeRoot $runtimeRoot | Out-Host
 
 Write-Output "Protected scheduled-task runtime deployed. No secret values were printed."
 Write-Output $runtimeRoot
