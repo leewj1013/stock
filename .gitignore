@@ -22,7 +22,14 @@ data/us_spy_hold.csv
 .tools/
 .cache/
 logs/
-reports/
+reports/*
+!reports/revalidation/
+reports/revalidation/*
+!reports/revalidation/*/
+reports/revalidation/*/*
+!reports/revalidation/*/REPORT.md
+!reports/revalidation/2026-10-17-execution-timing/equity_comparison.png
+!reports/revalidation/2026-10-17-strategy-variants/PROTOCOL.md
 __pycache__/
 *.pyc
 *.code-workspace

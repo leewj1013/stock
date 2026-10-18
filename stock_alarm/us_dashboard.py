@@ -197,7 +197,7 @@ def account_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
     charts = curve_section(chart_series(rows, [first]), f"자산 추이 · {first['account'].label}")
     if others and all(len(s["equity"]) >= 2 for s in others):  # side-by-side from the later account's start day
         charts += curve_section(chart_series(rows, strategies), "자산 추이 · 계좌 비교 (늦게 시작한 계좌 기준)")
-    return (heading("미국 가상 계좌", "전략 계좌는 한국과 같은 규칙을 일봉으로 재현합니다(마감 후 신호, 다음 날 시가 체결). 계좌는 종목 수만 다릅니다.")
+    return (heading("미국 가상 계좌", "전략 계좌는 한국과 같은 규칙을 일봉으로 재현합니다(마감 후 신호, 다음 날 시가 체결). 계좌는 종목 수만 다릅니다. 2026-10-19 이후 첫 거래일 종가부터 수정 규칙으로 새로 기록하며, 이전 장부는 별도 보관합니다.")
             + charts + "".join(strategy_cards(s, rows) + account_tables(s) for s in strategies)
             + (simple_table("SPY 보유 일별 기록", ["날짜", "SPY 종가", "평가금($)", "수익률"], recent, f"최근 {len(recent)}일")
                if recent else empty("SPY 보유 일별 기록", "장부가 아직 없습니다.")))

@@ -189,7 +189,8 @@ class PortfolioSimulator:
         for day_index, day in enumerate(self.days):
             execution_position_reduced = execution_market_reduced = 0.0
             execution_position_limited = execution_market_limited = 0
-            execution_breadth = self.engine._market_up_ratio(day)
+            # Pending orders execute at the open; today's close is not known yet.
+            execution_breadth = self.engine._market_up_ratio(self.days[day_index - 1]) if day_index else 0.0
             execution_market_limit = market_exposure_limit_pct(execution_breadth) if self.apply_market_exposure_limit else 100.0
             remaining_pending = len(pending)
             for ticker, signal in list(pending.items()):
@@ -199,7 +200,7 @@ class PortfolioSimulator:
                     remaining_pending -= 1
                     continue
                 open_price = float(item[1][1])
-                marked_equity = cash + sum(position["shares"] * self._close(position["ticker"], day, position["entry_price"]) for position in positions.values())
+                marked_equity = cash + sum(position["shares"] * self._open_mark(position["ticker"], day, position["entry_price"]) for position in positions.values())
                 requested_allocation = max(0.0, float(signal.get("requested_allocation_pct", signal.get("allocation_pct", self.target_allocation_pct)))) / 100
                 target_allocation = max(0.0, float(signal.get("allocation_pct", self.target_allocation_pct))) / 100
                 invested_before = max(0.0, marked_equity - cash)
@@ -473,6 +474,15 @@ class PortfolioSimulator:
         proceeds = shares * price - cost
         position["net_sale_proceeds"] += proceeds
         return proceeds
+
+    def _open_mark(self, ticker: str, day: str, fallback: float) -> float:
+        series = self.engine.by_date.get(ticker, {})
+        item = series.get(day)
+        if item and float(item[1][1]) > 0:
+            return float(item[1][1])
+        # A suspended/missing series can only be marked with a past close.
+        previous = max((d for d in series if d < day), default=None)
+        return float(series[previous][1][4]) if previous else float(fallback)
 
     def _close(self, ticker: str, day: str, fallback: float) -> float:
         item = self.engine.by_date.get(ticker, {}).get(day)

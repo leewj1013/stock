@@ -156,3 +156,89 @@ def test_update_all_isolates_a_failing_account_and_alerts(world, monkeypatch):
     assert acc.update_all(notify=sent.append) == {"t": {"state": "error"}}
     assert len(sent) == 1 and "오류" in sent[0]
     assert json.loads(ACCOUNT.path("status.json").read_text("utf-8"))["state"] == "error"
+
+
+def test_no_trade_days_and_order_multiplicity_are_frozen():
+    assert acc.diverges([], [row("2026-10-08")], "2026-10-09")
+    assert acc.diverges([], [row("2026-10-10")], "2026-10-09") == []
+    assert acc.diverges([row("2026-10-07")], [row("2026-10-07"), row("2026-10-07")])
+    assert acc.diverges([row("2026-10-07")], [row("2026-10-07", reason="changed")])
+
+
+def test_finalized_daily_state_cannot_be_rewritten(world, monkeypatch):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    before = {n: ACCOUNT.path(n).read_bytes() for n in ("equity.csv", "decisions.csv", "checkpoint.json")}
+    replay = acc.replay
+    def changed(a, names):
+        engine, sim, result = replay(a, names)
+        result.daily_state[0]["equity"] += 100
+        return engine, sim, result
+    monkeypatch.setattr(acc, "replay", changed)
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "diverged"
+    assert before == {n: ACCOUNT.path(n).read_bytes() for n in before}
+    assert acc.read_status(ACCOUNT)["last_day"] == "2026-06-30"
+
+
+def test_legacy_bootstrap_checks_equity_before_checkpoint(world):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    ACCOUNT.path("checkpoint.json").unlink()  # only the fixture's temporary account
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    ACCOUNT.path("checkpoint.json").unlink()
+    equity = ACCOUNT.path("equity.csv")
+    equity.write_text(equity.read_text("utf-8").replace("100000.00", "99999.00", 1), encoding="utf-8")
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "diverged"
+    assert not ACCOUNT.path("checkpoint.json").exists()
+
+
+def test_partial_ledger_write_is_detected(world):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    with ACCOUNT.path("holdings.csv").open("a", encoding="utf-8") as f:
+        f.write("broken")
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "diverged"
+
+
+def test_new_observed_day_extends_checkpoint(world):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    for p in acc.SRC.glob("*.csv"):
+        rows = list(csv.DictReader(p.open(encoding="utf-8")))
+        new = dict(rows[-1], date="20260701")
+        acc._write_csv(p, list(new), [new], mode="a")
+    assert acc.update(ACCOUNT, failed=[], today=date(2026, 7, 1))["state"] == "ok"
+    assert json.loads(ACCOUNT.path("checkpoint.json").read_text("utf-8"))["finalized_through"] == "2026-07-01"
+
+
+def test_interrupted_first_commit_cannot_be_bootstrapped(world, monkeypatch):
+    original = acc.write_ledgers
+    def interrupt(*args):
+        raise OSError("simulated disk failure")
+    monkeypatch.setattr(acc, "write_ledgers", interrupt)
+    with pytest.raises(OSError):
+        acc.update(ACCOUNT, failed=[], today=world.today)
+    monkeypatch.setattr(acc, "write_ledgers", original)
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "data_problem"
+    assert not ACCOUNT.path("checkpoint.json").exists()
+
+
+def test_failed_download_does_not_finalize_old_data(world):
+    assert acc.update(ACCOUNT, failed=[("AAA.O", "timeout")], today=world.today)["state"] == "data_problem"
+    assert not ACCOUNT.path("equity.csv").exists()
+
+
+@pytest.mark.parametrize("setting", ["MAX_ENTRY_DAY_CHANGE_PCT", "TAKE_PROFIT_1_PCT"])
+def test_additional_strategy_settings_are_frozen(world, monkeypatch, setting):
+    acc.freeze(ACCOUNT)
+    monkeypatch.setenv(setting, "999")
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "config_changed"
+
+
+def test_engine_version_change_preserves_ledgers(world, monkeypatch):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    before = ACCOUNT.path("equity.csv").read_bytes()
+    original = acc.current_config
+    def changed(a):
+        config = original(a)
+        config["engine_hashes"]["app.py"] = "new version"
+        return config
+    monkeypatch.setattr(acc, "current_config", changed)
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "config_changed"
+    assert ACCOUNT.path("equity.csv").read_bytes() == before

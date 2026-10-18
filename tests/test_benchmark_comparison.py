@@ -119,8 +119,9 @@ class BenchmarkComparisonTest(unittest.TestCase):
         self.assertFalse(any(event.get("ticker") in {"I", "J"} for event in result.events))
 
     @patch("stock_alarm.benchmark_comparison.check_position", return_value=None)
-    def test_execution_day_defensive_breadth_caps_actual_new_buys_at_ten_percent(self, _check):
+    def test_previous_close_defensive_breadth_caps_open_buys_at_ten_percent(self, _check):
         engine = FakeRiskEngine()
+        engine._market_up_ratio = lambda day: 0.40 if day == "2022-01-03" else 0.70
         candidates = {
             "2022-01-03": [
                 {"ticker": ticker, "name": ticker, "score": 100, "volume_ratio": 2, "signal_date": "2022-01-03"}
@@ -137,3 +138,31 @@ class BenchmarkComparisonTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_open_orders_do_not_depend_on_execution_day_closes():
+    from stock_alarm.validation_backtest import BacktestEngine
+    candidates = {"2022-01-03": [
+        {"ticker": t, "name": t, "score": 100, "volume_ratio": 2, "signal_date": "2022-01-03"}
+        for t in "ABC"]}
+    orders = []
+    for close in (9, 11):
+        engine = FakeRiskEngine()
+        for t in engine.names:
+            engine.by_date[t]["2022-01-04"][1][4] = close
+        engine.rows = {t: [v[1] for v in engine.by_date[t].values()] for t in engine.names}
+        engine._market_up_ratio = lambda day: 0.7 if day == "2022-01-03" else BacktestEngine._market_up_ratio(engine, day)
+        with patch("stock_alarm.benchmark_comparison.check_position", return_value=None):
+            result = PortfolioSimulator(engine, 1000, 10, apply_live_constraints=False).run(
+                "stock_alarm", candidates, liquidate_at_end=False)
+        orders.append([e for e in result.events if e["event"] == "buy"])
+    assert orders[0] == orders[1]
+    assert len(orders[0]) == 3  # also covers valuation of earlier fills in the same open
+
+
+def test_open_mark_uses_open_or_last_known_close():
+    engine = FakeEngine()
+    sim = PortfolioSimulator(engine, 1000, 10)
+    assert sim._open_mark("A", "2022-01-04", 1) == 11
+    assert sim._open_mark("A", "2022-01-05", 1) == 12
+    assert sim._open_mark("A", "2022-01-02", 1) == 1

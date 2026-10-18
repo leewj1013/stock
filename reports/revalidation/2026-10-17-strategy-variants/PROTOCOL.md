@@ -1,0 +1,9 @@
+# Strategy variants protocol — 2026-10-17
+
+Reuse the preceding execution-timing audit's exact prices, candidates, environment and cutoff. Verify all price/source hashes and reproduce both baselines before accepting outputs. No network, live DB writes, new parameter search, or operational strategy changes.
+
+Paired legacy/fixed engines on kr_all (2,941 names, 2018–2026) and kr_watch (102 names, 2022–2026): all 13 saved risk-release policies including five peak-decay variants; gate-off control; KOSPI 30/50/70% hold/quarterly and idle-cash 50/100% mixing using original functions, including bull-no-take-profit + cooldown20/30 satellite. KR-all: original iterative MA20 reentry and high-volatility top20% exclusion; KR-watch: sector 40/30/20% limits.
+
+HAC lag5; two-sided BH across 12 alternative risk policies per universe. Sector preserves 12-test family (3 caps x 4 regimes), greater alternative. High-vol exclusion preserves original two-test family by recalculating the independent monthly low-vol long-only comparison (HAC lag1). Reentry is exploratory and never adopted from an iterative, counterfactual signal union. Index mixes are descriptive; success is not inferred from improving a losing stock-only strategy.
+
+Risk review: report longest halt and final halt plus bear-regime drawdown; flag defense worsened >2pp. A release policy is not validated merely because it releases. No claims of exact historical-report reproduction unless actual values match. Sector mapping is the available 2026-10-16 snapshot, not historical membership. High-vol original construction includes future next-open eligibility and month-exit availability: retain for comparison but cannot establish causal tradability. Index daily-return mixing ignores integer-share rounding and assumes scale invariance; cash sweep shares existing model limitations.

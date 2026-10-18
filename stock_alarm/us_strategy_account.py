@@ -9,6 +9,8 @@ non-ok state is pushed once to the notifier. Reads/writes data/ files only; no l
 Accounts differ only in universe size and start day (same rules), so they can be compared side by side.
 """
 import csv
+import hashlib
+from collections import Counter
 import json
 import os
 import shutil
@@ -25,9 +27,13 @@ CAPITAL_USD = 100_000
 EXCLUDE = {"AZN"}  # mixed listings, see data/backtest_us/QUALITY.md
 MIN_TRADING_VALUE_CENTS = "5000000000"  # $50M
 FROZEN_ENV = ("TOP_N", "MIN_RECOMMEND_SCORE", "VOLUME_MULTIPLIER", "MIN_MARKET_UP_RATIO", "EXECUTION_COST_BPS",
-              "BACKTEST_SLIPPAGE_BPS", "MAX_MA20_DISTANCE_ATR", "SELL_RECOMMEND_COOLDOWN_DAYS")
+              "BACKTEST_SLIPPAGE_BPS", "MAX_MA20_DISTANCE_ATR", "SELL_RECOMMEND_COOLDOWN_DAYS",
+              "MAX_DAY_CHANGE_PCT", "MAX_AVG_RANGE_PCT", "MAX_ENTRY_DAY_CHANGE_PCT", "MAX_MA20_DISTANCE_PCT",
+              "TAKE_PROFIT_1_PCT", "TAKE_PROFIT_2_PCT", "TAKE_PROFIT_1_SELL_RATIO")
+ENGINE_FILES = ("benchmark_comparison.py", "validation_backtest.py", "app.py", "sell_check.py",
+                "backtest_data.py", "strategy_learning.py", "us_strategy_account.py")
 DECISION_FIELDS = ["date", "event", "ticker", "shares", "price_usd", "reason"]
-LEDGER_NAMES = ("config.json", "universe.csv", "decisions.csv", "equity.csv", "trades.csv", "holdings.csv", "status.json")
+LEDGER_NAMES = ("config.json", "universe.csv", "decisions.csv", "equity.csv", "trades.csv", "holdings.csv", "status.json", "checkpoint.json")
 SPY_STALE_DAYS = 7  # a long US holiday stretch is 4 days
 ANOMALY_MOVE = 0.40  # |daily move| on the newest sessions that is reported (not halted: real earnings gaps exist)
 ALERT_TEXT = {"diverged": "기록된 주문을 재현하지 못해 갱신을 중단했습니다",
@@ -54,8 +60,8 @@ class Account:
 
 
 ACCOUNTS = (
-    Account("100", "미국 전략 (100종목)", "us_strategy", "account_work", "2026-10-06", None),
-    Account("300", "미국 전략 (300종목)", "us_strategy_300", "account_work_300", "2026-10-14", 300),
+    Account("100", "미국 수정 전략 (100종목)", "us_strategy_v2", "account_work_v2", "2026-10-19", None),
+    Account("300", "미국 수정 전략 (300종목)", "us_strategy_300_v2", "account_work_300_v2", "2026-10-19", 300),
 )
 
 
@@ -63,7 +69,9 @@ def current_config(a: Account) -> dict:
     from .strategy_learning import active_weights
     env = {k: os.environ.get(k, "") for k in FROZEN_ENV}
     env.update({k: v for k, v in sorted(os.environ.items()) if k.startswith("SELL_")})
-    return {"weights": active_weights(), "env": env, "capital_usd": CAPITAL_USD, "start_signal_day": a.start_signal_day,
+    engine_hashes = {name: hashlib.sha256(Path(__file__).with_name(name).read_text("utf-8").encode()).hexdigest()
+                     for name in ENGINE_FILES}
+    return {"engine_hashes": engine_hashes, "weights": active_weights(), "env": env, "capital_usd": CAPITAL_USD, "start_signal_day": a.start_signal_day,
             "universe_size": a.universe_size}
 
 
@@ -77,7 +85,7 @@ def read_status(a: Account) -> dict:
 def write_status(a: Account, **fields) -> None:
     """Rewrite the status; `alerted` (last pushed problem) and `bar_counts` (rows per series) carry over unless given."""
     previous = read_status(a)
-    kept = {k: previous[k] for k in ("alerted", "bar_counts") if k in previous and k not in fields}
+    kept = {k: previous[k] for k in ("alerted", "bar_counts", "last_day") if k in previous and k not in fields}
     a.path("status.json").write_text(
         json.dumps({"updated_at": datetime.now().isoformat(timespec="seconds"), **kept, **fields}, ensure_ascii=False, indent=2),
         encoding="utf-8")
@@ -132,14 +140,49 @@ def decision_rows(result) -> list[dict]:
              "price_usd": f"{e['price'] / 100:.4f}", "reason": e["reason"]} for e in result.events]
 
 
-def diverges(logged: list[dict], replayed: list[dict]) -> list[str]:
-    """Orders already on record must be reproduced exactly (same day/event/ticker/shares/price)."""
-    if not logged:
+def diverges(logged: list[dict], replayed: list[dict], finalized_through: str = "") -> list[str]:
+    """Freeze every observed day, including no-trade days and duplicate orders."""
+    last = max(finalized_through, max((r["date"] for r in logged), default=""))
+    key = lambda r: tuple(str(r[k]) for k in DECISION_FIELDS)
+    old = Counter(key(r) for r in logged)
+    new = Counter(key(r) for r in replayed if r["date"] <= last)
+    return [f"logged but not replayed: {k}" for k in sorted((old - new).elements())] + [
+        f"replayed but not logged: {k}" for k in sorted((new - old).elements())]
+
+
+def _read_csv(path: Path) -> list[dict]:
+    if not path.exists():
         return []
-    last = max(r["date"] for r in logged)
-    key = lambda r: (r["date"], r["event"], r["ticker"], str(r["shares"]), r["price_usd"])
-    old, new = {key(r) for r in logged}, {key(r) for r in replayed if r["date"] <= last}
-    return [f"logged but not replayed: {k}" for k in sorted(old - new)] + [f"replayed but not logged: {k}" for k in sorted(new - old)]
+    with path.open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _atomic_json(path: Path, value: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def ledger_hashes(a: Account) -> dict:
+    return {name: hashlib.sha256(a.path(name).read_bytes()).hexdigest()
+            for name in ("decisions.csv", "equity.csv", "trades.csv", "holdings.csv")}
+
+
+def check_finalized(a: Account, result) -> list[str]:
+    """Bootstrap old accounts from equity dates; never silently rewrite old results."""
+    equity = _read_csv(a.path("equity.csv"))
+    checkpoint = json.loads(a.path("checkpoint.json").read_text("utf-8")) if a.path("checkpoint.json").exists() else None
+    last = checkpoint["finalized_through"] if checkpoint else max((r["date"] for r in equity), default="")
+    problems = diverges(_read_csv(a.path("decisions.csv")), decision_rows(result), last)
+    states = [r for r in result.daily_state if r["date"] <= last]
+    if checkpoint:
+        if ledger_hashes(a) != checkpoint["ledger_hashes"]:
+            problems.append("ledger files changed after finalization (or an interrupted write)")
+        if states != checkpoint["daily_state"]:
+            problems.append("finalized daily state changed")
+    elif equity != [r for r in equity_rows(result) if r["date"] <= last]:
+        problems.append("legacy finalized equity changed; explicit migration required")
+    return problems
 
 
 def validate(codes: list[str], previous_counts: dict, today: date | None = None) -> tuple[list[str], dict, list[dict]]:
@@ -176,21 +219,28 @@ def validate(codes: list[str], previous_counts: dict, today: date | None = None)
 
 
 def _write_csv(path: Path, fields: list[str], rows: list[dict], mode: str = "w") -> None:
-    exists = path.exists() and mode == "a"
-    with open(path, mode, newline="", encoding="utf-8") as f:
+    if mode == "a":
+        rows = _read_csv(path) + rows
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
-        if not exists:
-            w.writeheader()
+        w.writeheader()
         w.writerows(rows)
+    os.replace(temporary, path)
+
+
+def equity_rows(result) -> list[dict]:
+    return [
+        {"date": s["date"], "equity_usd": f"{s['equity'] / 100:.2f}", "cash_usd": f"{s['cash'] / 100:.2f}",
+         "invested_weight": f"{s['invested_weight']:.4f}", "position_count": str(s["position_count"]),
+         "return_pct": f"{(s['equity'] / 100 / CAPITAL_USD - 1) * 100:.4f}", "pending": " ".join(json.loads(s["pending_json"]))}
+        for s in result.daily_state]
 
 
 def write_ledgers(a: Account, engine, result) -> None:
     state = result.daily_state
-    _write_csv(a.path("equity.csv"), ["date", "equity_usd", "cash_usd", "invested_weight", "position_count", "return_pct", "pending"], [
-        {"date": s["date"], "equity_usd": f"{s['equity'] / 100:.2f}", "cash_usd": f"{s['cash'] / 100:.2f}",
-         "invested_weight": f"{s['invested_weight']:.4f}", "position_count": s["position_count"],
-         "return_pct": f"{(s['equity'] / 100 / CAPITAL_USD - 1) * 100:.4f}", "pending": " ".join(json.loads(s["pending_json"]))}
-        for s in state])
+    rows = equity_rows(result)
+    _write_csv(a.path("equity.csv"), list(rows[0]), rows)
     _write_csv(a.path("trades.csv"), ["ticker", "name", "signal_date", "entry_date", "exit_date", "entry_usd", "exit_usd", "return_pct", "reason"], [
         {"ticker": t.ticker, "name": t.name, "signal_date": t.signal_date, "entry_date": t.entry_date, "exit_date": t.exit_date,
          "entry_usd": f"{t.entry_price / 100:.2f}", "exit_usd": f"{t.exit_price / 100:.2f}", "return_pct": t.return_pct,
@@ -243,13 +293,20 @@ def read_universe(a: Account) -> dict[str, str]:
 def update(a: Account, failed: list | None = None, today: date | None = None) -> dict:
     """Update one account. `failed` are the refresh failures of a shared download; None means download this account's codes."""
     freeze(a)
+    if a.path("pending.json").exists():
+        write_status(a, state="data_problem", detail="interrupted ledger commit; restore or verify before resuming")
+        return {"state": "data_problem"}
     names = read_universe(a)
     codes = list(names)
     if failed is None:
         from .us_history_collect import refresh
         failed = refresh(codes + ["SPY"])
+    relevant_failures = [f for f in failed if f[0] in {*codes, "SPY"}]
+    if relevant_failures:
+        write_status(a, state="data_problem", detail="refresh incomplete; no day finalized", refresh_failures=relevant_failures)
+        return {"state": "data_problem"}
     frozen, now = json.loads(a.path("config.json").read_text("utf-8")), current_config(a)
-    if frozen["env"] != now["env"] or frozen["weights"] != now["weights"]:
+    if frozen != now:
         write_status(a, state="config_changed", detail="strategy settings differ from the frozen config; ledgers not updated", refresh_failures=failed)
         return {"state": "config_changed"}
     problems, counts, anomalies = validate(codes, read_status(a).get("bar_counts", {}), today)
@@ -261,18 +318,24 @@ def update(a: Account, failed: list | None = None, today: date | None = None) ->
     if result is None:
         write_status(a, state="waiting", detail=f"no trading day on/after {a.start_signal_day} yet", refresh_failures=failed, bar_counts=counts)
         return {"state": "waiting"}
-    replayed = decision_rows(result)
-    logged = list(csv.DictReader(open(a.path("decisions.csv"), encoding="utf-8"))) if a.path("decisions.csv").exists() else []
-    diverged = diverges(logged, replayed)
+    diverged = check_finalized(a, result)
     if diverged:
         write_status(a, state="diverged", detail=diverged[:20], refresh_failures=failed)
         return {"state": "diverged", "problems": diverged}
-    last_logged = max((r["date"] for r in logged), default="")
-    _write_csv(a.path("decisions.csv"), DECISION_FIELDS, [r for r in replayed if r["date"] > last_logged], mode="a")
-    write_ledgers(a, engine, result)
     last_day = result.daily_state[-1]["date"]
-    held = json.loads(result.daily_state[-1]["positions_json"])
-    stale = [t for t in held if last_day not in engine.by_date[t]]  # engine marks these at entry price
+    stale = sorted({t for s in result.daily_state for t in json.loads(s["positions_json"])
+                    if s["date"] not in engine.by_date[t]})
+    if stale:
+        write_status(a, state="data_problem", detail="missing holding prices; ledgers not updated", stale_holdings=stale)
+        return {"state": "data_problem"}
+    # Mark even the first commit, which has no previous checkpoint to check.
+    _atomic_json(a.path("pending.json"), {"finalizing_through": last_day})
+    _write_csv(a.path("decisions.csv"), DECISION_FIELDS, decision_rows(result))
+    write_ledgers(a, engine, result)
+    # Commit marker last: a partial multi-file write fails the old hashes next run.
+    _atomic_json(a.path("checkpoint.json"), {"finalized_through": last_day,
+                 "daily_state": result.daily_state, "ledger_hashes": ledger_hashes(a)})
+    a.path("pending.json").unlink()
     write_status(a, state="ok", last_day=last_day, stale_holdings=stale, refresh_failures=failed, universe=len(codes),
                  anomalies=anomalies, bar_counts=counts)
     backup(a)
