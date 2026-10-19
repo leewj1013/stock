@@ -65,8 +65,10 @@ def run() -> int:
     research = run_exit_research()
     from .entry_research import run as run_entry_research
     entry_research = run_entry_research()
-    if research["failures"] or entry_research["failures"]:
-        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}")
+    from .portfolio_research import run as run_portfolio_research
+    portfolio_research = run_portfolio_research()
+    if research["failures"] or entry_research["failures"] or portfolio_research["failures"]:
+        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}, portfolio={portfolio_research}")
     return len(rows)
 
 
