@@ -70,6 +70,16 @@ def run_all_profiles() -> dict[str, dict[str, object]]:
 
 def main() -> None:
     print(run_all_profiles())
+    from .sell_research import PATH as research_path, run as run_exit_research
+    result = run_exit_research()
+    backup_database(research_path)
+    print({"sell_research": result})
+    from .entry_research import PATH as entry_path, run as run_entry_research
+    entry_result = run_entry_research()
+    backup_database(entry_path)
+    print({"entry_research": entry_result})
+    if result["failures"] or entry_result["failures"]:
+        raise RuntimeError("Research has collection failures; inspect research databases error columns")
 
 
 if __name__ == "__main__":

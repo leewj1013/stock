@@ -61,6 +61,12 @@ def run() -> int:
     rows = outcome_rows()
     write_csv(rows)
     write_sell_outcomes(rows)
+    from .sell_research import run as run_exit_research
+    research = run_exit_research()
+    from .entry_research import run as run_entry_research
+    entry_research = run_entry_research()
+    if research["failures"] or entry_research["failures"]:
+        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}")
     return len(rows)
 
 

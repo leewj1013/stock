@@ -5,6 +5,12 @@ data/positions.csv
 data/stock_alarm.db
 data/stock_alarm_neutral.db
 data/stock_alarm_exp_*.db
+data/sell_research*.db
+data/sell_research*.db-shm
+data/sell_research*.db-wal
+data/entry_research*.db
+data/entry_research*.db-shm
+data/entry_research*.db-wal
 scripts/*.bak-*
 data/backups/
 data/registry-backup/

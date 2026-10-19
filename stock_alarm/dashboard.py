@@ -1424,11 +1424,15 @@ def experiment_progress_cards(rows: list[dict[str, str]]) -> str:
 
 
 def research_tab() -> str:
+    from .sell_research import dashboard_section as sell_research_section
+    from .entry_research import dashboard_section as entry_research_section
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
         + market_regime_card()
         + experiment_progress_cards(experiment_progress_rows())
+        + sell_research_section()
+        + entry_research_section()
         + research_results_section()
         + report_section("학습 기록", ("reports/learning_log.md", text) if (text := read_text(LEARNING_LOG)) else None,
                          "reports/learning_log.md에 검증·사실·관찰을 기록합니다.")
