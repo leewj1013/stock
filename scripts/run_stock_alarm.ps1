@@ -94,10 +94,16 @@ function RunFreshOptionalStep($name, $module) {
 
 if ($mode -eq "open") {
     RunFreshStep "market_summary" "stock_alarm.market_summary"
+    RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
+    RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
 }
 if ($mode -eq "intraday") {
+    RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
+    RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
     RunFreshStep "recommendation" "stock_alarm"
     RunFreshStep "virtual_trader_report" "stock_alarm.virtual_trader_report"
+    RunOptionalStep "market_group_context" "stock_alarm.market_group_context"
+    RunOptionalStep "naver_market_signal_context" "stock_alarm.naver_market_signal_context"
     RunStep "dashboard" "stock_alarm.dashboard"
 }
 if ($mode -eq "sell") {
@@ -108,6 +114,9 @@ if ($mode -eq "daily") {
     RunFreshOptionalStep "positions_report" "stock_alarm.positions_report"
 }
 if ($mode -eq "daily" -or $mode -eq "performance") {
+    RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
+    RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
+    RunOptionalStep "naver_market_signal_context" "stock_alarm.naver_market_signal_context"
     RunOptionalStep "recommendation_performance" "stock_alarm.recommendation_performance"
     RunOptionalStep "sell_performance" "stock_alarm.sell_performance"
 }

@@ -40,6 +40,9 @@ class EarningsResearchTest(unittest.TestCase):
 
     def test_harvest_does_not_guess_provisional_numbers(self):
         filing = {"rcept_no": "1", "rcept_dt": "20261020", "report_nm": "영업(잠정)실적(공정공시)"}
+        with closing(research.connect(self.path)) as db:
+            db.execute("UPDATE metadata SET value=? WHERE key='activated_at'", ("2026-10-20T09:00:00",))
+            db.commit()
         with patch.object(research, "universe", return_value=[{"ticker": "005930", "name": "삼성전자"}]):
             added, failures = research.harvest(path=self.path, disclosure_fetch=lambda *_: [filing],
                 summary_fetch=lambda *_: self.fail("must not fetch periodic accounts"), now=datetime(2026, 10, 20, 18))

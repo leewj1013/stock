@@ -11,10 +11,16 @@ from .run_gate import should_run
 
 
 STEPS: dict[str, list[tuple[str, bool, bool]]] = {
-    "open": [("stock_alarm.market_summary", False, True)],
+    "open": [("stock_alarm.market_summary", False, True),
+             ("stock_alarm.market_group_snapshot", True, False),
+             ("stock_alarm.naver_market_signals", True, False)],
     "intraday": [
+        ("stock_alarm.market_group_snapshot", True, False),
+        ("stock_alarm.naver_market_signals", True, False),
         ("stock_alarm", False, True),
         ("stock_alarm.virtual_trader_report", False, True),
+        ("stock_alarm.market_group_context", True, False),
+        ("stock_alarm.naver_market_signal_context", True, False),
         ("stock_alarm.dashboard", False, False),
     ],
     "sell": [
@@ -23,6 +29,9 @@ STEPS: dict[str, list[tuple[str, bool, bool]]] = {
     ],
     "daily": [
         ("stock_alarm.positions_report", True, False),
+        ("stock_alarm.market_group_snapshot", True, False),
+        ("stock_alarm.naver_market_signals", True, False),
+        ("stock_alarm.naver_market_signal_context", True, False),
         ("stock_alarm.recommendation_performance", True, False),
         ("stock_alarm.sell_performance", True, False),
         ("stock_alarm.strategy_learning", True, False),

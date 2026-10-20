@@ -90,6 +90,13 @@ def main() -> None:
     theme_result = run_theme_research()
     backup_database(theme_path)
     print({"theme_research": theme_result})
+    from .market_group_snapshot import PATH as market_group_path, collect as collect_market_groups
+    group_result = collect_market_groups()
+    backup_database(market_group_path)
+    print({"market_group_snapshot": group_result})
+    from .naver_market_signals import PATH as naver_signals_path
+    if Path(naver_signals_path).exists():
+        backup_database(naver_signals_path)
     from .us_research import PATH as us_path, run as run_us_research
     us_result = run_us_research()
     backup_database(us_path)

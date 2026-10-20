@@ -20,6 +20,12 @@ data/earnings_research*.db-wal
 data/theme_research*.db
 data/theme_research*.db-shm
 data/theme_research*.db-wal
+data/market_group_snapshot*.db
+data/market_group_snapshot*.db-shm
+data/market_group_snapshot*.db-wal
+data/naver_market_signals*.db
+data/naver_market_signals*.db-shm
+data/naver_market_signals*.db-wal
 data/us_research*.db
 data/us_research*.db-shm
 data/us_research*.db-wal

@@ -18,6 +18,8 @@ from .data_store import (
     virtual_position_states,
 )
 from .health import lines as health_lines
+from .market_group_snapshot import dashboard_section as market_group_section
+from .naver_market_signals import dashboard_section as naver_signals_section, recommendation_section as naver_recommendation_section
 from .positions_check import active_position_tickers
 from .report import daily_ticker_rows, reconciled_daily_alert_rows, tail_csv, tail_text
 from .sell_check import SELL_ALERTS_LOG, latest_sell_alert_times, position_was_alerted
@@ -1429,11 +1431,16 @@ def research_tab() -> str:
     from .portfolio_research import dashboard_section as portfolio_research_section
     from .earnings_research import dashboard_section as earnings_research_section
     from .theme_research import dashboard_section as theme_research_section
+    from .market_group_context import dashboard_section as market_group_context_section
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
         + market_regime_card()
         + experiment_progress_cards(experiment_progress_rows())
+        + market_group_section()
+        + market_group_context_section()
+        + naver_signals_section()
+        + naver_recommendation_section()
         + sell_research_section()
         + entry_research_section()
         + portfolio_research_section()
@@ -1790,6 +1797,7 @@ def render() -> str:
 {home_note(f"미매수 추천 {len(unbought_rows)}종목: " + ", ".join(row.get("name", "") for row in unbought_rows[:5]) + (f" 외 {len(unbought_rows) - 5}종목" if len(unbought_rows) > 5 else "") + " · 추천 추적 탭과 마감 브리핑에서 확인") if unbought_rows else ""}
 {user_table("보유종목 매도 신호", held_sell_rows, ["name", "aggressive_status", "neutral_status"], "오늘 매도 조건을 충족한 보유종목이 없습니다.")}
 {home_note(f"보유하지 않은 추천 종목의 매도 신호 {len(sell_rows) - len(held_sell_rows)}건은 추천 추적 탭에 있습니다.") if len(sell_rows) > len(held_sell_rows) else ""}
+{details("업종·테마 TOP 5 · 업종 시가총액 TOP 10", market_group_section())}
 <section class="profile-compare"><h2>가상계좌 성향 비교</h2><div class="profile-compare-grid">
   <div class="profile-compare-card"><span class="profile-compare-label">적극투자형</span>
     <div class="profile-compare-heading"><strong id="compare-aggressive-equity">불러오는 중</strong><svg class="sparkline" id="compare-aggressive-sparkline" width="90" height="30" viewBox="0 0 90 30"></svg></div>

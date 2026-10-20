@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from stock_alarm.server_runner import run
+from stock_alarm.server_runner import STEPS, run
 
 
 class ServerRunnerTest(unittest.TestCase):
@@ -25,20 +25,22 @@ class ServerRunnerTest(unittest.TestCase):
     @patch("stock_alarm.server_runner.load_env")
     @patch("stock_alarm.server_runner.should_run", return_value=True)
     @patch("stock_alarm.server_runner._write_log")
-    @patch("stock_alarm.server_runner._run_module", side_effect=[1, 0])
+    @patch("stock_alarm.server_runner._run_module")
     def test_required_failure_alerts_and_stops(self, module, _log, _gate, _env):
+        module.side_effect = lambda name, *_args: 1 if name == "stock_alarm" else 0
         self.assertEqual(1, run("intraday"))
-        self.assertEqual("stock_alarm", module.call_args_list[0].args[0])
-        self.assertEqual(("stock_alarm", "1"), module.call_args_list[1].args[4])
-        self.assertEqual(2, module.call_count)
+        self.assertEqual(["stock_alarm.market_group_snapshot", "stock_alarm.naver_market_signals", "stock_alarm",
+                          "stock_alarm.failure_alert"], [call.args[0] for call in module.call_args_list])
+        self.assertEqual(("stock_alarm", "1"), module.call_args_list[-1].args[4])
 
     @patch("stock_alarm.server_runner.load_env")
     @patch("stock_alarm.server_runner.should_run", return_value=True)
     @patch("stock_alarm.server_runner._write_log")
-    @patch("stock_alarm.server_runner._run_module", side_effect=[1, 0, 0, 0, 0, 0, 0, 0, 0])
+    @patch("stock_alarm.server_runner._run_module")
     def test_optional_daily_failure_continues(self, module, _log, _gate, _env):
+        module.side_effect = lambda name, *_args: 1 if name == "stock_alarm.positions_report" else 0
         self.assertEqual(0, run("daily"))
-        self.assertGreater(module.call_count, 2)
+        self.assertEqual(len(STEPS["daily"]) + 1, module.call_count)
 
     def test_rejects_unknown_mode(self):
         with self.assertRaises(ValueError):
