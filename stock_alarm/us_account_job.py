@@ -56,9 +56,14 @@ def run(*, retry: bool = False, today: date | None = None) -> dict:
         enriched = enrich_universe_names()
     except Exception:
         enriched = 0  # Display names do not affect trading ledgers.
+    try:
+        from .us_research import run as run_research
+        research = run_research()
+    except Exception as error:
+        research = {"error": f"{type(error).__name__}: {error}"}  # Observation must never stop the frozen accounts.
     if any(result.get("state") not in ("ok", "waiting") for result in results.values()):
         raise RuntimeError(f"US strategy update failed: {results}")
-    return {"spy_days": spy_days, "accounts": results, "korean_names_added": enriched}
+    return {"spy_days": spy_days, "accounts": results, "korean_names_added": enriched, "research": research}
 
 
 def main() -> None:

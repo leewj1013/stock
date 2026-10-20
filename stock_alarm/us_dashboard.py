@@ -297,6 +297,7 @@ def account_panel(rows: list[dict[str, str]], strategies: list[dict]) -> str:
 
 
 def research_panel(directory: str = RESEARCH_DIR) -> str:
+    from .us_research import dashboard_section
     title = heading("미국 전략 연구", "한국에서 검증한 규칙이 미국에서도 통하는지 사전 등록 방식으로 확인합니다.")
     try:
         with open(os.path.join(directory, "predictions.csv"), encoding="utf-8-sig") as file:
@@ -308,13 +309,13 @@ def research_panel(directory: str = RESEARCH_DIR) -> str:
     except OSError:
         names = []
     if not predictions and not names:
-        return title + empty("연구 결과", "미국 연구 결과가 아직 없습니다.")
+        return title + dashboard_section() + empty("사전 등록 연구 결과", "미국 연구 결과가 아직 없습니다.")
     rows = [[e(r["date"]), e(r["slug"]), pill(r["predicted_verdict"], r["predicted_verdict"] != "채택"),
              pill(r["actual_verdict"], r["actual_verdict"] != "채택"),
              pill("적중" if r.get("hit") == "1" else "빗나감", r.get("hit") != "1"),
              f"{float(r['p_evidence']) * 100:.2f}%" if r.get("p_evidence") else "-"] for r in reversed(predictions)]
     bodies = "".join(details(n[:-3], f"<pre class='review-text'>{e(read_text(os.path.join(directory, n)) or '')}</pre>") for n in names)
-    return (title + simple_table("연구 결과 (사전 등록)", ["날짜", "연구", "예측", "결과", "판정", "증거 확률"], rows, num_from=99)
+    return (title + dashboard_section() + simple_table("연구 결과 (사전 등록)", ["날짜", "연구", "예측", "결과", "판정", "증거 확률"], rows, num_from=99)
             + (f"<section><h2>연구 보고서 전문</h2>{bodies}</section>" if bodies else ""))
 
 
