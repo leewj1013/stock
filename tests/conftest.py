@@ -31,6 +31,14 @@ def isolated_env(tmp_path, monkeypatch):
     reset_shared_client()
 
 
+@pytest.fixture(autouse=True)
+def redirect_exit_event_log(tmp_path, monkeypatch):
+    # sell_check.run() appends gap/take-profit observations to logs/sell_exit_events.csv;
+    # tests that drive it must never add fake events to the real log.
+    monkeypatch.setattr("stock_alarm.exit_context.EVENT_LOG", str(tmp_path / "sell_exit_events.csv"))
+    yield
+
+
 REAL_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 

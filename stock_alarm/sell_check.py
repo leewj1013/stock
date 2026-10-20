@@ -21,6 +21,7 @@ from .app import (
     write_error_log,
 )
 from .data_store import position_id
+from .exit_context import GAP_NOTE_PCT, gap_fields, gap_pct, open_return_pct, profile_label, record_exit_events
 
 
 POSITIONS_PATH = "data/positions.csv"
@@ -40,6 +41,8 @@ class SellAlert:
     sale_type: str = "full"
     stage: str = ""
     quantity_fraction: float = 1.0
+    prev_close: int = 0  # observation only: previous close and today's open, 0 until today's row is published
+    open_price: int = 0
 
 
 def read_positions(path: str = POSITIONS_PATH) -> list[dict[str, str]]:
@@ -110,6 +113,7 @@ def _evaluate_position(
 
     closes = [int(row[4]) for row in rows[-20:]]
     close = closes[-1]
+    prev_close, open_price = gap_fields(rows, end_day)
     ma20 = mean(closes)
     return_pct = (close - entry_price) / entry_price * 100
     atr20_pct = average_true_range_pct(rows)
@@ -189,6 +193,7 @@ def _evaluate_position(
         "drop_triggered": drop_triggered, "giveback_triggered": giveback_triggered,
         "holding_days": holding_days, "time_stop_triggered": time_stop_triggered,
         "reasons": reasons, "sale_type": sale_type, "stage": stage, "quantity_fraction": quantity_fraction,
+        "prev_close": prev_close, "open_price": open_price,
     }
 
 
@@ -201,6 +206,7 @@ def _alert_from_evaluation(position: dict[str, str], evaluation: dict) -> SellAl
         ticker, name, evaluation["entry_price"], evaluation["close"], evaluation["return_pct"],
         ", ".join(evaluation["reasons"]), evaluation["holding_days"],
         evaluation["sale_type"], evaluation["stage"], evaluation["quantity_fraction"],
+        prev_close=evaluation["prev_close"], open_price=evaluation["open_price"],
     )
 
 
@@ -427,8 +433,12 @@ def format_message(alerts: list[SellAlert], virtual_result: dict | None = None) 
             f"{alert_urgency(alert)} · {action}",
             f"{alert.name}({alert.ticker}) 수익률 {alert.return_pct:+.2f}%{held}",
             f"현재가 {alert.close:,}원 (진입 {alert.entry_price:,}원)",
-            f"사유: {short_reason(alert.reason)}",
         ])
+        gap = gap_pct(alert.prev_close, alert.open_price)
+        if gap is not None and abs(gap) >= GAP_NOTE_PCT:
+            open_ret = open_return_pct(alert.entry_price, alert.open_price)
+            lines.append(f"갭 {gap:+.1f}% (전일 종가 {alert.prev_close:,} → 시가 {alert.open_price:,}원) · 시가 기준 수익률 {open_ret:+.1f}%")
+        lines.append(f"사유: {short_reason(alert.reason)}")
         if execution:
             realized_rate = execution["realized_profit_loss"] / execution["cost_basis"] * 100 if execution["cost_basis"] else 0
             label = "부분매도" if execution.get("sale_type") == "partial" else "전량매도"
@@ -581,6 +591,10 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
     )
     if alerts:
         write_log(alerts, path=profile["sell_alerts_log"])
+        try:  # observation log (gap / pre-market context); a failure here must not touch the sell itself
+            record_exit_events([alert for alert in alerts if alert.ticker in held_tickers], profile_label(profile["sell_alerts_log"]), end_day)
+        except Exception as error:
+            write_error_log(error)
     result = virtual_sell([
         {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
          "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
