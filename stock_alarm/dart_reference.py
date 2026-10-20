@@ -49,7 +49,7 @@ def load_corp_codes(path: str) -> dict[str, str]:
         return json.load(file)
 
 
-def disclosure_titles(ticker: str, days: int = 30, limit: int = 10) -> list[str]:
+def disclosures(ticker: str, days: int = 30, limit: int = 10) -> list[dict]:
     key = os.environ.get("DART_API_KEY", "")
     corp_code = corp_code_by_stock(ticker)
     if not key or not corp_code:
@@ -67,7 +67,11 @@ def disclosure_titles(ticker: str, days: int = 30, limit: int = 10) -> list[str]
     )
     with urllib.request.urlopen(url, timeout=10) as response:
         data = json.loads(response.read().decode("utf-8"))
-    return [item.get("report_nm", "") for item in data.get("list", []) if item.get("report_nm")]
+    return data.get("list") or []
+
+
+def disclosure_titles(ticker: str, days: int = 30, limit: int = 10) -> list[str]:
+    return [item.get("report_nm", "") for item in disclosures(ticker, days, limit) if item.get("report_nm")]
 
 
 def keyword_score(titles: list[str]) -> tuple[int, str]:

@@ -14,6 +14,12 @@ data/entry_research*.db-wal
 data/portfolio_research*.db
 data/portfolio_research*.db-shm
 data/portfolio_research*.db-wal
+data/earnings_research*.db
+data/earnings_research*.db-shm
+data/earnings_research*.db-wal
+data/theme_research*.db
+data/theme_research*.db-shm
+data/theme_research*.db-wal
 scripts/*.bak-*
 data/backups/
 data/registry-backup/

@@ -82,7 +82,15 @@ def main() -> None:
     portfolio_result = run_portfolio_research()
     backup_database(portfolio_path)
     print({"portfolio_research": portfolio_result})
-    if result["failures"] or entry_result["failures"] or portfolio_result["failures"]:
+    from .earnings_research import PATH as earnings_path, run as run_earnings_research
+    earnings_result = run_earnings_research()
+    backup_database(earnings_path)
+    print({"earnings_research": earnings_result})
+    from .theme_research import PATH as theme_path, run as run_theme_research
+    theme_result = run_theme_research()
+    backup_database(theme_path)
+    print({"theme_research": theme_result})
+    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"]:
         raise RuntimeError("Research has collection failures; inspect research databases error columns")
 
 
