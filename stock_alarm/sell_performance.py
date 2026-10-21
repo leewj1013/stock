@@ -71,8 +71,10 @@ def run() -> int:
     earnings_research = run_earnings_research()
     from .theme_research import run as run_theme_research
     theme_research = run_theme_research()
-    if research["failures"] or entry_research["failures"] or portfolio_research["failures"] or earnings_research["failures"] or theme_research["failures"]:
-        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}, portfolio={portfolio_research}, earnings={earnings_research}, theme={theme_research}")
+    from .risk_research import run as run_risk_research
+    risk_research = run_risk_research()
+    if research["failures"] or entry_research["failures"] or portfolio_research["failures"] or earnings_research["failures"] or theme_research["failures"] or risk_research["failures"]:
+        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}, portfolio={portfolio_research}, earnings={earnings_research}, theme={theme_research}, risk={risk_research}")
     return len(rows)
 
 

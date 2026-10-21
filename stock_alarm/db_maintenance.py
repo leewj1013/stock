@@ -90,6 +90,10 @@ def main() -> None:
     theme_result = run_theme_research()
     backup_database(theme_path)
     print({"theme_research": theme_result})
+    from .risk_research import PATH as risk_path, run as run_risk_research
+    risk_result = run_risk_research()
+    backup_database(risk_path)
+    print({"risk_research": risk_result})
     from .market_group_snapshot import PATH as market_group_path, collect as collect_market_groups
     group_result = collect_market_groups()
     backup_database(market_group_path)

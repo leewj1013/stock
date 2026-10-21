@@ -141,6 +141,8 @@ def observe_auto_buy(original, picks, *args, **kwargs):
     finally:
         try:
             payload["executions"] = (result or {}).get("executions", [])
+            payload["stop_rules"] = {"floor": abs(app.env_float("SELL_LOSS_PCT", 5)),
+                                     "atr_multiplier": app.env_float("SELL_ATR_MULTIPLIER", 2)}
             payload["regime_basis"] = "engine_live_label_may_fallback_sideways" if "regime_used" in payload else "unavailable"
             tickers = {p["ticker"] for p in payload["picks"]} | {h["ticker"] for h in payload.get("state", {}).get("holdings", [])}
             # Read the contemporaneous cache only; never fetch today's sectors for old cases.

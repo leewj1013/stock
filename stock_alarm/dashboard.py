@@ -1428,6 +1428,7 @@ def experiment_progress_cards(rows: list[dict[str, str]]) -> str:
 def research_tab() -> str:
     from .sell_research import dashboard_section as sell_research_section
     from .entry_research import dashboard_section as entry_research_section
+    from .risk_research import dashboard_section as risk_research_section
     from .portfolio_research import dashboard_section as portfolio_research_section
     from .earnings_research import dashboard_section as earnings_research_section
     from .theme_research import dashboard_section as theme_research_section
@@ -1443,6 +1444,7 @@ def research_tab() -> str:
         + naver_recommendation_section()
         + sell_research_section()
         + entry_research_section()
+        + risk_research_section()
         + portfolio_research_section()
         + earnings_research_section()
         + theme_research_section()
