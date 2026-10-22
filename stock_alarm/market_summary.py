@@ -125,7 +125,8 @@ def with_session_changes(leaders: list[dict], day: date) -> list[dict]:
             figures = session_change(str(row["ticker"]), day)
         except Exception:
             figures = None
-        out.append({**row, "change_pct": figures[0]} if figures else row)
+        if figures:
+            out.append({**row, "change_pct": figures[0]})
     return out
 
 
@@ -134,6 +135,18 @@ def summary(rows: list[dict[str, str]]) -> dict[str, str]:
     up_count = sum(value > 0 for value in changes)
     down_count = sum(value < 0 for value in changes)
     return {"count": str(len(rows)), "up_count": str(up_count), "down_count": str(down_count), "up_ratio_pct": f"{up_count / len(rows) * 100:.1f}" if rows else "0.0", "avg_change_pct": f"{mean(changes):.2f}" if changes else "0.00"}
+
+
+def index_changes(day: date) -> dict[str, float]:
+    changes = {}
+    for symbol in ("KOSPI", "KOSDAQ"):
+        try:
+            rows = naver_rows(symbol, day - timedelta(days=10), day, max_cache_age_seconds=300 if day == date.today() else None)
+            if len(rows) >= 2 and str(rows[-1][0]) == day.strftime("%Y%m%d") and float(rows[-2][4]):
+                changes[symbol] = (float(rows[-1][4]) / float(rows[-2][4]) - 1) * 100
+        except (OSError, ValueError, TypeError, IndexError, KeyError):
+            continue
+    return changes
 
 
 def whole_market_summary() -> dict[str, str] | None:
@@ -184,43 +197,35 @@ def message(
             whole_market_leaders = with_session_changes(whole_market_leaders, basis_day)
     us_rows = us_rows if us_rows is not None else us_market_rows()
     whole_market = whole_market if whole_market is not None else whole_market_summary()
-    session = f" ({basis_day:%m/%d} 기준)" if basis_day else ""
     info = summary(rows)
-    regime = market_regime(info, whole_market)
-    leaders = sorted(rows, key=lambda row: int(row.get("trading_value") or 0), reverse=True)[:3]
+    leaders = whole_market_leaders or sorted(rows, key=lambda row: int(row.get("trading_value") or 0), reverse=True)[:3]
+    domestic_basis = f"{basis_day:%m/%d} 종가" if basis_day else "직전 거래일 종가"
+    us_dates = sorted({row.get("market_date", "") for row in us_rows if row.get("market_date")})
     lines = [
-        "[08:30 오늘의 매매 브리핑]",
+        "[08:30 아침 시황]",
+        f"국내 {domestic_basis} · 미국 {us_dates[-1] if us_dates else '최근 마감'} 기준",
         "",
-        "■ 시장 판단",
-        f"상태: {regime['label']} (시장점수 {regime['score']})",
-        f"권장 신규 매수 한도: 보유 현금의 {regime['buy_limit']}",
-        f"대응: {regime['guidance']}",
+        "■ 핵심 변화",
+        (f"국내 전체 상승 {whole_market['up_ratio_pct']}% · 평균 {float(whole_market['avg_change_pct']):+.2f}%"
+         if whole_market else f"관심종목 상승 {info['up_ratio_pct']}% · 평균 {float(info['avg_change_pct']):+.2f}% (전체 시장 자료 없음)"),
         "",
         "■ 미국 증시 마감",
     ]
     if us_rows:
-        lines.extend(f"- {us_row_text(row)}" for row in us_rows)
+        lines.extend(f"- {us_row_text(row)} ({row['market_date']} 마감)" if row.get("market_date") else f"- {us_row_text(row)}" for row in us_rows)
         if note := us_gap_note(us_rows):
             lines.append(note)
     else:
         lines.append("- 미국 증시 데이터 수집 대기")
-    lines.extend(["", f"■ 국내 관심종목 흐름{session}", f"상승/하락: {info['up_count']}개 / {info['down_count']}개", f"상승 비율: {info['up_ratio_pct']}%", f"평균 등락률: {float(info['avg_change_pct']):+.2f}%"])
-    if whole_market:
-        lines.extend(["", "■ 국내 전체 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
-    # The watchlist is mostly large caps, so its top names often are the whole
-    # market's; listing the same three stocks twice added nothing.
-    if leaders and [row["ticker"] for row in leaders] == [row.get("ticker") for row in whole_market_leaders]:
-        leaders = []
+    indices = index_changes(basis_day) if basis_day else {}
+    lines.extend(["", f"■ 국내 주요 지수 ({domestic_basis})"])
+    lines.extend(f"{symbol} {change:+.2f}%" for symbol, change in indices.items())
+    if not indices:
+        lines.append("지수 등락률 확인 대기")
     if leaders:
-        lines.extend(["", f"■ 거래대금 주도 종목(관심종목){session}"])
-        lines.extend(f"- {row['name']}({row['ticker']}): {float(row['change_pct']):+.2f}%" for row in leaders)
-    if whole_market_leaders:
-        lines.extend(["", f"■ 거래대금 주도 종목(전체 시장){session}"])
-        lines.extend(f"- {row['name']}({row['ticker']}): {row['change_pct']:+.2f}%" for row in whole_market_leaders)
-    # The guidance already heads the message; repeating it as a closing
-    # "one-line conclusion" added nothing.
-    basis = f"{basis_day:%m/%d} 종가" if basis_day else "직전 거래일 종가"
-    lines.extend(["", f"미국장은 최근 마감가, 국내는 {basis} 기준입니다."])
+        lines.extend(["", f"■ 거래대금 주도 종목 ({domestic_basis})"])
+        lines.extend(f"- {row['name']}({row['ticker']}): {float(row['change_pct']):+.2f}%" for row in leaders[:3])
+    lines.extend(["", "■ 오늘 확인", "개장 후 시장 상승 비율·추천 종목 거래량·추격매수 조건 확인"])
     return "\n".join(lines)
 
 
@@ -235,7 +240,7 @@ def krx_top_trading_value_leaders(top_n: int = 3) -> list[dict]:
 
 def run() -> str:
     load_env()
-    return send_notification(message())
+    return send_notification(message(), event_type="market_summary")
 
 
 def main() -> None:

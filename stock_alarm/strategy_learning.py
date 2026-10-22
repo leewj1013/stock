@@ -178,25 +178,37 @@ def _proposed_weights(training: list[tuple[dict, float]], current: dict[str, flo
     return proposed
 
 
-def _ranked_returns(validation: list[tuple[dict, float]], weights: dict[str, float]) -> list[float]:
+def _ranked_returns(validation: list[tuple[dict, float]], weights: dict[str, float], by_day: bool = False) -> list[float]:
     scored = []
     for row, value in validation:
         factors = json.loads(row["factors_json"])
         score = sum(float(factors.get(factor, 0)) * weights[factor] for factor in FACTORS)
         scored.append((score, str(row.get("pick_date") or ""), str(row.get("ticker") or ""), float(value)))
     scored.sort(reverse=True)
-    selected = scored[: max(1, len(scored) // 2)]
+    if by_day:
+        grouped: dict[str, list[tuple]] = {}
+        for item in scored:
+            grouped.setdefault(item[1], []).append(item)
+        selected = [item for day_rows in grouped.values() for item in day_rows[: max(1, len(day_rows) // 2)]]
+    else:
+        selected = scored[: max(1, len(scored) // 2)]
     # Chronological order, not score order -- return_distribution_p_value's HAC
     # correction only reflects real overlap between adjacent elements if
     # "adjacent" means "close in time", not "similarly scored".
     selected.sort(key=lambda item: (item[1], item[2]))
+    if by_day:
+        days: dict[str, list[float]] = {}
+        for _score, day, _ticker, value in selected:
+            days.setdefault(day, []).append(value)
+        return [mean(values) for values in days.values()]
     return [value for _score, _date, _ticker, value in selected]
 
 
-def _fold_summary(index: int, baseline_values: list[float], proposed_values: list[float], alpha: float, validation_count: int | None = None) -> dict:
+def _fold_summary(index: int, baseline_values: list[float], proposed_values: list[float], alpha: float, validation_count: int | None = None, paired: bool = False) -> dict:
     baseline_return, proposed_return = mean(baseline_values), mean(proposed_values)
     baseline_dd, proposed_dd = _drawdown(baseline_values), _drawdown(proposed_values)
-    p_value = return_distribution_p_value(proposed_values, baseline_values)
+    p_value = (newey_west_mean_test([p - b for p, b in zip(proposed_values, baseline_values)], RETURN_HAC_LAG, "greater")["p_value"]
+               if paired else return_distribution_p_value(proposed_values, baseline_values))
     improved = proposed_return > baseline_return
     drawdown_ok = proposed_dd >= baseline_dd - 2
     significant = p_value < alpha
@@ -232,31 +244,51 @@ def walk_forward_validate(
     validation_size = max(60, int(validation_size))
     fold_count = max(3, int(fold_count))
     required = max(minimum, validation_size * fold_count + 1)
-    if len(usable) < required:
+    usable = sorted(usable, key=lambda item: (str(item[0].get("pick_date") or ""), str(item[0].get("ticker") or "")))
+    unique_days = len({row.get("pick_date") for row, _ in usable})
+    if len(usable) < required or unique_days < 60:
         return {
             "status": "insufficient_data", "sample_count": len(usable), "minimum": required,
             "folds": [], "p_value": None,
-            "decision_reason": f"유효 표본 부족: {len(usable)}/{required}건; 기존 가중치 유지",
+            "decision_reason": f"검증 표본 부족: {len(usable)}/{required}건, 추천일 {unique_days}/60일; 기존 가중치 유지",
         }
     current = current or dict(DEFAULT_WEIGHTS)
-    validation_start = len(usable) - validation_size * fold_count
+    boundaries = []
+    stop = len(usable)
+    for _ in range(fold_count):
+        start = max(0, stop - validation_size)
+        first_day = usable[start][0]["pick_date"]
+        while start > 0 and usable[start - 1][0]["pick_date"] == first_day:
+            start -= 1
+        boundaries.append((start, stop))
+        stop = start
+    boundaries.reverse()
     folds = []
     all_baseline, all_proposed = [], []
-    for fold_index in range(fold_count):
-        start = validation_start + fold_index * validation_size
-        stop = start + validation_size
-        training, validation = usable[:start], usable[start:stop]
+    for fold_index, (start, stop) in enumerate(boundaries):
+        validation = usable[start:stop]
+        first_day = date.fromisoformat(validation[0][0]["pick_date"])
+        # shortcut: 60 calendar days conservatively cover a 20-session outcome; store exact outcome dates to shorten this gap.
+        cutoff = (first_day - timedelta(days=60)).isoformat()
+        training = [(row, value) for row, value in usable[:start] if row["pick_date"] < cutoff]
+        if len(training) < 60 or len({row["pick_date"] for row, _ in validation}) < 20:
+            return {"status": "insufficient_data", "sample_count": len(usable), "minimum": required,
+                    "folds": [], "p_value": None,
+                    "decision_reason": "날짜 분리·성과기간 제외 후 검증 표본 부족; 기존 가중치 유지"}
         fold_weights = _proposed_weights(training, current, max_change)
-        baseline_values = _ranked_returns(validation, current)
-        proposed_values = _ranked_returns(validation, fold_weights)
-        folds.append(_fold_summary(fold_index + 1, baseline_values, proposed_values, alpha, len(validation)))
+        baseline_values = _ranked_returns(validation, current, by_day=True)
+        proposed_values = _ranked_returns(validation, fold_weights, by_day=True)
+        summary = _fold_summary(fold_index + 1, baseline_values, proposed_values, alpha, len(validation), paired=True)
+        summary.update(first_validation_day=first_day.isoformat(), last_training_day=training[-1][0]["pick_date"],
+                       validation_days=len(baseline_values), purged_rows=start - len(training))
+        folds.append(summary)
         all_baseline.extend(baseline_values)
         all_proposed.extend(proposed_values)
     proposed = _proposed_weights(usable, current, max_change)
     baseline_values, proposed_values = all_baseline, all_proposed
     baseline_return, proposed_return = mean(baseline_values), mean(proposed_values)
     baseline_dd, proposed_dd = _drawdown(baseline_values), _drawdown(proposed_values)
-    p_value = return_distribution_p_value(proposed_values, baseline_values)
+    p_value = newey_west_mean_test([p - b for p, b in zip(proposed_values, baseline_values)], RETURN_HAC_LAG, "greater")["p_value"]
     accepted = all(fold["passed"] for fold in folds) and p_value < alpha
     failed_checks = []
     if not all(fold["passed"] for fold in folds):

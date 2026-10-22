@@ -5,6 +5,7 @@ from datetime import date, datetime
 from unittest.mock import patch
 
 from stock_alarm.data_quality import checked_prices, validate_price_rows
+from stock_alarm.data_store import recent_price_quality
 
 
 class DataQualityTest(unittest.TestCase):
@@ -41,6 +42,19 @@ class DataQualityTest(unittest.TestCase):
             self.assertEqual({}, prices)
             self.assertEqual("invalid", checks[0]["status"])
             self.assertIn("provider_error", checks[0]["reason"])
+
+    def test_reference_source_and_fetch_times_are_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "test.db")
+            _prices, checks = checked_prices(["A"], lambda _ticker: [["20260827", 100, 110, 90, 105, 10]],
+                                             date(2026, 8, 27), path,
+                                             reference_provider=lambda _ticker: (105, "pykrx", "2026-08-27"),
+                                             reference_name="toss")
+            stored = recent_price_quality(1, path)[0]
+            self.assertEqual("pykrx", checks[0]["reference_source"])
+            self.assertEqual("2026-08-27", stored["reference_price_date"])
+            self.assertTrue(stored["source_fetched_at"])
+            self.assertTrue(stored["reference_fetched_at"])
 
 
 if __name__ == "__main__":

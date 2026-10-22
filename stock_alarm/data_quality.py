@@ -64,7 +64,7 @@ def checked_prices(
     row_provider: Callable[[str], list[list]],
     expected_day: date,
     path: str = "data/stock_alarm.db",
-    reference_provider: Callable[[str], int | None] | None = None,
+    reference_provider: Callable[[str], int | tuple[int | None, str, str | None] | None] | None = None,
     reference_name: str = "",
 ) -> tuple[dict[str, int], list[dict[str, Any]]]:
     prices, checks = {}, []
@@ -76,13 +76,18 @@ def checked_prices(
             provider_error = type(error).__name__
         else:
             provider_error = ""
+        source_fetched_at = datetime.now().isoformat(timespec="seconds") if rows else None
         try:
-            reference_close = reference_provider(ticker) if reference_provider and rows else None
+            reference = reference_provider(ticker) if reference_provider and rows else None
         except Exception:
-            reference_close = None
-        check = validate_price_rows(ticker, rows, expected_day, reference_close=reference_close, reference_source=reference_name)
+            reference = None
+        reference_fetched_at = datetime.now().isoformat(timespec="seconds") if reference_provider and rows else None
+        reference_close, actual_source, reference_day = reference if isinstance(reference, tuple) else (reference, reference_name, None)
+        check = validate_price_rows(ticker, rows, expected_day, reference_close=reference_close, reference_source=actual_source)
+        check.update(source_fetched_at=source_fetched_at, reference_fetched_at=reference_fetched_at,
+                     reference_price_date=reference_day)
         if reference_provider and rows and reference_close is None:
-            check["reference_source"] = reference_name or "reference"
+            check["reference_source"] = actual_source or "unavailable"
             check["reason"] = ",".join(filter(None, [check.get("reason"), "reference_unavailable"]))
         if provider_error:
             check["reason"] = f"provider_error:{provider_error}"

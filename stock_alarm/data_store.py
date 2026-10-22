@@ -301,6 +301,10 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
         """
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(strategy_runs)")}
+    price_columns = {row[1] for row in connection.execute("PRAGMA table_info(price_quality)")}
+    for name in ("source_fetched_at", "reference_fetched_at", "reference_price_date"):
+        if name not in price_columns:
+            connection.execute(f"ALTER TABLE price_quality ADD COLUMN {name} TEXT")
     for name in ("git_commit", "config_hash", "watchlist_hash"):
         if name not in columns:
             connection.execute(f"ALTER TABLE strategy_runs ADD COLUMN {name} TEXT")
@@ -928,7 +932,7 @@ def virtual_position_states(path: str = DB_PATH) -> dict[str, dict[str, Any]]:
 
 
 def record_price_quality(row: dict[str, Any], path: str = DB_PATH) -> None:
-    columns = ["created_at", "ticker", "price_date", "source", "reference_source", "close", "reference_close", "age_minutes", "status", "reason"]
+    columns = ["created_at", "ticker", "price_date", "source", "reference_source", "close", "reference_close", "age_minutes", "status", "reason", "source_fetched_at", "reference_fetched_at", "reference_price_date"]
     values = [row.get(column) for column in columns]
     with closing(connect(path)) as connection:
         connection.execute(

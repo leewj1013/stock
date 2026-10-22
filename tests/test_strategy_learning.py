@@ -2,14 +2,34 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from stock_alarm.data_store import query_rows, upsert_recommendation_outcomes
-from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, cliffs_delta, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes
+from stock_alarm.strategy_learning import DEFAULT_WEIGHTS, adjusted_score, cliffs_delta, decision_message, learn, objective, return_distribution_p_value, run, sync_outcomes, walk_forward_validate
 
 
 class StrategyLearningTest(unittest.TestCase):
+    def test_walk_forward_keeps_dates_together_and_purges_future_outcomes(self):
+        rows = [({"pick_date": (date(2025, 1, 1) + timedelta(days=day)).isoformat(),
+                  "ticker": f"T{ticker}", "factors_json": "{}"}, float(day % 7))
+                for day in range(400) for ticker in range(2)]
+        result = walk_forward_validate(rows)
+        self.assertEqual(3, len(result["folds"]))
+        for fold in result["folds"]:
+            self.assertGreaterEqual(fold["validation_days"], 20)
+            self.assertGreaterEqual((date.fromisoformat(fold["first_validation_day"]) -
+                                     date.fromisoformat(fold["last_training_day"])).days, 61)
+            self.assertEqual(0, fold["sample_count"] % 2)
+
+    def test_walk_forward_waits_when_many_picks_share_few_days(self):
+        rows = [({"pick_date": (date(2026, 1, 1) + timedelta(days=day)).isoformat(),
+                  "ticker": f"T{ticker}", "factors_json": "{}"}, 1.0)
+                for day in range(35) for ticker in range(10)]
+        result = walk_forward_validate(rows)
+        self.assertEqual("insufficient_data", result["status"])
+        self.assertEqual([], result["folds"])
+
     @patch("stock_alarm.notifier.send_notification")
     @patch("stock_alarm.strategy_learning.learn", return_value={"status": "insufficient_data", "sample_count": 0})
     @patch("stock_alarm.strategy_learning.sync_outcomes")

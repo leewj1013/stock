@@ -73,9 +73,9 @@ def pykrx_reference_close(ticker: str, day: date | None = None) -> int | None:
 
 
 def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
-    today = date.today()
+    today = datetime.now().date()
     tickers = [holding["ticker"] for holding in virtual_trader_state(path=path)["holdings"]]
-    def reference_close(ticker: str) -> int | None:
+    def reference_close(ticker: str) -> tuple[int | None, str, str | None]:
         # KRX's after-hours single-price session (시간외단일가, 16:00~18:00) can
         # legitimately move the traded price well past the regular session's
         # close, so Toss's live price stops being a valid "should match close"
@@ -84,10 +84,11 @@ def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
         if datetime.now().time() < time(16, 0):
             toss_price = toss_reference_price(ticker)
             if toss_price is not None:
-                return toss_price
+                return toss_price, "toss", None
         if datetime.now().time() < datetime.strptime("15:40", "%H:%M").time():
-            return None
-        return pykrx_reference_close(ticker, today)
+            return None, "unavailable", None
+        pykrx_price = pykrx_reference_close(ticker, today)
+        return pykrx_price, "pykrx", today.isoformat() if pykrx_price is not None else None
     prices, _checks = checked_prices(
         tickers,
         lambda ticker: naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60),

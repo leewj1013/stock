@@ -1,0 +1,11 @@
+﻿source,reference_label,session,latest_observations,paired,same_day_close_candidates,same_observation_date,median_abs_difference_pct,p95_abs_difference_pct,over_0_5pct,over_0_5pct_rate
+naver,none,after_1600,6,0,0,0,,,0,
+naver,none,intraday,7662,0,0,7661,,,0,
+naver,pykrx,after_1600,10,10,0,10,0.0,0.0,0,0.0
+naver,pykrx,early_close,4,0,0,4,,,0,
+naver,pykrx,intraday,6,0,0,6,,,0,
+naver,pykrx,other,6,0,0,0,,,0,
+naver,toss,after_1600,205,205,0,196,0.0,0.19323671497584216,9,0.04390243902439024
+naver,toss,early_close,189,189,0,188,0.0,0.0,1,0.005291005291005291
+naver,toss,intraday,4830,4830,0,4827,0.0,0.2983709243443185,83,0.017184265010351966
+naver,toss,other,204,204,0,0,0.4911347346690742,3.2731527093596107,101,0.4950980392156863

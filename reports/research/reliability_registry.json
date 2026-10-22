@@ -1,0 +1,58 @@
+{
+  "low_vol": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/research/2026-09-30-low_vol.md": "b1a62ce3b70f6634fd7e30c539de8030878f59b15f73605e6b6d5c863d88e735",
+      "reports/research/scripts/low_vol.py": "0aeb2726c29001752df440ed8946b115417ac95032be7ca10aebae57472e3d7e"
+    }
+  },
+  "high52w": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/research/2026-10-03-high52w.md": "2d3e3b5f7a0f0fa77ce95b0c0bc2b7234afaf1943598ee58e3e29c9d5685ea8e",
+      "reports/research/scripts/high52w.py": "fa2bd569b94d33c0148e0fdfbdf04f8233250658ce52b335bc91ef0e3efd2d82"
+    }
+  },
+  "reversal_1w": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/research/2026-10-13-reversal_1w.md": "5535914e5ce6ef59cbc6bbd269d00e57d97a4af7c9f290cfb51d7eb331d9879a",
+      "reports/research/scripts/reversal_1w.py": "26a56a8ae412556fb2b2339c72ccebf0097b710db7a862507b16b17021df68b4"
+    }
+  },
+  "high_vol_exclusion": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/revalidation/2026-10-18-causal-signals/REPORT.md": "263e87d667c8dd24f5e880a214d4a8cb0e952823b44815ba8cbc28cf508f543b",
+      "scripts/revalidate_causal_signals.py": "e0242370aceb23a9ad3758c3fbb5197e984847ff014d8c0fc2949dcf54885b7c"
+    }
+  },
+  "bear_ma20_reentry": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/revalidation/2026-10-18-causal-signals/REPORT.md": "263e87d667c8dd24f5e880a214d4a8cb0e952823b44815ba8cbc28cf508f543b",
+      "scripts/revalidate_causal_signals.py": "e0242370aceb23a9ad3758c3fbb5197e984847ff014d8c0fc2949dcf54885b7c"
+    }
+  },
+  "holding_period": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/revalidation/2026-10-17-execution-timing/REPORT.md": "d1ab8aa03cd325baa18767c92f714e51d0b8d53a207fab98b9aed48e95153d57",
+      "scripts/revalidate_execution_timing.py": "7e132e05449d8cd4c990b08132c7ab6038bd33688636319399d791bb0d3e6c32"
+    }
+  },
+  "us_baseline": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/revalidation/2026-10-17-execution-timing/REPORT.md": "d1ab8aa03cd325baa18767c92f714e51d0b8d53a207fab98b9aed48e95153d57",
+      "scripts/revalidate_execution_timing.py": "7e132e05449d8cd4c990b08132c7ab6038bd33688636319399d791bb0d3e6c32"
+    }
+  },
+  "exit_variants": {
+    "hash_frozen_on": "2026-10-22",
+    "source_hashes": {
+      "reports/revalidation/2026-10-20-exit-variants/PROTOCOL.md": "a64e53da7f140f696ad194b97ddc69f7e9bda29602669dcb21a723695ff06047",
+      "scripts/revalidate_exit_variants.py": "70b635998d9261837c4c30c07e98228824bb1fd0f938a0eb8b162b9b661d300d"
+    }
+  }
+}

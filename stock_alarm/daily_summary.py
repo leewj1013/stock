@@ -154,11 +154,11 @@ def research_lines() -> list[str]:
     return lines if len(lines) > 2 else []
 
 
-def market_comparison_line(daily_return_pct: float | None, whole_market: dict[str, str] | None) -> str | None:
-    if daily_return_pct is None or not whole_market:
+def market_comparison_line(daily_return_pct: float | None, kospi_change_pct: float | None) -> str | None:
+    if daily_return_pct is None or kospi_change_pct is None:
         return None
-    gap = daily_return_pct - float(whole_market["avg_change_pct"])
-    return f"계좌 대비 시장: {gap:+.2f}%p (시장 평균 {float(whole_market['avg_change_pct']):+.2f}%)"
+    gap = daily_return_pct - kospi_change_pct
+    return f"KOSPI 대비 오늘 손익률: {gap:+.2f}%p (KOSPI {kospi_change_pct:+.2f}%)"
 
 
 def screener_lines() -> list[str]:
@@ -177,7 +177,7 @@ def screener_lines() -> list[str]:
 
 
 def message() -> str:
-    from .market_summary import whole_market_summary
+    from .market_summary import index_changes, whole_market_summary
 
     whole_market = whole_market_summary()
     recommendations = latest_recommendations()
@@ -201,43 +201,35 @@ def message() -> str:
         daily_result = f"오늘 손익 {_won(daily_profit)} ({daily_return:+.2f}%)"
     else:
         daily_result = "오늘 손익 산정 전 (전일 평가 없음)"
-    best = max(holdings, key=lambda row: float(row["return_pct"]), default=None)
-    worst = min(holdings, key=lambda row: float(row["return_pct"]), default=None)
     now = datetime.now()
+    indices = index_changes(now.date())
     lines = [
         f"[주식 마감 브리핑 | {now:%m/%d}]",
         "",
-        "■ 오늘 결과",
-        f"추천 {len(recommendations)}종목 · 가상매수 {len(buys)}종목 · 가상매도 {len(sales)}종목",
-        f"매도 조건 충족 {len(sell_alerts)}종목(추천 추적 전체 기준)",
+        "■ 오늘 시장",
     ]
+    lines.extend(f"{symbol} {change:+.2f}%" for symbol, change in indices.items())
+    if not indices:
+        lines.append("지수 등락률 확인 대기")
     if whole_market:
-        lines.extend(["", "■ 오늘 시장(코스피·코스닥)", f"상승 비율: {whole_market['up_ratio_pct']}%", f"평균 등락률: {float(whole_market['avg_change_pct']):+.2f}%"])
-        comparison = market_comparison_line(daily_return, whole_market)
-        if comparison:
-            lines.append(comparison)
+        lines.append(f"전체 시장 상승 비율 {whole_market['up_ratio_pct']}%")
     lines.extend([
         "",
         "■ 가상계좌",
-        f"총자산 {_won(state['total_equity'])}",
         daily_result,
+        f"총자산 {_won(state['total_equity'])}",
         f"누적 수익률 {float(state['total_return_pct']):+.2f}%",
-        f"현금 {_won(state['cash'])} · 주식 {_won(state['holdings_value'])}",
-        "",
-        "■ 보유종목",
-        f"전체 수익률 {float(state['holdings_return_pct']):+.2f}%",
+        f"현금 {_won(state['cash'])} ({int(state['cash']) / int(state['total_equity']) * 100:.1f}%)" if state['total_equity'] else f"현금 {_won(state['cash'])}",
         f"상승 {up} · 하락 {down} · 보합 {flat}",
+        f"추천 {len(recommendations)}종목 · 가상매수 {len(buys)}종목 · 가상매도 {len(sales)}종목",
     ])
-    if best:
-        lines.append(f"최고 {best.get('name') or best['ticker']} {float(best['return_pct']):+.2f}%")
-        lines.append(f"최저 {worst.get('name') or worst['ticker']} {float(worst['return_pct']):+.2f}%")
+    comparison = market_comparison_line(daily_return, indices.get("KOSPI"))
+    if comparison:
+        lines.append(comparison)
     lines.append("")
     lines.extend(_trade_lines(buys, sales))
     lines.extend(unbought_recommendation_lines(recommendations, buys))
     lines.extend(missed_buy_lines(buys, real_account_holdings()))
-    lines.extend(shadow_lines())
-    lines.extend(research_lines())
-    lines.extend(screener_lines())
     lines.extend(["", "■ 내일 확인"])
     if sell_alerts:
         for row in sell_alerts[:2]:

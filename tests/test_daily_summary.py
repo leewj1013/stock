@@ -66,8 +66,9 @@ class DailySummaryTest(unittest.TestCase):
         self.assertIn("[주식 마감 브리핑 | 07/31]", text)
         self.assertIn("추천 2종목 · 가상매수 1종목 · 가상매도 0종목", text)
         self.assertIn("오늘 손익 100,000원 (+1.01%)", text)
-        self.assertIn("현금 8,000,000원 · 주식 2,000,000원", text)
-        self.assertIn("최고 Alpha +2.50%", text)
+        self.assertIn("현금 8,000,000원 (80.0%)", text)
+        self.assertNotIn("■ 전략 vs 지수", text)
+        self.assertNotIn("■ 재무 스크리닝", text)
         self.assertIn("매수: Alpha 2주 · 비중 20%", text)
 
     def test_unbought_picks_are_listed_since_they_are_no_longer_sent_one_by_one(self):
@@ -109,18 +110,19 @@ class DailySummaryTest(unittest.TestCase):
         bull = [{"regime": "bull", "close": "7500.00", "ma120": "7000.00", "return_60d_pct": "8.0"}]
         self.assertEqual("국면 상승장 · KOSPI 7,500 / 120일선 7,000 (+7.1%)", regime_line(bull))
 
-    def test_market_comparison_line_shows_gap_versus_whole_market_average(self):
-        line = market_comparison_line(1.5, {"up_ratio_pct": "40.0", "avg_change_pct": "-0.5"})
+    def test_market_comparison_line_shows_gap_versus_kospi(self):
+        line = market_comparison_line(1.5, -0.5)
 
-        self.assertEqual("계좌 대비 시장: +2.00%p (시장 평균 -0.50%)", line)
+        self.assertEqual("KOSPI 대비 오늘 손익률: +2.00%p (KOSPI -0.50%)", line)
 
     def test_market_comparison_line_none_when_daily_return_unavailable(self):
-        self.assertIsNone(market_comparison_line(None, {"up_ratio_pct": "40.0", "avg_change_pct": "-0.5"}))
+        self.assertIsNone(market_comparison_line(None, -0.5))
 
     def test_market_comparison_line_none_when_whole_market_unavailable(self):
         self.assertIsNone(market_comparison_line(1.5, None))
 
     @patch("stock_alarm.market_summary.whole_market_summary", return_value={"up_ratio_pct": "62.0", "avg_change_pct": "0.30"})
+    @patch("stock_alarm.market_summary.index_changes", return_value={"KOSPI": 0.5, "KOSDAQ": -0.2})
     @patch("stock_alarm.daily_summary.virtual_deposits_since", return_value=0)
     @patch("stock_alarm.daily_summary.previous_virtual_valuation", return_value={"equity": 9900000})
     @patch("stock_alarm.daily_summary.virtual_trader_state")
@@ -129,7 +131,7 @@ class DailySummaryTest(unittest.TestCase):
     @patch("stock_alarm.daily_summary.recent_virtual_trades", return_value=[])
     @patch("stock_alarm.daily_summary.datetime")
     @patch("stock_alarm.daily_summary.tail_csv", return_value=[])
-    def test_message_includes_whole_market_section_when_available(self, _tail, datetime, _trades, _sales, _prices, state, _previous, _deposits, _whole_market):
+    def test_message_includes_whole_market_section_when_available(self, _tail, datetime, _trades, _sales, _prices, state, _previous, _deposits, _indices, _whole_market):
         datetime.now.return_value = real_datetime(2026, 7, 31, 16, 0)
         state.return_value = {
             "total_equity": 10_000_000, "total_return_pct": 1.25, "cash": 8_000_000,
@@ -138,9 +140,9 @@ class DailySummaryTest(unittest.TestCase):
 
         text = message()
 
-        self.assertIn("■ 오늘 시장(코스피·코스닥)", text)
-        self.assertIn("상승 비율: 62.0%", text)
-        self.assertIn("계좌 대비 시장:", text)
+        self.assertIn("■ 오늘 시장", text)
+        self.assertIn("전체 시장 상승 비율 62.0%", text)
+        self.assertIn("KOSPI 대비 오늘 손익률: +0.51%p", text)
 
     @patch("stock_alarm.daily_summary.tail_csv")
     @patch("stock_alarm.daily_summary.datetime")

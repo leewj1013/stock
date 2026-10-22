@@ -45,7 +45,7 @@ class NotifierTest(unittest.TestCase):
                 with patch("stock_alarm.notifier.send_console") as console:
                     with patch("stock_alarm.notifier.was_sent", return_value=False):
                         with patch("stock_alarm.notifier.mark_sent"):
-                            self.assertEqual("console", send_notification("hello"))
+                            self.assertEqual("console", send_notification("hello", event_type="recommendation"))
                             console.assert_called_once_with("hello")
                             delivery.assert_called_once()
         finally:
@@ -65,7 +65,7 @@ class NotifierTest(unittest.TestCase):
     @patch("stock_alarm.notifier.was_sent", return_value=False)
     @patch("stock_alarm.notifier.send_telegram", side_effect=URLError("network"))
     def test_telegram_error_falls_back_without_crashing(self, _telegram, _sent, console, delivery):
-        self.assertEqual("console", send_notification("hello"))
+        self.assertEqual("console", send_notification("hello", event_type="recommendation"))
 
         console.assert_called_once_with("hello")
         delivery.assert_called_once()
@@ -79,16 +79,41 @@ class NotifierTest(unittest.TestCase):
     @patch("stock_alarm.notifier.mark_sent")
     @patch("stock_alarm.notifier.send_telegram", return_value={"message_id": "77", "chat_id_suffix": "1234"})
     def test_telegram_success_records_receipt(self, _telegram, _mark, _sent, delivery):
-        self.assertEqual("telegram", send_notification("hello"))
+        self.assertEqual("telegram", send_notification("hello", event_type="recommendation"))
 
         delivery.assert_called_once_with(
             "telegram",
             status="delivered",
             message_id="77",
             chat_id_suffix="1234",
-            event_type="",
+            event_type="recommendation",
             tickers=[],
         )
+
+    @patch.dict(os.environ, {"FORCE_SEND": "1"})
+    @patch("stock_alarm.notifier.write_delivery_log")
+    @patch("stock_alarm.notifier.was_sent")
+    @patch("stock_alarm.notifier.send_telegram")
+    @patch("stock_alarm.notifier.send_kakao")
+    def test_other_events_are_suppressed_even_when_forced(self, kakao, telegram, sent, delivery):
+        for event in ("", "strategy_change", "daily_review", "portfolio_risk_halt", "portfolio_risk_resume", "us_account"):
+            with self.subTest(event=event):
+                self.assertEqual("suppressed", send_notification("internal status", event_type=event))
+        kakao.assert_not_called()
+        telegram.assert_not_called()
+        sent.assert_not_called()
+        self.assertEqual(6, delivery.call_count)
+
+    @patch.dict(os.environ, {"NOTIFIER": "telegram"})
+    @patch("stock_alarm.notifier.write_delivery_log")
+    @patch("stock_alarm.notifier.was_sent", return_value=False)
+    @patch("stock_alarm.notifier.mark_sent")
+    @patch("stock_alarm.notifier.send_telegram", return_value=True)
+    def test_requested_events_remain_enabled(self, telegram, mark, sent, delivery):
+        for event in ("market_summary", "recommendation", "sell", "sell_reminder", "open_orders", "daily_summary"):
+            with self.subTest(event=event):
+                self.assertEqual("telegram", send_notification("message", event_type=event))
+        self.assertEqual(6, telegram.call_count)
 
 
 if __name__ == "__main__":

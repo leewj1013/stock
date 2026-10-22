@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from stock_alarm.market_summary import append_us_history, krx_top_trading_value_leaders, market_regime, market_rows, message, naver_world_index, run, summary, us_gap_note, whole_market_summary
+from stock_alarm.market_summary import append_us_history, index_changes, krx_top_trading_value_leaders, market_regime, market_rows, message, naver_world_index, run, summary, us_gap_note, whole_market_summary
 
 
 class MarketSummaryTest(unittest.TestCase):
@@ -17,14 +17,14 @@ class MarketSummaryTest(unittest.TestCase):
             whole_market={},
             whole_market_leaders=[],
         )
-        self.assertIn("[08:30 오늘의 매매 브리핑]", text)
+        self.assertIn("[08:30 아침 시황]", text)
         self.assertIn("미국 증시 마감", text)
         self.assertIn("- S&P 500 +1.10%", text)
         self.assertIn("- VIX 14.81 (-4.08%)", text)
         self.assertIn("시초가에서 평균 1% 안팎 상승 출발", text)
-        self.assertIn("상승/하락: 1개 / 1개", text)
-        self.assertIn("거래대금 주도 종목(관심종목)", text)
-        self.assertIn("권장 신규 매수 한도", text)
+        self.assertIn("관심종목 상승 50.0%", text)
+        self.assertIn("거래대금 주도 종목", text)
+        self.assertNotIn("권장 신규 매수 한도", text)
 
     def test_message_includes_whole_market_section_and_leaders_when_available(self):
         text = message(
@@ -33,18 +33,18 @@ class MarketSummaryTest(unittest.TestCase):
             whole_market={"up_ratio_pct": "62.0", "avg_change_pct": "0.45"},
             whole_market_leaders=[{"ticker": "005930", "name": "삼성전자", "change_pct": -1.2}],
         )
-        self.assertIn("국내 전체 시장(코스피·코스닥)", text)
-        self.assertIn("상승 비율: 62.0%", text)
-        self.assertIn("거래대금 주도 종목(전체 시장)", text)
+        self.assertIn("국내 전체 상승 62.0%", text)
+        self.assertIn("거래대금 주도 종목", text)
         self.assertIn("삼성전자(005930): -1.20%", text)
 
     @patch("stock_alarm.market_summary.whole_market_summary", return_value=None)
+    @patch("stock_alarm.market_summary.index_changes", return_value={"KOSPI": 0.7})
     @patch("stock_alarm.market_summary.us_market_rows", return_value=[])
     @patch("stock_alarm.market_summary.krx_top_trading_value_leaders")
     @patch("stock_alarm.market_summary.market_rows")
     @patch("stock_alarm.market_summary.session_change")
     @patch("stock_alarm.market_summary.latest_naver_trading_day", return_value=date(2026, 9, 18))
-    def test_every_percentage_comes_from_the_same_naver_session(self, _day, session_change_mock, market_rows_mock, krx, _us, _whole):
+    def test_every_percentage_comes_from_the_same_naver_session(self, _day, session_change_mock, market_rows_mock, krx, _us, _indices, _whole):
         # 2026-09-18: KRX's rows disagreed with Naver and Toss, so SK hynix
         # showed +4.13% and -0.80% in adjacent lists.
         market_rows_mock.return_value = [{"ticker": "000660", "name": "SK하이닉스", "change_pct": "4.70", "trading_value": "9"}]
@@ -55,29 +55,36 @@ class MarketSummaryTest(unittest.TestCase):
 
         market_rows_mock.assert_called_once_with(date(2026, 9, 18))
         session_change_mock.assert_called_once_with("000660", date(2026, 9, 18))
-        self.assertIn("SK하이닉스(000660): +4.70%", text.split("전체 시장")[1])
+        self.assertIn("SK하이닉스(000660): +4.70%", text)
         self.assertNotIn("-0.80%", text)
-        self.assertIn("■ 국내 관심종목 흐름 (09/18 기준)", text)
-        self.assertIn("국내는 09/18 종가 기준입니다.", text)
+        self.assertIn("국내 09/18 종가", text)
+        self.assertIn("KOSPI +0.70%", text)
 
     def test_identical_leader_lists_are_shown_once(self):
         rows = [{"ticker": "005930", "name": "삼성전자", "change_pct": "1.46", "trading_value": "9"}]
         same = [{"ticker": "005930", "name": "삼성전자", "change_pct": 1.46}]
         text = message(rows, [], whole_market={}, whole_market_leaders=same)
-        self.assertNotIn("거래대금 주도 종목(관심종목)", text)
-        self.assertIn("거래대금 주도 종목(전체 시장)", text)
+        self.assertEqual(1, text.count("삼성전자(005930)"))
 
     @patch("stock_alarm.market_summary.session_change", return_value=None)
-    def test_leader_keeps_krx_figure_when_naver_has_nothing(self, _change):
+    def test_leader_is_omitted_when_requested_session_is_unavailable(self, _change):
         from stock_alarm.market_summary import with_session_changes
 
         leaders = [{"ticker": "A", "change_pct": -1.0}]
-        self.assertEqual(leaders, with_session_changes(leaders, date(2026, 9, 18)))
+        self.assertEqual([], with_session_changes(leaders, date(2026, 9, 18)))
 
     def test_guidance_is_not_repeated_as_a_closing_conclusion(self):
         text = message([{"ticker": "A", "name": "Alpha", "change_pct": "1.0", "trading_value": "1"}], [], whole_market={}, whole_market_leaders=[])
-        self.assertNotIn("한 줄 결론", text)
-        self.assertEqual(1, text.count("초반 추격을 피하고") + text.count("추세 확인 종목은") + text.count("신규 매수를 최소화"))
+        self.assertIn("개장 후 시장 상승 비율", text)
+        self.assertNotIn("매수 한도", text)
+
+    @patch("stock_alarm.market_summary.naver_rows")
+    def test_index_changes_require_the_requested_session(self, rows):
+        rows.return_value = [[20261020, 0, 0, 0, 100, 0], [20261021, 0, 0, 0, 102, 0]]
+        self.assertEqual({}, index_changes(date(2026, 10, 22)))
+        rows.return_value[-1][0] = 20261022
+        self.assertAlmostEqual(2.0, index_changes(date(2026, 10, 22))["KOSPI"])
+        self.assertAlmostEqual(2.0, index_changes(date(2026, 10, 22))["KOSDAQ"])
 
     def test_market_regime_ignores_us_market(self):
         result = market_regime({"avg_change_pct": "2.0", "up_ratio_pct": "80.0"})
@@ -138,7 +145,7 @@ class MarketSummaryTest(unittest.TestCase):
     @patch("stock_alarm.market_summary.send_notification", return_value="telegram")
     def test_run_sends_previous_session_summary_before_open(self, send, _message, _env):
         self.assertEqual("telegram", run())
-        send.assert_called_once_with("summary")
+        send.assert_called_once_with("summary", event_type="market_summary")
 
 
 if __name__ == "__main__":

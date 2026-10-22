@@ -13,6 +13,7 @@ from .app import refresh_kakao_token
 
 
 TELEGRAM_SAFE_LENGTH = 3500
+ALLOWED_EVENT_TYPES = {"market_summary", "recommendation", "sell", "sell_reminder", "open_orders", "daily_summary"}
 
 
 def send_console(message: str) -> None:
@@ -115,6 +116,9 @@ def send_kakao(message: str) -> bool:
 
 def send_notification(message: str, event_type: str = "", tickers: list[str] | None = None) -> str:
     tickers = list(dict.fromkeys(ticker.strip() for ticker in (tickers or []) if ticker.strip()))
+    if event_type not in ALLOWED_EVENT_TYPES:
+        write_delivery_log("suppressed", status="suppressed", event_type=event_type, tickers=tickers)
+        return "suppressed"
     notifier = os.environ.get("NOTIFIER", "telegram").lower()
     if os.environ.get("FORCE_SEND", "0") != "1" and was_sent(notifier, message):
         write_delivery_log("skipped_duplicate", event_type=event_type, tickers=tickers)

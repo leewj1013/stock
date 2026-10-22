@@ -102,7 +102,7 @@ class VirtualTraderReportTest(unittest.TestCase):
         current_prices()
 
         reference_provider = checked_prices.call_args.kwargs["reference_provider"]
-        self.assertEqual(207000, reference_provider("086280"))
+        self.assertEqual((207000, "toss", None), reference_provider("086280"))
         toss.assert_called_with("086280")
 
     @patch("stock_alarm.virtual_trader_report.checked_prices", return_value=({}, []))
@@ -137,6 +137,7 @@ class VirtualTraderReportTest(unittest.TestCase):
         reference_provider("086280")
         toss.assert_not_called()
         pykrx_close.assert_called_once()
+        self.assertEqual((pykrx_close.return_value, "pykrx", "2026-09-01"), reference_provider("086280"))
 
 
 if __name__ == "__main__":
