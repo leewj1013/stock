@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>stockAlarm v2</title>
+<link rel="stylesheet" href="dashboard-v2.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" aria-label="주 메뉴">
+    <a href="#today" class="brand">stockAlarm <small>v2</small></a>
+    <nav class="nav" id="nav"></nav>
+    <div class="aside-note">저장된 데이터 기준<br>읽기 전용 · 주문 기능 없음</div>
+  </aside>
+  <div class="shell">
+    <header class="topbar">
+      <div class="segment" role="group" aria-label="시장 선택"><button type="button" data-market="kr">국내</button><button type="button" data-market="us">미국</button></div>
+      <div class="topmeta"><span>기준 거래일 <b id="basis-day"></b></span><span>화면 자료 조회 <b id="updated-at"></b></span></div>
+    </header>
+    <div class="demo-strip">v2 데이터 연결 중…</div>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+<script src="dashboard-v2-shell.js"></script>
+<script src="dashboard-v2-live.js"></script>
+</body>
+</html>

@@ -32,7 +32,7 @@ SPY_COLOR = "#f59e0b"
 
 def read_csv(path) -> list[dict[str, str]]:
     try:
-        with open(path, encoding="utf-8", newline="") as file:
+        with open(path, encoding="utf-8-sig", newline="") as file:
             return list(csv.DictReader(file))
     except OSError:
         return []
