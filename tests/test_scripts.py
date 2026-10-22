@@ -148,10 +148,17 @@ class ScriptTest(unittest.TestCase):
         self.assertIn('stockAlarmUSAccount"', register)
         self.assertIn('stockAlarmUSAccountRetry"', register)
         self.assertIn('run_us_account.ps1', register)
-        self.assertIn('09:15', register)
-        self.assertIn('10:15', register)
+        self.assertIn('06:45', register)
+        self.assertIn('07:45', register)
         self.assertIn('stock_alarm.us_account_job', runner)
+        self.assertIn('if ($code -ne 2)', runner)
         self.assertNotIn('update_us_strategies()', briefing)
+
+    def test_secure_runtime_checks_frozen_us_accounts_before_activation(self):
+        with open("scripts/deploy_secure_runtime.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+        self.assertIn("stock_alarm.us_account_job --check", script)
+        self.assertLess(script.index("stock_alarm.us_account_job --check"), script.index('"current_runtime.path"'))
 
     def test_status_task_shows_next_run(self):
         with open("scripts/status_daily_task.ps1", encoding="utf-8-sig") as file:

@@ -54,6 +54,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate_secret
 | 작업 | 시점 | 하는 일 |
 |---|---|---|
 | `stockAlarmOpen` | 매일 08:30 | 장전 시황 요약 발송 |
+| `stockAlarmUSAccount` / `stockAlarmUSAccountRetry` | 화~토 06:45 / 07:45 | 미국장 마감 후 가상계좌 갱신·미완료분 재시도 |
 | `stockAlarmIntradayEvery5Minutes` | 평일 08:50~15:40, 5분마다 | 추천 → 가상매수(체결 시 섀도 기록) → 가상계좌 평가 → 대시보드 |
 | `stockAlarmSellEvery5Minutes` | 평일 08:52~15:42, 5분마다 | 매도 조건 점검·가상매도 → 보유 수익률 기록 |
 | `stockAlarmDaily` | 매일 16:00 | 보유 수익률 → 추천·매도 성과 → 학습 → **재무 스크리닝** → 마감 브리핑 → 점검 → 대시보드 → 이슈 알림 |

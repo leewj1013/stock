@@ -68,3 +68,29 @@ def test_frozen_strategy_module_stays_unchanged_for_display_name_metadata():
     # A change here would cause both pre-registered strategy accounts to halt.
     assert "us_name_metadata.py" not in strategy.ENGINE_FILES
     assert "enrich_universe_names" not in Path(strategy.__file__).read_text(encoding="utf-8")
+
+
+def test_reported_account_failure_uses_single_detailed_warning(tmp_path, monkeypatch):
+    account = strategy.Account("300", "300종목", "test", "work", "2026-10-19", None)
+    monkeypatch.setattr(strategy, "DATA", tmp_path)
+    monkeypatch.setattr(job, "ACCOUNTS", (account,))
+    monkeypatch.setattr(job, "load_env", lambda: None)
+    monkeypatch.setattr(job, "current_config", lambda _: {"rule": "same"})
+    account.path("config.json").write_text(json.dumps({"rule": "same"}), encoding="utf-8")
+    ledger = tmp_path / "spy.csv"
+    ledger.write_text("date\n20261022\n", encoding="utf-8")
+    monkeypatch.setattr(us_spy_hold, "LEDGER_PATH", str(ledger))
+    monkeypatch.setattr(us_spy_hold, "update", lambda: 1)
+    monkeypatch.setattr(strategy, "update_all", lambda notify: (notify("300종목: 기록된 주문을 재현하지 못해"), {"300": {"state": "diverged"}})[1])
+    from stock_alarm import us_account_audit, notifier
+    monkeypatch.setattr(us_account_audit, "diagnose", lambda _: {"daily_state_differences": [{"date": "2026-10-21", "fields": {
+        "pending_json": {"saved": '["CSX.O"]', "current": '["HON.O"]'}}}]})
+    from stock_alarm import us_name_metadata, us_research
+    monkeypatch.setattr(us_name_metadata, "enrich_universe_names", lambda: 0)
+    monkeypatch.setattr(us_research, "run", lambda: {})
+    sent = []
+    monkeypatch.setattr(notifier, "send_notification", lambda message, event_type: sent.append((message, event_type)))
+    with pytest.raises(job.AccountUpdateError):
+        job.run(today=date(2026, 10, 23))
+    assert len(sent) == 1 and "CSX.O" in sent[0][0] and "HON.O" in sent[0][0]
+    assert sent[0][1] == "us_account"

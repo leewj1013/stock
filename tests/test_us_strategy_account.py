@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from stock_alarm import us_strategy_account as acc
+from stock_alarm import us_account_audit as audit
 
 ACCOUNT = acc.Account("t", "테스트 계좌", "t", "work", "2026-03-02", None)
 
@@ -242,3 +243,37 @@ def test_engine_version_change_preserves_ledgers(world, monkeypatch):
     monkeypatch.setattr(acc, "current_config", changed)
     assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "config_changed"
     assert ACCOUNT.path("equity.csv").read_bytes() == before
+
+
+def test_input_snapshot_is_immutable_and_identifies_changed_bars(world):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    saved = Path(audit.snapshot(ACCOUNT))
+    original = saved.read_bytes()
+    path = acc.SRC / "AAA.O.csv"
+    rows = path.read_text(encoding="utf-8").splitlines()
+    parts = rows[-1].split(",")
+    parts[4] = str(float(parts[4]) + 1)
+    path.write_text("\n".join([*rows[:-1], ",".join(parts)]) + "\n", encoding="utf-8")
+    assert Path(audit.snapshot(ACCOUNT)).read_bytes() == original
+    changes = audit._changed_bars(ACCOUNT, "2026-06-30")
+    assert changes["snapshot_available"] is True
+    assert any(row["ticker"] == "AAA.O" and row["date"] == "20260630" for row in changes["changes"])
+
+
+def test_diagnosis_reports_changed_finalized_state_without_rewriting_ledger(world, monkeypatch):
+    assert acc.update(ACCOUNT, failed=[], today=world.today)["state"] == "ok"
+    audit.snapshot(ACCOUNT)
+    before = ACCOUNT.path("checkpoint.json").read_bytes()
+    original = acc.replay
+
+    def changed(a, names):
+        engine, sim, result = original(a, names)
+        result.daily_state[-1]["pending_json"] = '["OTHER"]'
+        return engine, sim, result
+
+    monkeypatch.setattr(acc, "replay", changed)
+    report = audit.diagnose(ACCOUNT)
+    assert report["daily_state_differences"][-1]["fields"]["pending_json"]["current"] == '["OTHER"]'
+    assert report["ledger_hashes_match"] is True
+    assert Path(report["current_input_archive"]).exists()
+    assert ACCOUNT.path("checkpoint.json").read_bytes() == before

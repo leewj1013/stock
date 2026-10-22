@@ -27,6 +27,15 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to create the protected virtual environ
 if ($LASTEXITCODE -ne 0) { throw "Failed to install locked runtime dependencies." }
 Set-Content -LiteralPath (Join-Path $runtimeRoot "workspace.path") -Value $projectRoot -Encoding UTF8 -NoNewline
 
+Push-Location $projectRoot
+try {
+    & (Join-Path $runtimeRoot ".venv\Scripts\python.exe") -I (Join-Path $runtimeRoot "stock_alarm\isolated_runner.py") stock_alarm.us_account_job --check
+    if ($LASTEXITCODE -ne 0) { throw "US account frozen settings differ; protected runtime was not activated." }
+}
+finally {
+    Pop-Location
+}
+
 & icacls $runtimeRoot /inheritance:r /grant:r "${account}:(OI)(CI)(F)" "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Failed to protect the scheduled-task runtime." }
 $pointer = Join-Path $secureRoot "current_runtime.path"

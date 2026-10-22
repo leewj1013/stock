@@ -24,7 +24,9 @@ try {
     & $python -I $runner stock_alarm.us_account_job @moduleArgs 1>> $stdout 2>> $stderr
     $code = $LASTEXITCODE
     if ($code -ne 0) {
-        & $python -I $runner stock_alarm.failure_alert us_account "$code" 1>> $stdout 2>> $stderr
+        if ($code -ne 2) {
+            & $python -I $runner stock_alarm.failure_alert us_account "$code" 1>> $stdout 2>> $stderr
+        }
         "[$(Get-Date -Format s)] FAIL $mode exit=$code" | Out-File -FilePath $stdout -Append -Encoding utf8
         exit $code
     }
