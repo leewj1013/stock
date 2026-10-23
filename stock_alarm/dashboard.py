@@ -1301,6 +1301,8 @@ def experiment_progress_rows() -> list[dict[str, str]]:
     from .domestic_horizon_research import PATH as horizon_path
     horizon = query_rows("SELECT kind,state,count(*) AS n FROM observations GROUP BY kind,state", path=horizon_path)
     totals = {(item["kind"], item["state"]): item["n"] for item in horizon}
+    day_signals = query_rows("SELECT state,count(*) AS n FROM day_signals GROUP BY state", path=horizon_path)
+    signal_totals = {item["state"]: item["n"] for item in day_signals}
     rows.extend(({
         "experiment": "국내 스윙 vs 동일 종목 15일 보유",
         "criterion": "같은 진입·비용에서 순수익률, 손실폭과 시장 국면별 결과 비교",
@@ -1309,8 +1311,9 @@ def experiment_progress_rows() -> list[dict[str, str]]:
     }, {
         "experiment": "국내 단타 30분 돌파",
         "criterion": "분봉·체결 자료 확보 후 당일 청산의 비용 차감 성과 검증",
-        "progress": f"후보 기록 {totals.get(('day', 'DATA_REQUIRED'), 0)}건 · 분봉 자료 대기",
-        "risk_state": "평가 대기",
+        "progress": (f"후보 {totals.get(('day', 'DATA_REQUIRED'), 0)}건 · 돌파 {signal_totals.get('SIGNAL_RECORDED', 0)}건"
+                     f" · 품질 부족 {signal_totals.get('QUALITY_BLOCKED', 0)}건"),
+        "risk_state": "체결 검증 대기",
     }))
     return rows
 

@@ -55,6 +55,8 @@ def test_run_persists_only_candidates_and_is_idempotent(tmp_path):
     with closing(research.connect(path)) as db:
         assert db.execute("SELECT count(*) FROM minute_bars").fetchone()[0] == 2
         assert db.execute("SELECT error FROM observations").fetchone()[0] is None
+        assert db.execute("SELECT opening_missing FROM minute_quality").fetchone()[0] == 28
+        assert db.execute("SELECT state FROM day_signals").fetchone()[0] == "WAITING_OPENING"
 
 
 def test_revised_bar_is_not_silently_overwritten(tmp_path):
@@ -74,3 +76,13 @@ def test_revised_bar_is_not_silently_overwritten(tmp_path):
     with closing(research.connect(path)) as db:
         assert db.execute("SELECT close FROM minute_bars").fetchone()[0] == 100
         assert "Revised" in db.execute("SELECT error FROM observations").fetchone()[0]
+
+
+def test_identical_source_duplicate_is_counted_without_creating_two_bars():
+    client = Mock()
+    client.candles.return_value = {"candles": [candle("09:00"), candle("09:00")], "nextBefore": None}
+    diagnostics = {}
+    rows = collector.fetch_day(client, "005930", date(2026, 10, 23),
+                               datetime.fromisoformat("2026-10-23T10:00:00+09:00"), diagnostics)
+    assert len(rows) == 1
+    assert diagnostics["duplicate_source"] == 1

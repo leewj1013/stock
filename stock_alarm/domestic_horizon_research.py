@@ -39,6 +39,16 @@ def connect(path=PATH):
             high REAL NOT NULL,low REAL NOT NULL,close REAL NOT NULL,
             volume INTEGER NOT NULL,source TEXT NOT NULL,collected_at TEXT NOT NULL,
             PRIMARY KEY(ticker,bar_at));
+        CREATE TABLE IF NOT EXISTS minute_quality(
+            ticker TEXT NOT NULL,signal_day TEXT NOT NULL,checked_at TEXT NOT NULL,
+            expected INTEGER NOT NULL,received INTEGER NOT NULL,missing INTEGER NOT NULL,
+            opening_missing INTEGER NOT NULL,duplicate_source INTEGER NOT NULL,
+            status TEXT NOT NULL,details TEXT NOT NULL,
+            PRIMARY KEY(ticker,signal_day));
+        CREATE TABLE IF NOT EXISTS day_signals(
+            ticker TEXT NOT NULL,signal_day TEXT NOT NULL,rule_version TEXT NOT NULL,
+            state TEXT NOT NULL,checked_at TEXT NOT NULL,signal_json TEXT,
+            PRIMARY KEY(ticker,signal_day,rule_version));
     """)
     for key, value in (("activated_at", datetime.now().isoformat(timespec="seconds")),
                        ("version", VERSION), ("rules", json.dumps(RULES, sort_keys=True))):
@@ -173,15 +183,26 @@ def dashboard_section(path=PATH):
           AND substr(m.bar_at,12,5)<'15:30'
         WHERE o.kind='day' GROUP BY o.ticker,o.signal_day""", path=path)
     minute_counts = {(r["ticker"], r["signal_day"]): r["bars"] for r in minutes}
+    quality_rows = query_rows("SELECT ticker,signal_day,expected,received,missing,opening_missing,status FROM minute_quality", path=path)
+    quality = {(r["ticker"], r["signal_day"]): r for r in quality_rows}
+    signal_rows = query_rows("SELECT ticker,signal_day,state FROM day_signals", path=path)
+    signals = {(r["ticker"], r["signal_day"]): r["state"] for r in signal_rows}
     body = []
     for row in rows:
         outcome = json.loads(row["outcome"] or "null")
+        key = row["ticker"], row["signal_day"]
+        check = quality.get(key)
+        signal_label = {"SIGNAL_RECORDED": "돌파 신호 기록", "NO_SIGNAL": "돌파 없음",
+                        "QUALITY_BLOCKED": "품질 부족", "WAITING_OPENING": "개장 분봉 대기",
+                        "OBSERVING": "관찰 중"}.get(signals.get(key), "관찰 대기")
+        day_status = (f"{signal_label} · 분봉 {minute_counts.get(key, 0)}개"
+                      + (f" · 누락 {check['missing']}개" if check and check["missing"] else "")
+                      + (" · 수집 오류" if row["error"] else ""))
         cells = ["스윙" if row["kind"] == "swing" else "단타", row["signal_day"],
                  json.loads(row["payload"])["evidence"].get("name") or row["ticker"],
                  f"{outcome['swing_net_pct']:+.2f}%" if outcome else "—",
                  f"{outcome['hold_net_pct']:+.2f}%" if outcome else "—",
-                 (f"분봉 {minute_counts.get((row['ticker'], row['signal_day']), 0)}개 수집 · "
-                  + ("수집 오류" if row["error"] else "체결 검증 대기"))
+                 day_status
                  if row["kind"] == "day" else "수집 오류" if row["error"] else "비교 완료" if outcome else "관찰 중"]
         body.append("<tr>" + "".join(f"<td>{escape(str(cell))}</td>" for cell in cells) + "</tr>")
     table = ("<table><thead><tr><th>방식</th><th>추천일</th><th>종목</th><th>실험 순수익률</th>"
@@ -192,5 +213,5 @@ def dashboard_section(path=PATH):
             f"단타 {summary.get(('day', 'DATA_REQUIRED'), 0)}건 관찰 · 정규장 분봉 수집 중</p>"
             "<p class='muted'>스윙은 추천 다음 거래일 시가 진입 후 추세·손절 이탈 시 다음 시가 청산, "
             "최대 15거래일 관찰입니다. 양쪽에 왕복 비용을 반영한 단일 종목 비교이며 계좌 수익률이 아닙니다. "
-            "단타는 30분 돌파 가설과 분봉을 기록하며 체결 가능 가격·누락 구간 검증 전에는 수익률을 계산하지 않습니다.</p>"
+            "단타는 후보 관찰 이후 10:59까지의 첫 30분 가격대 돌파와 거래량을 검사합니다. 신호가 기록되어도 체결 가능 가격·누락 구간 검증 전에는 수익률을 계산하지 않습니다.</p>"
             + table + "</section>")

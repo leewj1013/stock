@@ -32,9 +32,10 @@ def normalize(candle, ticker, day, now):
             volume, "toss_unadjusted", now.isoformat(timespec="seconds"))
 
 
-def fetch_day(client, ticker, day, now):
+def fetch_day(client, ticker, day, now, diagnostics=None):
     """Page backward until the first regular-hours minute is crossed."""
     rows, before, seen = {}, None, set()
+    duplicate_source = 0
     for _ in range(MAX_PAGES):
         result = client.candles(ticker, interval="1m", count=200, before=before, adjusted=False)
         page = result.get("candles") or []
@@ -51,6 +52,8 @@ def fetch_day(client, ticker, day, now):
                 old = rows.get(row[1])
                 if old and old[2:7] != row[2:7]:
                     raise ValueError(f"Conflicting minute candle for {ticker} at {row[1]}")
+                if old:
+                    duplicate_source += 1
                 rows[row[1]] = row
         if min(stamps).date() < day or min(stamps) <= datetime.combine(day, datetime.min.time(), KST).replace(hour=9):
             break
@@ -59,6 +62,8 @@ def fetch_day(client, ticker, day, now):
             break
         seen.add(next_before)
         before = next_before
+    if diagnostics is not None:
+        diagnostics["duplicate_source"] = duplicate_source
     return list(rows.values())
 
 
@@ -84,7 +89,9 @@ def run(path=PATH, source=None, client=None, now=None):
         for item in candidates:
             ticker, day = item["ticker"], date.fromisoformat(item["signal_day"])
             try:
-                bars = fetch_day(client, ticker, day, now)
+                from .day_trade_research import record
+                diagnostics = {}
+                bars = fetch_day(client, ticker, day, now, diagnostics)
                 candidate_added = 0
                 # Never overwrite the first version of a bar without an explicit revision audit.
                 for bar in bars:
@@ -95,6 +102,9 @@ def run(path=PATH, source=None, client=None, now=None):
                     candidate_added += db.execute("""INSERT OR IGNORE INTO minute_bars
                         (ticker,bar_at,open,high,low,close,volume,source,collected_at)
                         VALUES (?,?,?,?,?,?,?,?,?)""", bar).rowcount
+                observed_at = db.execute("""SELECT observed_at FROM observations
+                    WHERE kind='day' AND ticker=? AND signal_day=?""", (ticker, item["signal_day"])).fetchone()[0]
+                record(db, ticker, day, observed_at, now, diagnostics.get("duplicate_source", 0))
                 db.execute("""UPDATE observations SET updated_at=?,error=NULL
                     WHERE kind='day' AND ticker=? AND signal_day=?""",
                     (now.isoformat(timespec="seconds"), ticker, item["signal_day"]))
