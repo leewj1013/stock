@@ -94,6 +94,10 @@ def main() -> None:
     risk_result = run_risk_research()
     backup_database(risk_path)
     print({"risk_research": risk_result})
+    from .domestic_horizon_research import PATH as horizon_path, run as run_horizon_research
+    horizon_result = run_horizon_research()
+    backup_database(horizon_path)
+    print({"domestic_horizon_research": horizon_result})
     from .market_group_snapshot import PATH as market_group_path, collect as collect_market_groups
     group_result = collect_market_groups()
     backup_database(market_group_path)
@@ -105,7 +109,7 @@ def main() -> None:
     us_result = run_us_research()
     backup_database(us_path)
     print({"us_research": us_result})
-    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"] or us_result["failures"]:
+    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"] or horizon_result["failures"] or us_result["failures"]:
         raise RuntimeError("Research has collection failures; inspect research databases error columns")
 
 

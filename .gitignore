@@ -21,6 +21,7 @@ data/earnings_research*.db-wal
 data/theme_research*.db
 data/theme_research*.db-shm
 data/theme_research*.db-wal
+data/domestic_horizon_research*.db*
 data/market_group_snapshot*.db
 data/market_group_snapshot*.db-shm
 data/market_group_snapshot*.db-wal

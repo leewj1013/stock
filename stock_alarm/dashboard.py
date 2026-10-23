@@ -1298,6 +1298,20 @@ def experiment_progress_rows() -> list[dict[str, str]]:
         "progress": f"예정일 {PROFILE_REVALIDATION_DUE}",
         "risk_state": "검증 가능" if today.isoformat() >= PROFILE_REVALIDATION_DUE else days_left(PROFILE_REVALIDATION_DUE),
     })
+    from .domestic_horizon_research import PATH as horizon_path
+    horizon = query_rows("SELECT kind,state,count(*) AS n FROM observations GROUP BY kind,state", path=horizon_path)
+    totals = {(item["kind"], item["state"]): item["n"] for item in horizon}
+    rows.extend(({
+        "experiment": "국내 스윙 vs 동일 종목 15일 보유",
+        "criterion": "같은 진입·비용에서 순수익률, 손실폭과 시장 국면별 결과 비교",
+        "progress": f"비교 완료 {totals.get(('swing', 'COMPLETE'), 0)}건 · 관찰 중 {totals.get(('swing', 'PENDING'), 0)}건",
+        "risk_state": "표본 축적 중",
+    }, {
+        "experiment": "국내 단타 30분 돌파",
+        "criterion": "분봉·체결 자료 확보 후 당일 청산의 비용 차감 성과 검증",
+        "progress": f"후보 기록 {totals.get(('day', 'DATA_REQUIRED'), 0)}건 · 분봉 자료 대기",
+        "risk_state": "평가 대기",
+    }))
     return rows
 
 
@@ -1432,6 +1446,7 @@ def research_tab() -> str:
     from .portfolio_research import dashboard_section as portfolio_research_section
     from .earnings_research import dashboard_section as earnings_research_section
     from .theme_research import dashboard_section as theme_research_section
+    from .domestic_horizon_research import dashboard_section as horizon_research_section
     from .market_group_context import dashboard_section as market_group_context_section
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
@@ -1448,6 +1463,7 @@ def research_tab() -> str:
         + portfolio_research_section()
         + earnings_research_section()
         + theme_research_section()
+        + horizon_research_section()
         + research_results_section()
         + report_section("학습 기록", ("reports/learning_log.md", text) if (text := read_text(LEARNING_LOG)) else None,
                          "reports/learning_log.md에 검증·사실·관찰을 기록합니다.")
