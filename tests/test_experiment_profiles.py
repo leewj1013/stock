@@ -28,6 +28,17 @@ class ExperimentProfilesTest(unittest.TestCase):
             values = [profile[key] for profile in PROFILES.values()]
             self.assertEqual(len(values), len(set(values)))
 
+    def test_stock_cash_experiments_are_isolated_and_keep_market_risk_limits(self):
+        from stock_alarm.app import effective_exposure_limit_pct
+
+        for name, base, cap in (("exp_cash_neutral", "neutral", 60.0), ("exp_stock_aggressive", "aggressive", 100.0)):
+            profile = PROFILES[name]
+            self.assertTrue(profile["comparison_only"])
+            self.assertFalse(profile["notify"])
+            self.assertEqual(PROFILES[base]["scoring_weights"], profile["scoring_weights"])
+            self.assertEqual(cap, effective_exposure_limit_pct(0.7, profile["exposure_limit_pct"]))
+            self.assertEqual(40.0, effective_exposure_limit_pct(0.5, profile["exposure_limit_pct"]))
+
 
 if __name__ == "__main__":
     unittest.main()

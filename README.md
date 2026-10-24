@@ -107,9 +107,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate_secret
 | 위험중립형 (`stock_alarm_neutral.db`) | 낮은 섹터·노출 한도, 타이트한 손절·익절 | 대시보드만 |
 | 비교(현재 규칙) (`stock_alarm_exp_control.db`) | 적극투자형과 같은 규칙의 대조군, 1억 | 대시보드만 |
 | 비교(후보 규칙) (`stock_alarm_exp_candidate.db`) | 상승장 익절 해제 + 낙폭중단 20일 후 30% 재진입, 1억 | 대시보드만 |
+| 현금완충 주식형 (`stock_alarm_exp_cash_neutral.db`) | 주식 40~60% 관찰, 최대 60%; 안정성·배당 선호, 1억 가상 원금 | 대시보드만 |
+| 주식중심 성장형 (`stock_alarm_exp_stock_aggressive.db`) | 주식 80~100% 관찰, 최대 100%; 성장·모멘텀 선호, 1억 가상 원금 | 대시보드만 |
 | 지수30%+전략70% (`stock_alarm_exp_core30.db`) | KODEX 200 30% + 비교(현재 규칙) 70%, 분기 리밸런싱 기록 | 대시보드만 |
 
 비교 계좌들은 학습·가중치 검증에서 제외됩니다. 판단 시점과 기준은 `STRATEGY_NOTES.md`에 있습니다.
+새 주식·현금 실험의 목표 비중은 관찰 범위이며 자동 충전·리밸런싱 목표가 아닙니다. 시장 폭과 추천·위험 제한으로 실제 주식 비중이 더 낮을 수 있습니다. 현금은 무이자로 평가하고 채권은 포함하지 않습니다. 기존 두 계좌의 규칙과 잔고는 변경하지 않습니다.
 
 ### 섀도 모드
 

@@ -70,6 +70,26 @@ PROFILES["exp_candidate"] = {
     "risk_release": {"mode": "cooldown", "cooldown_days": 20, "reentry_scale": 0.3},
 }
 
+# Stock/cash style comparison. The percentage is a ceiling; market breadth,
+# eligible recommendations and risk halts can leave more cash than the target.
+PROFILES["exp_cash_neutral"] = {
+    **PROFILES["neutral"],
+    "db_path": "data/stock_alarm_exp_cash_neutral.db",
+    "sell_alerts_log": "logs/sell_alerts_exp_cash_neutral.csv",
+    "notify": False,
+    "comparison_only": True,
+    "exposure_limit_pct": 60.0,
+}
+PROFILES["exp_stock_aggressive"] = {
+    **PROFILES["aggressive"],
+    "db_path": "data/stock_alarm_exp_stock_aggressive.db",
+    "sell_alerts_log": "logs/sell_alerts_exp_stock_aggressive.csv",
+    "notify": False,
+    "comparison_only": True,
+    "exposure_limit_pct": 100.0,
+    "regime_exposure_multiplier": {},
+}
+
 CATEGORY_VALUE_KEYS = {
     "profitability": "profitability_score",
     "growth": "growth_score",

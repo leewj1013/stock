@@ -1207,6 +1207,8 @@ def experiment_account_rows() -> list[dict[str, str]]:
     for name, label, rule in (
         ("exp_control", "비교(현재 규칙)", "적극투자형과 같은 규칙"),
         ("exp_candidate", "비교(후보 규칙)", "상승장 익절 해제 · 낙폭중단 20일 후 30% 재진입"),
+        ("exp_cash_neutral", "현금완충 주식형", "주식 목표 40~60% · 최대 60% · 안정성/배당 선호"),
+        ("exp_stock_aggressive", "주식중심 성장형", "주식 목표 80~100% · 최대 100% · 성장/모멘텀 선호"),
     ):
         path = PROFILES[name]["db_path"]
         deposit = query_rows("SELECT COALESCE(SUM(amount), 0) AS total, MIN(created_at) AS since FROM virtual_deposits", path=path)
