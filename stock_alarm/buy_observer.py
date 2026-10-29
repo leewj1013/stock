@@ -116,11 +116,7 @@ def observe_auto_buy(original, picks, *args, **kwargs):
         return value
     def candidate_capture(fn, candidates, *a, **kw):
         payload["candidates"] = [dict(c) for c in candidates]
-        try:
-            from .research_data_collect import collect_quotes
-            payload["quote_observation"] = collect_quotes([c["ticker"] for c in candidates[:10]])
-        except Exception as error:
-            payload["quote_observation"] = {"error_type": type(error).__name__}
+        payload["quote_decision_at"] = datetime.now().astimezone().isoformat(timespec="microseconds")
         try:
             return fn(candidates, *a, **kw)
         except Exception as error:
@@ -152,6 +148,13 @@ def observe_auto_buy(original, picks, *args, **kwargs):
     finally:
         try:
             payload["executions"] = (result or {}).get("executions", [])
+            if payload.get("candidates"):
+                try:
+                    from .research_data_collect import saved_quotes
+                    payload["quote_observation"] = saved_quotes([c["ticker"] for c in payload["candidates"][:10]],
+                        datetime.fromisoformat(payload["quote_decision_at"]))
+                except Exception as error:
+                    payload["quote_observation"] = {"state":"DATA_REQUIRED","error_type":type(error).__name__}
             payload["stop_rules"] = {"floor": abs(app.env_float("SELL_LOSS_PCT", 5)),
                                      "atr_multiplier": app.env_float("SELL_ATR_MULTIPLIER", 2)}
             payload["regime_basis"] = "engine_live_label_may_fallback_sideways" if "regime_used" in payload else "unavailable"

@@ -103,6 +103,30 @@ def collect_quotes(tickers,path=PATH,client=None,now=None):
     return {"added":added,"failures":failures}
 
 
+def saved_quotes(tickers,as_of,path=PATH):
+    """Read only evidence known before the decision; never fetch or wait for a writer."""
+    from .research_data_validation import check_quote
+    if as_of.tzinfo is None:raise ValueError('Decision time requires timezone')
+    tickers=list(dict.fromkeys(tickers));quotes=[];missing=[]
+    if not Path(path).exists():
+        return {'state':'DATA_REQUIRED','as_of':as_of.isoformat(),'quotes':[],'missing':tickers}
+    since=as_of-timedelta(seconds=60)
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True,timeout=0)) as db:
+        db.row_factory=sqlite3.Row
+        for ticker in tickers:
+            row=db.execute('''SELECT * FROM quotes WHERE ticker=?
+                AND julianday(observed_at) BETWEEN julianday(?) AND julianday(?)
+                ORDER BY julianday(observed_at) DESC LIMIT 1''',(ticker,since.isoformat(),as_of.isoformat())).fetchone()
+            row=dict(row) if row else None
+            if (row and check_quote(row)=='VALID_INTEGRATED_SNAPSHOT'
+                    and since<=datetime.fromisoformat(row['observed_at'])<=as_of
+                    and since<=datetime.fromisoformat(row['quote_at'])<=as_of):
+                quotes.append(row)
+            else:missing.append(ticker)
+    return {'state':'DATA_REQUIRED' if missing else 'SAVED_QUOTES_LINKED',
+            'as_of':as_of.isoformat(),'quotes':quotes,'missing':missing}
+
+
 class DocumentText(HTMLParser):
     def __init__(self):
         super().__init__();self.parts=[]

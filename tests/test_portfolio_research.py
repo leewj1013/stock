@@ -89,6 +89,22 @@ def test_original_exception_is_not_swallowed(tmp_path):
             observer.observe_auto_buy(lambda picks: (_ for _ in ()).throw(RuntimeError('original failure')), [])
 
 
+def test_quote_audit_runs_after_buy_without_network_and_cannot_cancel_it(tmp_path):
+    events=[];connect=observer.connect;path=str(tmp_path/'audit.db')
+    expected={'executions':[]}
+    def buy(*args,**kwargs):events.append('buy');return expected
+    def saved(*args,**kwargs):events.append('saved_quotes');raise OSError('locked research database')
+    with patch.object(data_store,'virtual_buy',side_effect=buy),patch.object(data_store,'query_rows',return_value=[]), \
+         patch.object(observer,'connect',side_effect=lambda:connect(path)), \
+         patch('stock_alarm.research_data_collect.collect_quotes',side_effect=AssertionError('network on buy path')), \
+         patch('stock_alarm.research_data_collect.saved_quotes',side_effect=saved):
+        assert observer.observe_auto_buy(lambda picks:data_store.virtual_buy([candidate()]),[]) is expected
+    assert events==['buy','saved_quotes']
+    with closing(connect(path)) as db:
+        payload=json.loads(db.execute('SELECT payload FROM buy_attempts').fetchone()[0])
+    assert payload['quote_observation']=={'state':'DATA_REQUIRED','error_type':'OSError'}
+
+
 def test_no_data_is_not_mislabeled_as_budget_limit():
     p = {'picks': [{'ticker': 'X'}], 'auto_enabled': True, 'state': {'cash': 100}}
     assert research.decisions(p)[0]['reason'] == 'unconfirmed'

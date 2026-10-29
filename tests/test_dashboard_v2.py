@@ -92,6 +92,23 @@ class DashboardV2DataTest(unittest.TestCase):
         self.assertEqual("2026-10-27 15:22", account["priceAsOf"])
         self.assertEqual(["₩550", "2026-10-27 15:22", "₩+100", "+10.00%"], account["rows"][0][5:9])
 
+    def test_reentered_holding_rejects_same_day_prices_before_entry(self):
+        holding={"name":"A","ticker":"A","quantity":1,"cost":100,"average_price":100,
+                 "first_entry_at":"2026-10-29T14:00:00","position_status":"open"}
+        for source in ('quality','check'):
+            for stamp,valid in [('2026-10-29T09:00:00',False),('2026-10-29T14:01:00',True)]:
+                with self.subTest(source=source,stamp=stamp), \
+                     patch('stock_alarm.dashboard_v2.Path.exists',return_value=True), \
+                     patch('stock_alarm.dashboard_v2.virtual_trader_state',return_value={'holdings':[holding],'deposited':100,'realized_profit_loss':0}), \
+                     patch('stock_alarm.dashboard_v2.query_rows',return_value=[]), \
+                     patch('stock_alarm.dashboard_v2.recent_position_checks',return_value=[{'ticker':'A','checked_at':stamp,'close':110,'decision':'SELL'}] if source=='check' else []), \
+                     patch('stock_alarm.dashboard_v2.recent_price_quality',return_value=[{'ticker':'A','created_at':stamp,'status':'valid','close':110}] if source=='quality' else []):
+                    account=_kr_account('aggressive','test',include_sales=False)
+                row=account['rows'][0]
+                self.assertEqual('₩110' if valid else '기록 없음',row[5])
+                self.assertEqual('+10.00%' if valid else '기록 없음',row[8])
+                if not valid:self.assertNotEqual('매도조건 충족',row[9])
+
     def test_comparison_chart_uses_common_dates_and_rebases_to_zero(self):
         chart = _comparison_chart([
             ("A", {"2026-10-19": 10, "2026-10-20": 21, "2026-10-21": 32}),

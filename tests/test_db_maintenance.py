@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +70,30 @@ class DbMaintenanceTest(unittest.TestCase):
         result = prune_old_snapshots(self.path, retention_days=1)
         self.assertEqual(1, result["candidates"])
         self.assertEqual(1, result["runs"])
+
+    def test_main_reports_each_research_failure_by_name(self):
+        from stock_alarm import db_maintenance
+        jobs={'sell':'stock_alarm.sell_research.run','entry':'stock_alarm.entry_research.run',
+              'portfolio':'stock_alarm.portfolio_research.run','earnings':'stock_alarm.earnings_research.run',
+              'theme':'stock_alarm.theme_research.run','risk':'stock_alarm.risk_research.run',
+              'profit':'stock_alarm.profit_research.run','dips':'stock_alarm.profit_research.run_dips',
+              'extensions':'stock_alarm.research_extensions.run','evidence':'stock_alarm.research_data_collect.run_daily',
+              'statement_history':'stock_alarm.research_data_collect.backfill_statements','krx':'stock_alarm.krx_research_collect.run',
+              'horizon':'stock_alarm.domestic_horizon_research.run','market_groups':'stock_alarm.market_group_snapshot.collect',
+              'us':'stock_alarm.us_research.run'}
+        for failed in (None,'profit','dips','extensions','risk'):
+            with self.subTest(failed=failed),ExitStack() as stack:
+                for name,target in jobs.items():
+                    stack.enter_context(patch(target,return_value={'failures':int(name==failed)}))
+                stack.enter_context(patch('stock_alarm.app.load_env'))
+                stack.enter_context(patch.object(db_maintenance,'run_all_profiles',return_value={}))
+                stack.enter_context(patch.object(db_maintenance,'backup_database'))
+                stack.enter_context(patch('stock_alarm.research_input_gate.run',return_value={}))
+                stack.enter_context(patch('stock_alarm.research_followup.run',return_value={'quote_exit_counts':{}}))
+                stack.enter_context(patch('builtins.print'))
+                if failed:
+                    with self.assertRaisesRegex(RuntimeError,failed):db_maintenance.main()
+                else:db_maintenance.main()
 
 
 if __name__ == "__main__":

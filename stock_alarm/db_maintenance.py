@@ -138,8 +138,13 @@ def main() -> None:
     us_result = run_us_research()
     backup_database(us_path)
     print({"us_research": us_result})
-    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"] or horizon_result["failures"] or us_result["failures"] or evidence["failures"] or history["failures"] or krx_data["failures"]:
-        raise RuntimeError("Research has collection failures; inspect research databases error columns")
+    research_results = {"sell":result,"entry":entry_result,"portfolio":portfolio_result,"earnings":earnings_result,
+                        "theme":theme_result,"risk":risk_result,"profit":profit_result,"dips":dip_result,
+                        "extensions":extensions_result,"evidence":evidence,"statement_history":history,
+                        "krx":krx_data,"horizon":horizon_result,"market_groups":group_result,"us":us_result}
+    failed = [name for name,value in research_results.items() if value.get("failures",0)]
+    if failed:
+        raise RuntimeError("Research collection failed: " + ", ".join(failed))
 
 
 if __name__ == "__main__":

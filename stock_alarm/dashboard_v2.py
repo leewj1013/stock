@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from statistics import mean, stdev
@@ -66,6 +66,15 @@ def real_account_payload() -> dict:
             "hold": f"{len(rows)}종목", "rows": rows}
 
 
+def _price_after_entry(observed_at, entry_at):
+    try:
+        observed=datetime.fromisoformat(observed_at);entry=datetime.fromisoformat(entry_at)
+        kst=timezone(timedelta(hours=9))
+        return observed.replace(tzinfo=observed.tzinfo or kst)>=entry.replace(tzinfo=entry.tzinfo or kst)
+    except (ValueError,TypeError):
+        return False
+
+
 def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
     path = PROFILES[key]["db_path"]
     if not Path(path).exists():
@@ -86,21 +95,21 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
     price_issues = []
     for h in state["holdings"]:
         check = checks.get(h["ticker"], {})
-        entry_at = str(h.get("first_entry_at") or "")[:10]
+        entry_at = str(h.get("first_entry_at") or "")
         checked_at = str(check.get("checked_at") or "")
-        if checked_at[:10] < entry_at:
+        if not _price_after_entry(checked_at, entry_at):
             check = {}
             checked_at = ""
         price = float(check.get("close") or 0)
         saved_price = quality.get(h["ticker"], {})
-        if price <= 0 and saved_price.get("status") == "valid" and str(saved_price.get("created_at") or "")[:10] >= entry_at:
+        if price <= 0 and saved_price.get("status") == "valid" and _price_after_entry(saved_price.get("created_at"), entry_at):
             price = float(saved_price.get("close") or 0)
             checked_at = str(saved_price.get("created_at") or "") if price > 0 else ""
         cost = float(h["cost"])
         valuation = price * int(h["quantity"]) if price > 0 else None
         profit = valuation - cost if valuation is not None else None
         try:
-            holding_days = f"{(date.today() - date.fromisoformat(entry_at)).days}일"
+            holding_days = f"{(date.today() - date.fromisoformat(entry_at[:10])).days}일"
         except ValueError:
             holding_days = "기록 없음"
         if checked_at and price > 0:

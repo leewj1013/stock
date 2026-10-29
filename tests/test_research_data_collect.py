@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime,timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -54,6 +54,28 @@ def test_regular_quote_job_records_two_rounds_and_preserves_failures(monkeypatch
     assert collector.run_quotes('source','data')=={'added':3,'failures':1,'observation_rounds':2}
     assert collect.call_count==2
     assert all(call.args==(['A','B'],) and call.kwargs=={'path':'data'} for call in collect.call_args_list)
+
+
+def test_saved_quotes_link_only_evidence_known_and_fresh_at_decision(tmp_path):
+    path=str(tmp_path/'quotes.db')
+    with collector.connect(path) as db:
+        for ticker,observed,quoted in [('A',NOW-timedelta(seconds=10),NOW-timedelta(seconds=15)),
+            ('A',NOW+timedelta(seconds=1),NOW),('B',NOW-timedelta(seconds=61),NOW-timedelta(seconds=61)),
+            ('C',NOW-timedelta(seconds=20),NOW-timedelta(seconds=70))]:
+            row=collector.quote_row(ticker,{**QUOTE,'currency':'KRW','timestamp':quoted.isoformat()},observed)
+            db.execute('INSERT INTO quotes VALUES(?,?,?,?,?,?,?,?,?,?,?)',row)
+        db.commit()
+    result=collector.saved_quotes(['A','B','C','D'],NOW,path)
+    assert [r['ticker'] for r in result['quotes']]==['A']
+    assert result['quotes'][0]['observed_at']==(NOW-timedelta(seconds=10)).isoformat(timespec='microseconds')
+    assert result['missing']==['B','C','D'] and result['state']=='DATA_REQUIRED'
+    with collector.connect(path) as db:assert db.execute('SELECT count(*) FROM quotes').fetchone()[0]==4
+
+
+def test_saved_quotes_missing_database_does_not_create_one(tmp_path):
+    path=tmp_path/'absent.db'
+    assert collector.saved_quotes(['A'],NOW,path)['state']=='DATA_REQUIRED'
+    assert not path.exists()
 
 
 def test_expected_date_comes_from_explicit_label_not_financial_period():
