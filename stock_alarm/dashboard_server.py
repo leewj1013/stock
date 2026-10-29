@@ -330,7 +330,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        host = self.headers.get("Host", "")
+        port = self.server.server_address[1]
+        if host not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+            self.send_error(403)
+            return
+        origin = self.headers.get("Origin", "")
         parsed = urlparse(self.path)
+        # Preserve the explicitly supported file:// dashboard's read-only
+        # account panel; the setup page containing the token stays local-only.
+        file_account_read = origin == "null" and parsed.path == "/api/trader"
+        if origin and origin != f"http://{host}" and not file_account_read:
+            self.send_error(403)
+            return
+        if self.headers.get("Sec-Fetch-Site", "") not in {"", "same-origin", "none"} and not file_account_read:
+            self.send_error(403)
+            return
         path = parsed.path
         if path == "/api/trader":
             profile = parse_qs(parsed.query).get("profile", ["aggressive"])[0]

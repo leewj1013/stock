@@ -372,17 +372,26 @@ def virtual_trader_state(prices: dict[str, int] | None = None, path: str = DB_PA
     with closing(connect(path)) as connection:
         account = connection.execute("SELECT cash FROM virtual_accounts WHERE account_id = 1").fetchone()
         rows = connection.execute(
-            # first_entry_at is the first buy of the *current* holding: a ticker
-            # sold in full and bought again must not inherit the old entry date,
-            # or the sell check treats the old sell alert as covering the new position.
-            """WITH buys AS (
+            # Quantities and ledger IDs identify the current holding cycle even
+            # when a full sale and a new buy have the same stored timestamp.
+            """WITH ordered_buys AS (
+                 SELECT *, SUM(quantity) OVER (
+                     PARTITION BY ticker ORDER BY trade_id ROWS UNBOUNDED PRECEDING
+                 ) AS cumulative_quantity FROM virtual_trades
+               ), closed_cycles AS (
+                 SELECT ticker, SUM(quantity) AS quantity FROM virtual_sales s
+                 WHERE sale_id <= (
+                     SELECT MAX(sale_id) FROM virtual_sales f
+                     WHERE f.ticker=s.ticker AND f.sale_type='full'
+                 ) GROUP BY ticker
+               ), buys AS (
                  SELECT ticker, MAX(name) AS name,
-                        MIN(CASE WHEN created_at > COALESCE((
-                          SELECT MAX(created_at) FROM virtual_sales
-                          WHERE virtual_sales.ticker = virtual_trades.ticker AND sale_type = 'full'
-                        ), '') THEN created_at END) AS first_entry_at,
+                        MIN(CASE WHEN cumulative_quantity > COALESCE((
+                          SELECT quantity FROM closed_cycles
+                          WHERE closed_cycles.ticker = ordered_buys.ticker
+                        ), 0) THEN created_at END) AS first_entry_at,
                         SUM(quantity) AS bought_quantity, SUM(cost) AS bought_cost
-                 FROM virtual_trades GROUP BY ticker
+                 FROM ordered_buys GROUP BY ticker
                ), sales AS (
                  SELECT ticker, SUM(quantity) AS sold_quantity, SUM(cost_basis) AS sold_cost
                  FROM virtual_sales GROUP BY ticker
@@ -594,6 +603,12 @@ def import_legacy_virtual_trader(state: dict[str, Any], path: str = DB_PATH) -> 
             connection.execute(
                 "INSERT OR REPLACE INTO virtual_position_states(ticker,status,remaining_quantity,updated_at) VALUES(?, 'open', ?, ?)",
                 (trade[1], trade[4], now),
+            )
+        opening_capital = cash + sum(trade[5] for trade in trades)
+        if opening_capital:
+            connection.execute(
+                "INSERT INTO virtual_deposits(amount,created_at) VALUES(?,?)",
+                (opening_capital, now),
             )
         connection.commit()
     return bool(cash or trades)

@@ -260,6 +260,33 @@ class DashboardHandlerLocalTest(unittest.TestCase):
         self.assertEqual("DENY", headers.get("X-Frame-Options"))
         render_mock.assert_called_once()
 
+    @patch("stock_alarm.dashboard_server.remote_setup_page", return_value="secret")
+    @patch("stock_alarm.dashboard_server.trader_payload")
+    def test_local_get_rejects_foreign_host_before_reading_secrets(self, payload, setup):
+        for path in ("/", "/remote-setup", "/api/trader"):
+            status, _ = self._request(path, headers={"Host": "attacker.example"})
+            self.assertEqual(403, status)
+        payload.assert_not_called()
+        setup.assert_not_called()
+
+    @patch("stock_alarm.dashboard_server.remote_setup_page", return_value="secret")
+    def test_local_get_rejects_cross_origin_and_cross_site_requests(self, setup):
+        for headers in ({"Origin": "https://attacker.example"}, {"Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}):
+            self.assertEqual(403, self._request("/remote-setup", headers=headers)[0])
+        setup.assert_not_called()
+
+    @patch("stock_alarm.dashboard_server.remote_setup_page", return_value="local setup")
+    def test_local_get_accepts_exact_listening_origin(self, setup):
+        self.assertEqual(200, self._request("/remote-setup", headers={"Origin": self.base_url, "Sec-Fetch-Site": "same-origin"})[0])
+        setup.assert_called_once()
+
+    @patch("stock_alarm.dashboard_server.trader_payload", return_value={"cash": 1000})
+    def test_file_dashboard_account_read_remains_supported(self, payload):
+        status, headers = self._request("/api/trader", headers={"Origin": "null", "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(200, status)
+        self.assertEqual("null", headers.get("Access-Control-Allow-Origin"))
+        payload.assert_called_once()
+
     @patch("stock_alarm.dashboard_server.virtual_deposit")
     def test_local_write_rejects_missing_origin(self, deposit_mock):
         status, _headers = self._request(

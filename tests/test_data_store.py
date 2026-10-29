@@ -166,6 +166,39 @@ class DataStoreTest(unittest.TestCase):
         self.assertTrue(import_legacy_virtual_trader(legacy, self.path))
         self.assertFalse(import_legacy_virtual_trader(legacy, self.path))
         self.assertEqual(5000, virtual_trader_state(path=self.path)["cash"])
+        state = virtual_trader_state(path=self.path)
+        self.assertEqual(7000, state["deposited"])
+        self.assertEqual(0, state["total_profit_loss"])
+        self.assertEqual(0, state["total_return_pct"])
+        with closing(connect(self.path)) as connection:
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM virtual_deposits").fetchone()[0])
+
+    def test_cash_only_import_records_capital_and_cannot_be_repeated(self):
+        self.assertTrue(import_legacy_virtual_trader({"cash": 900}, self.path))
+        self.assertFalse(import_legacy_virtual_trader({"cash": 900}, self.path))
+        state = virtual_trader_state(path=self.path)
+        self.assertEqual(900, state["deposited"])
+        self.assertEqual(0, state["total_profit_loss"])
+
+    @patch("stock_alarm.portfolio_risk.new_buys_allowed", return_value=(True, ""))
+    def test_same_second_reentry_uses_ledger_cycle_including_partial_sales(self, _allowed):
+        from datetime import datetime
+        virtual_deposit(100000, self.path)
+        candidate = {"ticker": "A", "close": 100, "allocation_pct": 10}
+        with patch("stock_alarm.data_store.datetime") as clock:
+            clock.now.return_value = datetime(2026, 10, 1, 10)
+            virtual_buy([candidate], self.path)
+            # A partial exit belongs to the old cycle and must count toward
+            # the quantity boundary when that cycle closes.
+            virtual_sell([{"ticker": "A", "close": 100, "sale_type": "partial", "quantity_fraction": .5}], self.path)
+            self.assertEqual("2026-10-01T10:00:00", virtual_trader_state(path=self.path)["holdings"][0]["first_entry_at"])
+            clock.now.return_value = datetime(2026, 10, 29, 10)
+            virtual_sell([{"ticker": "A", "close": 100}], self.path)
+            virtual_buy([candidate], self.path)
+            self.assertEqual("2026-10-29T10:00:00", virtual_trader_state(path=self.path)["holdings"][0]["first_entry_at"])
+            virtual_sell([{"ticker": "A", "close": 100}], self.path)
+            virtual_buy([candidate], self.path)
+            self.assertEqual("2026-10-29T10:00:00", virtual_trader_state(path=self.path)["holdings"][0]["first_entry_at"])
 
     def test_virtual_sell_closes_position_and_returns_proceeds_to_cash(self):
         virtual_deposit(100_000, self.path)
