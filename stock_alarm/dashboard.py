@@ -2032,7 +2032,8 @@ let remoteTokenOrigin = remoteMode ? (sessionStorage.getItem(remoteTokenOriginKe
 if(remoteMode && remoteTokenOrigin !== traderApiBase) {{ remoteToken=""; remoteTokenOrigin=""; sessionStorage.removeItem("stockAlarm.remoteToken"); sessionStorage.removeItem(remoteTokenOriginKey); }}
 let currentProfile = localStorage.getItem("stockAlarm.traderProfile") || "aggressive";
 let trader = {{cash:0, holdings:[]}};
-const won = value => `${{Math.round(value).toLocaleString("ko-KR")}}원`;
+const won = value => value == null ? "기록 없음" : `${{Math.round(value).toLocaleString("ko-KR")}}원`;
+const accountPct = value => value == null ? "기록 없음" : `${{Number(value).toFixed(2)}}%`;
 {SHELL_JS}
 async function traderRequest(path, options={{}}, profileOverride=null) {{
   if(remoteMode && !traderApiBase) throw new Error("원격 HTTPS API 주소를 입력해 주세요.");
@@ -2058,9 +2059,9 @@ function renderSparkline(svgId, points) {{
 function renderCompare(name, state) {{
   const prefix = `compare-${{name}}`;
   if(!state) {{ document.getElementById(`${{prefix}}-equity`).textContent = "확인 불가"; return; }}
-  document.getElementById(`${{prefix}}-equity`).textContent = won(state.total_equity || state.cash || 0);
+  document.getElementById(`${{prefix}}-equity`).textContent = won(state.total_equity);
   renderSparkline(`${{prefix}}-sparkline`, state.equity_trend);
-  const returnEl=document.getElementById(`${{prefix}}-return`); returnEl.textContent=`${{Number(state.total_return_pct||0).toFixed(2)}}%`; returnEl.className=state.total_return_pct>0?"pos":state.total_return_pct<0?"neg":"zero";
+  const returnEl=document.getElementById(`${{prefix}}-return`); returnEl.textContent=accountPct(state.total_return_pct); returnEl.className=state.total_return_pct>0?"pos":state.total_return_pct<0?"neg":"zero";
   const risk=state.risk || {{}};
   const riskLabels={{active:"정상",reduced:"축소",halted:"중단"}};
   document.getElementById(`${{prefix}}-risk`).textContent = riskLabels[risk.status] || risk.status || "확인 중";
@@ -2119,11 +2120,11 @@ function renderDonut(ringId,legendId,items,emptyText) {{
 }}
 function renderPortfolioCharts() {{
   const cash=Number(trader.cash||0), holdingsValue=Number(trader.holdings_value||0);
-  document.getElementById("asset-donut-total").textContent=won(cash+holdingsValue);
+  document.getElementById("asset-donut-total").textContent=won(trader.total_equity);
   renderDonut("asset-donut","asset-donut-legend",[
     {{label:"주문 가능 현금",value:cash,color:"#4c6ef5"}},
     {{label:"보유주식 평가액",value:holdingsValue,color:"#12b886"}},
-  ],"입금 또는 보유자산이 없습니다.");
+  ].filter(()=>trader.total_equity!=null),trader.total_equity==null?"가격 기록이 없어 평가할 수 없습니다.":"입금 또는 보유자산이 없습니다.");
   const grouped={{}};
   (trader.holdings||[]).forEach(item=>{{const sector=item.sector||"미분류";grouped[sector]=(grouped[sector]||0)+Number(item.valuation||0);}});
   const sectors=Object.entries(grouped).map(([label,value])=>({{label,value}})).sort((a,b)=>b.value-a.value);
@@ -2137,12 +2138,12 @@ function watchStatePillClass(value) {{
   return hit ? hit[1] : "";
 }}
 function renderTrader(message="") {{
-  document.getElementById("trader-total-equity").textContent = won(trader.total_equity || trader.cash || 0);
+  document.getElementById("trader-total-equity").textContent = won(trader.total_equity);
   document.getElementById("trader-cash").textContent = won(trader.cash || 0);
-  document.getElementById("trader-holdings-value").textContent = won(trader.holdings_value || 0);
-  const holdingsReturn=document.getElementById("trader-holdings-return"); holdingsReturn.textContent=`${{Number(trader.holdings_return_pct||0).toFixed(2)}}%`; holdingsReturn.className=trader.holdings_return_pct>0?"pos":trader.holdings_return_pct<0?"neg":"zero";
-  const totalReturn=document.getElementById("trader-total-return"); totalReturn.textContent=`${{Number(trader.total_return_pct||0).toFixed(2)}}%`; totalReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
-  const totalProfit=document.getElementById("trader-total-profit"); totalProfit.textContent=won(trader.total_profit_loss || 0); totalProfit.className=(trader.total_profit_loss>0?"pos":trader.total_profit_loss<0?"neg":"zero");
+  document.getElementById("trader-holdings-value").textContent = won(trader.holdings_value);
+  const holdingsReturn=document.getElementById("trader-holdings-return"); holdingsReturn.textContent=accountPct(trader.holdings_return_pct); holdingsReturn.className=trader.holdings_return_pct>0?"pos":trader.holdings_return_pct<0?"neg":"zero";
+  const totalReturn=document.getElementById("trader-total-return"); totalReturn.textContent=accountPct(trader.total_return_pct); totalReturn.className=trader.total_return_pct>0?"pos":trader.total_return_pct<0?"neg":"zero";
+  const totalProfit=document.getElementById("trader-total-profit"); totalProfit.textContent=won(trader.total_profit_loss); totalProfit.className=(trader.total_profit_loss>0?"pos":trader.total_profit_loss<0?"neg":"zero");
   renderPortfolioCharts();
   document.getElementById("trader-auto-status").textContent = trader.auto_trading ? `자동매매 켜짐 · ${{trader.schedule || ""}}` : "자동매매 꺼짐";
   const homeAuto=document.getElementById("home-auto-status"); homeAuto.textContent=trader.auto_trading?"정상 작동":"중단"; homeAuto.className=`state-badge ${{trader.auto_trading?"state-ok":"state-bad"}}`;
@@ -2157,10 +2158,10 @@ function renderTrader(message="") {{
   document.getElementById("trader-daily-return").textContent = `${{Number(risk.daily_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-weekly-return").textContent = `${{Number(risk.weekly_return_pct || 0).toFixed(2)}}%`;
   document.getElementById("trader-drawdown").textContent = `${{Number(risk.drawdown_pct || 0).toFixed(2)}}%`;
-  document.getElementById("home-price-updated").textContent=(trader.price_updated_at||"확인 중").replace("T"," ");
+  document.getElementById("home-price-updated").textContent=(trader.queried_at||"확인 중").replace("T"," ");
   document.getElementById("home-price-basis").textContent=trader.price_basis_date||"확인 불가";
   const unavailable=trader.price_unavailable_tickers || [];
-  document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · 가격 기준 ${{trader.price_basis_date || "확인 불가"}} · 화면 조회 ${{(trader.price_updated_at || "").replace("T"," ")}}`;
+  document.getElementById("trader-price-status").textContent = unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · 가격 기준 ${{trader.price_basis_date || "확인 불가"}} · 관측 ${{(trader.price_oldest_at || "").replace("T"," ")}} ~ ${{(trader.price_updated_at || "").replace("T"," ")}} · 화면 조회 ${{(trader.queried_at || "").replace("T"," ")}}`;
   const body = document.getElementById("trader-holdings"); body.textContent = "";
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");
@@ -2168,7 +2169,7 @@ function renderTrader(message="") {{
     const watchState=item.watch_state||'데이터 대기';
     const ratio=(value,suffix)=>value==null||value===""?"–":`${{Number(value).toFixed(suffix==="%"?1:2)}}${{suffix}}`;
     const eok=(value)=>value==null||value===""?"–":`${{Math.round(Number(value)/1e8).toLocaleString("ko-KR")}}억`;
-    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),`${{Number(item.allocation_pct||0).toFixed(2)}}%`,item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),`${{Number(item.return_pct).toFixed(2)}}%`,watchState,sellReference];
+    const values=[item.name,Number(item.quantity||0).toLocaleString("ko-KR"),accountPct(item.allocation_pct),item.holding_days==null?'확인 중':`${{item.holding_days}}일`,won(item.average_price),won(item.current_price),won(item.profit_loss),accountPct(item.return_pct),watchState,sellReference];
     values.forEach((value,index)=>{{
       const cell=document.createElement("td");
       if(index===0){{

@@ -49,14 +49,14 @@ class DashboardV2DataTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_v2.recent_position_checks")
     @patch("stock_alarm.dashboard_v2.query_rows")
     @patch("stock_alarm.dashboard_v2.virtual_trader_state")
-    def test_kr_account_uses_saved_valuation_instead_of_cost_basis(self, state, snapshots, checks, _quality, _sales, _exists):
+    def test_kr_account_does_not_mix_old_snapshot_total_with_unpriced_holdings(self, state, snapshots, checks, _quality, _sales, _exists):
         state.return_value = {"total_equity": 1000, "deposited": 1000, "realized_profit_loss": 0, "holdings": [{"name": "테스트", "ticker": "000001", "quantity": 2, "cost": 1000, "average_price": 500, "first_entry_at": "2026-10-21T09:00:00"}]}
         snapshots.return_value = [{"created_at": "2026-10-22T15:30:00", "cash": 100, "valuation": 1100, "equity": 1200, "profit_loss": 100}, {"equity": 1180}]
         checks.return_value = []
         account = _kr_account("aggressive", "계좌")
-        self.assertEqual("₩1,200", account["asset"])
+        self.assertEqual("기록 없음", account["asset"])
         self.assertEqual("₩+20", account["daily"])
-        self.assertEqual("+20.00%", account["returnPct"])
+        self.assertEqual("기록 없음", account["returnPct"])
         self.assertEqual("기록 없음", account["rows"][0][5])
         self.assertEqual("기록 없음", account["rows"][0][6])
         self.assertEqual("기록 없음", account["rows"][0][7])
@@ -69,6 +69,7 @@ class DashboardV2DataTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_v2.virtual_trader_state")
     def test_kr_account_holding_details_use_latest_saved_check(self, state, snapshots, checks, _quality, sales, _exists):
         state.return_value = {"deposited": 1000, "realized_profit_loss": 30, "holdings": [{"name": "테스트", "ticker": "000001", "quantity": 2, "cost": 1000, "average_price": 500, "first_entry_at": "2026-10-21T09:00:00", "position_status": "open"}]}
+        state.return_value['cash'] = 100
         snapshots.return_value = [{"created_at": "2026-10-22T15:30:00", "cash": 100, "valuation": 1100, "equity": 1200, "profit_loss": 100}]
         checks.return_value = [{"ticker": "000001", "checked_at": "2026-10-22T15:30:00", "close": 550, "decision": "SELL", "dynamic_stop_loss_pct": -6, "ma20": 520}]
         sales.return_value = [{"created_at": "2026-10-22T15:00:00", "name": "테스트", "sale_type": "partial", "quantity": 1, "price": 530, "cost_basis": 500, "realized_profit_loss": 30, "reason": "1차 익절"}]

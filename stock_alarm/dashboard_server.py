@@ -11,8 +11,9 @@ from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
-from .app import effective_exposure_limit_pct, latest_naver_trading_day, load_env, naver_rows, write_error_log
-from .dashboard import latest_position_rows, render, today_recommendation_rows
+from .app import effective_exposure_limit_pct, load_env, write_error_log
+from .account_valuation import value_saved_account, price_after_entry
+from .dashboard import render
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, query_rows, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 from .sector_reference import load_sector_mapping
@@ -55,10 +56,6 @@ def valid_remote_token(authorization: str) -> bool:
     return bool(expected and supplied and hmac.compare_digest(expected, supplied))
 
 
-def recommendations() -> list[dict[str, str]]:
-    return today_recommendation_rows()
-
-
 def manual_buy(profile: str) -> dict:
     from . import app
     if not app.is_market_alert_time():
@@ -84,38 +81,11 @@ def manual_buy(profile: str) -> dict:
     return result
 
 
-def prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
-    price_map = {
-        row.get("ticker", ""): int(float(row.get("close") or 0))
-        for row in recommendations()
-        if row.get("ticker") and row.get("close")
-    }
-    # A position report is newer than the original recommendation price.
-    price_map.update({
-        row.get("ticker", ""): int(float(row.get("close") or 0))
-        for row in latest_position_rows()
-        if row.get("ticker") and row.get("close")
-    })
-    holding_tickers = [row["ticker"] for row in virtual_trader_state(path=path)["holdings"]]
-    today = date.today()
-
-    def fetch(ticker: str) -> tuple[str, list] | None:
-        try:
-            return ticker, naver_rows(ticker, today - timedelta(days=10), today, max_cache_age_seconds=60)
-        except (OSError, ValueError, TypeError):
-            # Keep the most recent report/recommendation price if Naver is temporarily unavailable.
-            return None
-
-    with ThreadPoolExecutor(max_workers=max(len(holding_tickers), 1)) as pool:
-        for result in pool.map(fetch, holding_tickers):
-            if result and result[1]:
-                price_map[result[0]] = int(result[1][-1][4])
-    return price_map
-
-
 def trader_payload(profile: str = "aggressive") -> dict:
     path = profile_db_path(profile)
-    state = virtual_trader_state(prices(path), path=path)
+    quality = recent_price_quality(100, path)
+    checks = recent_position_checks(1000, path)
+    state = value_saved_account(virtual_trader_state(path=path), checks, quality)
     holding_tickers = {str(row.get("ticker") or "") for row in state["holdings"]}
     try:
         sectors = load_sector_mapping(holding_tickers)
@@ -123,11 +93,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         sectors = {}
     risk = latest_portfolio_risk(path)
     strategy = active_strategy_version()
-    quality = recent_price_quality(100, path)
-    latest_quality = {}
-    for row in quality:
-        latest_quality.setdefault(row.get("ticker"), row)
-    unavailable = [row["ticker"] for row in state["holdings"] if latest_quality.get(row["ticker"], {}).get("status") not in {None, "valid"}]
+    unavailable = state['price_unavailable_tickers']
     breadth = None
     try:
         with open(MARKET_BREADTH_CACHE_PATH, encoding="utf-8") as file:
@@ -141,7 +107,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
     market_mode = "공격" if breadth is not None and breadth >= .60 else "중립" if breadth is not None and breadth >= .45 else "방어" if breadth is not None else "데이터 대기"
     from .toss_client import BLOCKING_STOCK_WARNINGS, TossClient
     latest_checks = {}
-    for row in recent_position_checks(1000, path):
+    for row in checks:
         latest_checks.setdefault(row.get("ticker"), row)
     holding_ticker_list = [str(holding.get("ticker") or "") for holding in state["holdings"]]
 
@@ -164,6 +130,8 @@ def trader_payload(profile: str = "aggressive") -> dict:
 
     for holding in state["holdings"]:
         check = latest_checks.get(holding.get("ticker"), {})
+        if not price_after_entry(check.get('checked_at'), holding.get('first_entry_at')):
+            check = {}
         try:
             fallback_holding_days = (date.today() - date.fromisoformat(str(holding.get("first_entry_at") or "")[:10])).days
         except ValueError:
@@ -190,7 +158,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
             watch_state = "정상 보유"
         holding.update({
             "sector": sectors.get(str(holding.get("ticker") or ""), "미분류"),
-            "allocation_pct": round(float(holding.get("valuation") or 0) / max(float(state.get("total_equity") or 0), 1) * 100, 2),
+            "allocation_pct": round(float(holding['valuation']) / state['total_equity'] * 100, 2) if holding['valuation'] is not None and state['total_equity'] else None,
             "holding_days": check.get("holding_days") if check.get("holding_days") is not None else fallback_holding_days,
             "watch_state": watch_state,
             "stop_price": stop_price,
@@ -215,17 +183,11 @@ def trader_payload(profile: str = "aggressive") -> dict:
     wins = sum(int(row.get("realized_profit_loss") or 0) > 0 for row in sales)
     total_cost = sum(int(row.get("cost_basis") or 0) for row in sales)
     total_realized = sum(int(row.get("realized_profit_loss") or 0) for row in sales)
-    try:
-        price_basis_date = latest_naver_trading_day().isoformat()
-    except (OSError, ValueError, TypeError):
-        price_basis_date = ""
     return {
         **state,
         "profile": profile,
         "equity_trend": recent_equity_trend(7, path),
-        "price_updated_at": datetime.now().isoformat(timespec="seconds"),
-        "price_basis_date": price_basis_date,
-        "price_source": "네이버 금융 · 검증 실패 종목은 진입가 임시표시",
+        "queried_at": datetime.now().isoformat(timespec="seconds"),
         "risk": risk,
         "strategy_version": strategy.get("version_id", "기본 전략"),
         "price_unavailable_tickers": unavailable,

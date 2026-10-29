@@ -4,7 +4,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from stock_alarm.dashboard_server import DashboardHandler, RemoteReadOnlyHandler, allowed_local_origin, allowed_origin, prices, profile_db_path, remote_setup_page, trader_payload, valid_remote_token
+from stock_alarm.dashboard_server import DashboardHandler, RemoteReadOnlyHandler, allowed_local_origin, allowed_origin, profile_db_path, remote_setup_page, trader_payload, valid_remote_token
 
 
 class DashboardServerTest(unittest.TestCase):
@@ -32,13 +32,6 @@ class DashboardServerTest(unittest.TestCase):
         self.assertIn('value=&quot;secret&quot;', page)
         self.assertNotIn("token=secret", page)
 
-    @patch("stock_alarm.dashboard_server.naver_rows", return_value=[["20260826", 0, 0, 0, 204500, 1]])
-    @patch("stock_alarm.dashboard_server.virtual_trader_state", return_value={"cash": 0, "holdings": [{"ticker": "086280"}]})
-    @patch("stock_alarm.dashboard_server.recommendations", return_value=[])
-    @patch("stock_alarm.dashboard_server.latest_position_rows", return_value=[{"ticker": "086280", "close": "206000"}])
-    def test_prices_refreshes_virtual_holding_instead_of_using_stale_report(self, _positions, _recommendations, _state, _naver):
-        self.assertEqual(204500, prices()["086280"])
-
     @patch("stock_alarm.dashboard_server.recent_equity_trend", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_virtual_sales", return_value=[])
     @patch("stock_alarm.dashboard_server.recent_position_checks", return_value=[])
@@ -47,8 +40,7 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={"086280": "항공화물운송과물류"})
     @patch("stock_alarm.dashboard_server.virtual_trader_state")
-    @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
-    def test_trader_payload_adds_sector_to_holdings(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend):
+    def test_trader_payload_adds_sector_to_holdings(self, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend):
         state.return_value = {
             "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
             "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
@@ -67,8 +59,7 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
     @patch("stock_alarm.dashboard_server.virtual_trader_state")
-    @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
-    def test_trader_payload_flags_a_holding_with_an_active_stock_warning(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
+    def test_trader_payload_flags_a_holding_with_an_active_stock_warning(self, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
         state.return_value = {
             "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
             "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
@@ -88,8 +79,7 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
     @patch("stock_alarm.dashboard_server.virtual_trader_state")
-    @patch("stock_alarm.dashboard_server.prices", return_value={"086280": 205000})
-    def test_trader_payload_shows_a_non_blocking_warning_as_info_only(self, _prices, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
+    def test_trader_payload_shows_a_non_blocking_warning_as_info_only(self, state, _sectors, _risk, _strategy, _quality, _checks, _sales, _trend, toss_client_cls):
         state.return_value = {
             "cash": 500_000, "total_equity": 1_000_000, "holdings_value": 500_000,
             "holdings": [{"ticker": "086280", "valuation": 500_000, "average_price": 200_000, "first_entry_at": "2026-08-01"}],
@@ -112,13 +102,11 @@ class DashboardServerTest(unittest.TestCase):
     @patch("stock_alarm.dashboard_server.latest_portfolio_risk", return_value={})
     @patch("stock_alarm.dashboard_server.load_sector_mapping", return_value={})
     @patch("stock_alarm.dashboard_server.virtual_trader_state", return_value={"cash": 0, "holdings": [], "total_equity": 0, "holdings_value": 0})
-    @patch("stock_alarm.dashboard_server.prices", return_value={})
-    def test_trader_payload_routes_neutral_profile_to_its_own_db(self, prices_mock, state, *_mocks):
+    def test_trader_payload_routes_neutral_profile_to_its_own_db(self, state, *_mocks):
         payload = trader_payload("neutral")
 
         self.assertEqual("neutral", payload["profile"])
-        state.assert_called_with({}, path="data/stock_alarm_neutral.db")
-        prices_mock.assert_called_with("data/stock_alarm_neutral.db")
+        state.assert_called_with(path="data/stock_alarm_neutral.db")
 
 
 class RemoteReadOnlyHandlerTest(unittest.TestCase):
