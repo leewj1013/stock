@@ -26,3 +26,9 @@ th,td{font-size:14px}.pill{font-size:13px}.pill.buy,.pill.sell{color:#a93240}.pi
 .signal-grid .reason{white-space:nowrap}.signal-grid td,.signal-grid th{white-space:nowrap}
 th[data-numeric],td[data-numeric],.metric strong,.mini-stats b,.market-item b,.market-item>span{text-align:right;font-variant-numeric:tabular-nums}
 .mini-stats b,.market-item>span{display:block}
+.research-study-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.research-study{min-width:0}.research-study h2{font-size:19px;margin:0 0 7px}.research-description{margin:0 0 15px;color:var(--muted)}
+.research-study .table-wrap{margin:0}.research-study table{min-width:0;width:100%}.research-study th,.research-study td{white-space:normal;overflow-wrap:anywhere;padding:10px 7px}
+.research-study .hint{margin:14px 0 0}.research-detail>.page-heading,.research-detail>div>.page-heading{display:none}
+.research-pending,.research-detail{margin-top:18px}.research-detail>div{padding-top:8px}
+@media(max-width:1050px){.research-study-grid{grid-template-columns:minmax(0,1fr)}}

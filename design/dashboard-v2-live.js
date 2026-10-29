@@ -95,7 +95,7 @@ document.addEventListener('click', event => {
   if (button && state.market==='kr' && state.page==='account' && sample.kr && sample.kr.accounts[state.account]?.source==='real') loadRealAccount();
 });
 
-renderers.research = function () {
+const renderResearchDetails = function () {
   const d = sample[state.market], rows = d.research || [], filtered = rows.filter(x => state.researchFilter === '전체' || x[4] === state.researchFilter);
   const profit = d.profitResearch;
   const profitResearch = state.market === 'kr' && profit ? `<h2 class="section-title">하락장 대응 제안 · 매수·매도 추가 실험</h2><section class="panel pad"><p class="hint">매수 축소·보류는 과거 거래·계좌 원장 비교를 표시하며 익절 앞당김은 거래별 비교입니다. 직전 완료 거래일 KOSPI 종가와 20일선이 모두 60일선 아래인 날을 대상으로 하는 안입니다. 자료 부족일은 제외하고 회복 뒤 20거래일까지 반등 기회·현금 비중·계좌 최대낙폭을 비교합니다.</p>${table(['연구','상태','비교 규칙'],profit.plans.map(x=>`<tr><td class="name">${x[0]}</td><td>${x[1]}</td><td class="reason">${x[2]}</td></tr>`),'profit-plans',15)}<p class="hint">관찰 시작 ${profit.start} · 신규 가상매수 ${profit.total}건 · 종료 ${profit.complete}건 · 오류 ${profit.errors}건</p>${table(['실험','종료 표본','평균 순수익률 차이','기존보다 유리한 건수'],profit.results.map(x=>`<tr>${x.map(v=>`<td>${v}</td>`).join('')}</tr>`),'profit-results',15)}<p class="hint">국내 적극투자형 신규 가상매수 관찰입니다. 기존 가상 체결과 비교하며 추가 신호는 다음 저장 가격에 체결한다고 가정합니다. 기존 전량매도 시점까지 두 매도 물량 손익을 합산하고 매수·매도 비용 각 0.15%를 반영합니다. 완료 건만 평균에 포함하며 원금 보호·추적 청산은 1차 익절 체결 건만 집계합니다. 매수가 청산선은 비용·갭 때문에 본전을 보장하지 않습니다. 계좌 수익률·최대낙폭 비교는 아니며 점검 사이 가격은 확인할 수 없습니다. 가격 부담 보류안은 기존 매수 연구를 재사용합니다. 자동 주문에는 적용하지 않습니다.</p></section>` : '';
@@ -117,6 +117,47 @@ renderers.research = function () {
   const issueRows = system.issues.map(x=>`<tr><td>${x[0]}</td><td class="name">${x[1]}</td><td class="reason">${x[2]}</td></tr>`);
   const runRows = system.runs.map(x=>`<tr><td class="name">${x[0]}</td><td>${x[1]}</td></tr>`);
   return heading('연구·상태','저장된 연구 진행 기록과 데이터·작업 상태를 확인합니다.') + historicalResearch + targetBearResearch + bearAccountResearch + profitResearch + dipResearch + extensionResearch + `<section class="panel pad"><div class="panel-head"><h2>연구 진행 현황</h2><small>${rows.length}건</small></div><div class="chips research-filters">${['전체','진행','대기','보류'].map(x=>`<button type="button" data-research-filter="${x}" aria-pressed="${state.researchFilter===x}">${x}</button>`).join('')}</div>${filtered.length ? table(['연구','현재 상태','진행 내용','확인일'],filtered.map(x=>`<tr><td class="name">${x[0]}</td><td>${x[1]}</td><td class="reason">${x[2]}</td><td>${x[3]}</td></tr>`),'research',15) : '<div class="empty">해당 상태의 기록이 없습니다.</div>'}</section>${details}<h2 class="section-title">데이터·작업 상태</h2><section class="panel pad">${serviceRows.length?table(['항목','상태','마지막 기록'],serviceRows,'services',15):'<div class="empty">상태 기록이 없습니다.</div>'}</section><details><summary>확인할 문제 · ${system.issues.length}건</summary><div>${issueRows.length?table(['출처','항목','내용'],issueRows,'issues',15):'<div class="empty">현재 확인할 문제가 없습니다.</div>'}</div></details>${runRows.length?`<details><summary>오늘의 자동 작업 · ${runRows.length}건</summary><div>${table(['작업','상태'],runRows,'runs',15)}</div></details>`:''}`;
+};
+
+renderers.research = function () {
+  if (state.market !== 'kr') return renderResearchDetails();
+  const d = sample.kr, profit = d.profitResearch, cards = [], pending = [];
+  const compactTable = (heads, rows) => table(heads, rows.map(row=>`<tr>${row.map(v=>`<td class="${/^[+−-][\d,.]+(?:%p?|원)?$/.test(String(v))?changeClass(v):''}">${v}</td>`).join('')}</tr>`));
+  const study = (title, description, body, note='') => `<article class="panel pad research-study"><h2>${title}</h2><p class="research-description">${description}</p>${body}${note?`<p class="hint">${note}</p>`:''}</article>`;
+  const historical = profit?.historical, account = profit?.bearAccount, targets = profit?.targetBear;
+  if (historical?.available) cards.push(study('익절·손절 규칙 비교','기존 매도보다 수익이 얼마나 달라졌는지 비교합니다.',
+    compactTable(['매도 규칙','기존 대비 평균 차이'],historical.performance.slice(1).map(r=>[r[0],r[6]])),
+    `과거 ${historical.included}건 · 거래별 평균 · 계좌 수익률 아님`));
+  if (account?.available) cards.push(study('하락장 매수·재진입','매수 유지, 절반 매수, 보류, 회복 후 재진입을 비교합니다.',
+    compactTable(['방법','수익률','최대낙폭'],account.rows.map(r=>[r[0],r[1],r[2]])),
+    `${String(account.start).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1.$2.$3')}–${String(account.cutoff).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1.$2.$3')} · 입금 영향 제외 · 모두 최대 7종목`));
+  if (targets?.available) cards.push(study('익절 목표 도달','상승 이후 목표 도달과 하락 경로를 확인합니다.',
+    compactTable(['관측 내용','해당 비율'],targets.targets.slice(0,3).map(r=>[r[0],`${r[2]} (${r[1]})`])),
+    '+10%·+20% 고정 기준 · 미관측은 장중 미도달을 뜻하지 않음'));
+  const extension = profit?.extensions, diagnostic = extension?.diagnostic;
+  if (diagnostic?.complete) cards.push(study('수익 집중도','전체 수익이 일부 거래에 얼마나 집중됐는지 확인합니다.',
+    compactTable(['항목','결과'],[
+      ['종료 거래 순손익',diagnostic.rows[0]?.[3] || '기록 없음'],
+      ...diagnostic.shares.map(r=>[`이익 합계 중 ${r[0]} 비중`,r[1]])]),
+    `과거 종료 ${diagnostic.complete}건 · 매매 규칙의 성과 비교 아님`));
+  if (profit) {
+    if (profit.complete || profit.dips?.complete) {
+      const results = [...profit.results.map(r=>[r[0],`${r[2]} · ${r[1]}건`]),
+        ...(profit.dips?.results || []).map(r=>[r[0],`${r[4]} · ${r[1]}건`])];
+      cards.push(study('신규 거래 재검증','등록 이후 새 거래로 청산 규칙을 다시 비교합니다.',compactTable(['규칙','기존 대비 평균 차이'],results)));
+    } else pending.push(['신규 거래 청산 규칙 재검증',`완료 0건 · 가상매수 ${profit.total}건 관찰`]);
+  }
+  if (extension) {
+    const expiry = extension.expiry_rows[0];
+    pending.push(['추천 신호 유효기간',Number(expiry?.[2])?`완료 ${expiry[2]}건 · 기존 대비 ${expiry[4]}`:'새 거래 결과 대기']);
+    pending.push(['호가 차이가 클 때 매수 보류','체결 비교 결과 대기'],['실적 발표 전 보유 축소','발표 일정·거래 결과 대기']);
+  }
+  for (const row of d.research || []) pending.push([row[0],row[2] || row[1]]);
+  const detailsOpen = document.querySelector('.research-detail')?.open;
+  return heading('연구','어떤 연구인지, 결과가 어땠는지만 먼저 확인합니다.') +
+    `<div class="research-overview"><div class="research-study-grid">${cards.join('') || '<section class="panel pad empty">아직 완료된 연구 결과가 없습니다.</section>'}</div><p class="hint">과거 자료의 탐색 결과이며 자동 매매에 적용한 성과는 아닙니다.</p></div>` +
+    (pending.length?`<details class="research-pending" ${cards.length?'':'open'}><summary>진행·대기 연구 ${pending.length}건</summary><div>${compactTable(['연구','현재 결과'],pending)}</div></details>`:'') +
+    `<details class="research-detail" ${detailsOpen?'open':''}><summary>계산 조건·매도 내역·전체 기록 보기</summary><div>${renderResearchDetails()}</div></details>`;
 };
 
 const loadedViews = new Set();
