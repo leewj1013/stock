@@ -94,12 +94,18 @@ def observe_auto_buy(original, picks, *args, **kwargs):
     from .trading_profiles import PROFILES
     db_path = kwargs.get("path", args[0] if args else data_store.DB_PATH)
     profile = next((key for key, value in PROFILES.items() if value["db_path"] == db_path), str(db_path))
+    from .sell_check import take_profit_policy_snapshot
     payload = {"version": VERSION, "profile": profile, "source_db": str(db_path),
                "observed_at": datetime.now().isoformat(timespec="microseconds"),
                "picks": [{"ticker": p.ticker, "name": p.name, "close": p.close, "score": p.score} for p in picks],
                "auto_enabled": os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") == "1",
                "max_position": max(0, min(100, float(os.environ.get("VIRTUAL_TRADER_MAX_POSITION_PCT", "30")))),
                "min_fill": max(0, min(1, float(os.environ.get("VIRTUAL_TRADER_MIN_FILL_RATIO", "0.5"))))}
+    try:
+        payload["entry_take_profit_policy"] = take_profit_policy_snapshot(PROFILES.get(profile, {}).get("sell_policy"))
+        payload["entry_take_profit_policy"]["scope"] = "entry_thresholds_only_regime_permission_evaluated_at_sell_check"
+    except (ValueError, TypeError) as error:
+        payload["entry_take_profit_policy_error"] = type(error).__name__
     def state_capture(fn, *a, **kw):
         value = fn(*a, **kw)
         payload.setdefault("state", value)
@@ -110,6 +116,11 @@ def observe_auto_buy(original, picks, *args, **kwargs):
         return value
     def candidate_capture(fn, candidates, *a, **kw):
         payload["candidates"] = [dict(c) for c in candidates]
+        try:
+            from .research_data_collect import collect_quotes
+            payload["quote_observation"] = collect_quotes([c["ticker"] for c in candidates[:10]])
+        except Exception as error:
+            payload["quote_observation"] = {"error_type": type(error).__name__}
         try:
             return fn(candidates, *a, **kw)
         except Exception as error:

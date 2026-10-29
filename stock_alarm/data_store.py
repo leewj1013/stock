@@ -344,6 +344,8 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
         ("time_stop_triggered", "INTEGER NOT NULL DEFAULT 0"),
         ("take_profit_triggered", "INTEGER NOT NULL DEFAULT 0"),
         ("sale_type", "TEXT NOT NULL DEFAULT 'full'"), ("stage", "TEXT"),
+        ("take_profit_1_pct", "REAL"), ("take_profit_2_pct", "REAL"),
+        ("take_profit_1_sell_ratio", "REAL"), ("take_profit_allowed", "INTEGER"),
     ):
         if name not in position_columns:
             connection.execute(f"ALTER TABLE position_checks ADD COLUMN {name} {definition}")
@@ -774,6 +776,7 @@ def write_position_checks(run_id: str, rows: Iterable[dict[str, Any]], path: str
         "drawdown_from_peak_pct", "ma20", "distance_ma20_pct", "atr20_pct", "dynamic_stop_loss_pct", "stop_loss_triggered",
         "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered",
         "take_profit_triggered", "sale_type", "stage", "decision", "reasons",
+        "take_profit_1_pct", "take_profit_2_pct", "take_profit_1_sell_ratio", "take_profit_allowed",
     ]
     trigger_columns = {"stop_loss_triggered", "ma20_break_triggered", "return_drop_triggered", "giveback_triggered", "time_stop_triggered", "take_profit_triggered"}
     values = [(run_id, *(row.get(column, 0) if column in trigger_columns else row.get(column) for column in columns)) for row in rows]

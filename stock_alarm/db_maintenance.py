@@ -69,6 +69,8 @@ def run_all_profiles() -> dict[str, dict[str, object]]:
 
 
 def main() -> None:
+    from .app import load_env
+    load_env()
     print(run_all_profiles())
     from .sell_research import PATH as research_path, run as run_exit_research
     result = run_exit_research()
@@ -94,10 +96,37 @@ def main() -> None:
     risk_result = run_risk_research()
     backup_database(risk_path)
     print({"risk_research": risk_result})
+    from .profit_research import PATH as profit_path, run as run_profit_research
+    profit_result = run_profit_research()
+    backup_database(profit_path)
+    print({"profit_research": profit_result})
+    from .profit_research import DIP_PATH, run_dips
+    dip_result = run_dips()
+    backup_database(DIP_PATH)
+    print({"dip_research": dip_result})
+    from .research_extensions import PATH as extensions_path, run as run_extensions
+    extensions_result = run_extensions()
+    backup_database(extensions_path)
+    print({"research_extensions": extensions_result})
+    from .research_data_collect import PATH as research_data_path, run_daily as collect_research_data
+    evidence = collect_research_data()
+    print({"research_data": evidence})
+    from .research_data_collect import backfill_statements
+    history = backfill_statements()
+    print({"statement_receipt_backfill": history})
+    from .krx_research_collect import run as collect_krx_research
+    krx_data = collect_krx_research()
+    print({"krx_research_data": krx_data})
+    backup_database(research_data_path)
+    if Path('reports/research_data_validation.json').exists():
+        from .research_input_gate import run as check_research_inputs
+        print({'research_input_gate': check_research_inputs()})
     from .domestic_horizon_research import PATH as horizon_path, run as run_horizon_research
     horizon_result = run_horizon_research()
     backup_database(horizon_path)
     print({"domestic_horizon_research": horizon_result})
+    from .research_followup import run as run_followup
+    print({'research_followup': run_followup()['quote_exit_counts']})
     from .market_group_snapshot import PATH as market_group_path, collect as collect_market_groups
     group_result = collect_market_groups()
     backup_database(market_group_path)
@@ -109,7 +138,7 @@ def main() -> None:
     us_result = run_us_research()
     backup_database(us_path)
     print({"us_research": us_result})
-    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"] or horizon_result["failures"] or us_result["failures"]:
+    if result["failures"] or entry_result["failures"] or portfolio_result["failures"] or earnings_result["failures"] or theme_result["failures"] or horizon_result["failures"] or us_result["failures"] or evidence["failures"] or history["failures"] or krx_data["failures"]:
         raise RuntimeError("Research has collection failures; inspect research databases error columns")
 
 

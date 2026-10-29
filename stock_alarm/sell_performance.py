@@ -75,8 +75,18 @@ def run() -> int:
     risk_research = run_risk_research()
     from .domestic_horizon_research import run as run_horizon_research
     horizon_research = run_horizon_research()
-    if research["failures"] or entry_research["failures"] or portfolio_research["failures"] or earnings_research["failures"] or theme_research["failures"] or risk_research["failures"] or horizon_research["failures"]:
-        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}, portfolio={portfolio_research}, earnings={earnings_research}, theme={theme_research}, risk={risk_research}, horizon={horizon_research}")
+    from .profit_research import run as run_profit_research
+    profit_research = run_profit_research()
+    from .profit_research import run_dips
+    dip_research = run_dips()
+    from .research_extensions import run as run_extensions
+    extensions = run_extensions()
+    from .research_data_collect import run_daily as collect_research_data
+    evidence = collect_research_data()
+    from .research_followup import run as run_followup
+    run_followup()
+    if research["failures"] or entry_research["failures"] or portfolio_research["failures"] or earnings_research["failures"] or theme_research["failures"] or risk_research["failures"] or horizon_research["failures"] or profit_research["failures"] or dip_research["failures"] or extensions["failures"] or evidence["failures"]:
+        raise RuntimeError(f"Research outcome collection failed: exit={research}, entry={entry_research}, portfolio={portfolio_research}, earnings={earnings_research}, theme={theme_research}, risk={risk_research}, horizon={horizon_research}, profit={profit_research}, dips={dip_research}, extensions={extensions}, evidence={evidence}")
     return len(rows)
 
 

@@ -63,6 +63,7 @@ def test_observer_preserves_result_and_restores_functions(tmp_path):
     with closing(connect(path)) as db:
         saved = json.loads(db.execute('SELECT payload FROM buy_attempts').fetchone()[0])
         assert saved['executions'] == expected['executions']
+        assert 'take_profit_1_pct' in saved['entry_take_profit_policy']
         assert research.decisions(saved)[0]['reason'] == 'executed'
 
 
@@ -71,6 +72,14 @@ def test_observation_failure_does_not_cancel_trade(capsys):
         expected = {'executions': []}
         assert observer.observe_auto_buy(lambda picks: expected, []) is expected
     assert 'buy observation failed' in capsys.readouterr().out
+
+
+def test_bad_target_observation_does_not_cancel_buy(tmp_path, monkeypatch):
+    monkeypatch.setenv('TAKE_PROFIT_1_PCT','invalid')
+    connect = observer.connect
+    with patch.object(observer, 'connect', side_effect=lambda: connect(str(tmp_path/'a.db'))):
+        expected={'executions':[]}
+        assert observer.observe_auto_buy(lambda picks:expected,[]) is expected
 
 
 def test_original_exception_is_not_swallowed(tmp_path):

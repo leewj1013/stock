@@ -102,6 +102,8 @@ if ($mode -eq "intraday") {
     RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
     RunFreshStep "recommendation" "stock_alarm"
     RunOptionalStep "minute_candle_collect" "stock_alarm.minute_candle_collect"
+    RunOptionalStep "research_quote_collect" "stock_alarm.research_data_collect"
+    RunOptionalStep "research_followup" "stock_alarm.research_followup"
     RunFreshStep "virtual_trader_report" "stock_alarm.virtual_trader_report"
     RunOptionalStep "market_group_context" "stock_alarm.market_group_context"
     RunOptionalStep "naver_market_signal_context" "stock_alarm.naver_market_signal_context"
@@ -121,6 +123,8 @@ if ($mode -eq "daily" -or $mode -eq "performance") {
     RunOptionalStep "recommendation_performance" "stock_alarm.recommendation_performance"
     RunOptionalStep "sell_performance" "stock_alarm.sell_performance"
     RunOptionalStep "minute_candle_collect" "stock_alarm.minute_candle_collect"
+    RunOptionalStep "research_quote_collect" "stock_alarm.research_data_collect"
+    RunOptionalStep "research_followup" "stock_alarm.research_followup"
 }
 if ($mode -eq "daily") {
     # issue_alert must still run even if a required step above fails, so the

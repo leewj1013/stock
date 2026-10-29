@@ -83,6 +83,16 @@ def virtual_holding_positions(state: dict) -> list[dict[str, str]]:
     ]
 
 
+def take_profit_policy_snapshot(policy=None):
+    policy = policy or {}
+    return {
+        "take_profit_1_pct": float(policy.get("take_profit_1_pct", env_float("TAKE_PROFIT_1_PCT", 10))),
+        "take_profit_2_pct": float(policy.get("take_profit_2_pct", env_float("TAKE_PROFIT_2_PCT", 20))),
+        "take_profit_1_sell_ratio": float(policy.get("take_profit_1_sell_ratio", env_float("TAKE_PROFIT_1_SELL_RATIO", 50))),
+        "take_profit_allowed": policy.get("market_regime") not in set(policy.get("disable_take_profit_in_regimes") or ()),
+    }
+
+
 def _evaluate_position(
     position: dict[str, str],
     end_day: date,
@@ -169,12 +179,13 @@ def _evaluate_position(
         reasons.append(f"{holding_days}일 보유 후 기대수익 미달")
         time_stop_triggered = True
     sale_type, stage, quantity_fraction = "full", "", 1.0
-    take_profit_1_pct = float(policy.get("take_profit_1_pct", env_float("TAKE_PROFIT_1_PCT", 10)))
-    take_profit_2_pct = float(policy.get("take_profit_2_pct", env_float("TAKE_PROFIT_2_PCT", 20)))
-    take_profit_1_sell_ratio = float(policy.get("take_profit_1_sell_ratio", env_float("TAKE_PROFIT_1_SELL_RATIO", 50)))
+    target_policy = take_profit_policy_snapshot(policy)
+    take_profit_1_pct = target_policy['take_profit_1_pct']
+    take_profit_2_pct = target_policy['take_profit_2_pct']
+    take_profit_1_sell_ratio = target_policy['take_profit_1_sell_ratio']
     # Initial thresholds are conservative placeholders and must be tuned by
     # backtest before any real-account integration.
-    take_profit_allowed = policy.get("market_regime") not in set(policy.get("disable_take_profit_in_regimes") or ())
+    take_profit_allowed = target_policy['take_profit_allowed']
     if take_profit_allowed and not reasons and partial_taken and return_pct >= take_profit_2_pct:
         reasons.append(f"2차 익절 목표 +{take_profit_2_pct:.1f}% 도달")
         stage = "take_profit_2"
@@ -193,7 +204,7 @@ def _evaluate_position(
         "drop_triggered": drop_triggered, "giveback_triggered": giveback_triggered,
         "holding_days": holding_days, "time_stop_triggered": time_stop_triggered,
         "reasons": reasons, "sale_type": sale_type, "stage": stage, "quantity_fraction": quantity_fraction,
-        "prev_close": prev_close, "open_price": open_price,
+        "prev_close": prev_close, "open_price": open_price, **target_policy,
     }
 
 
@@ -311,6 +322,7 @@ def position_snapshot(
         "ma20": evaluation["ma20"],
         "atr20_pct": evaluation["atr20_pct"],
         "dynamic_stop_loss_pct": evaluation["stop_loss_pct"],
+        **{key: evaluation[key] for key in take_profit_policy_snapshot(sell_policy)},
         "distance_ma20_pct": (evaluation["close"] / evaluation["ma20"] - 1) * 100 if evaluation["ma20"] else None,
         "stop_loss_triggered": int(evaluation["stop_triggered"]),
         "ma20_break_triggered": int(evaluation["ma20_triggered"]),
