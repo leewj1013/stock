@@ -339,6 +339,9 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
         """
     )
     position_columns = {row[1] for row in connection.execute("PRAGMA table_info(position_checks)")}
+    risk_columns = {row[1] for row in connection.execute("PRAGMA table_info(portfolio_risk_snapshots)")}
+    if 'deposited_total' not in risk_columns:
+        connection.execute('ALTER TABLE portfolio_risk_snapshots ADD COLUMN deposited_total INTEGER')
     for name, definition in (
         ("atr20_pct", "REAL"), ("dynamic_stop_loss_pct", "REAL"),
         ("time_stop_triggered", "INTEGER NOT NULL DEFAULT 0"),
@@ -468,7 +471,7 @@ def virtual_deposit(amount: int, path: str = DB_PATH) -> dict[str, Any]:
     return virtual_trader_state(path=path)
 
 
-def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_release_policy: dict | None = None) -> dict[str, Any]:
+def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_release_policy: dict | None = None, max_holdings: int | None = None) -> dict[str, Any]:
     from .portfolio_risk import new_buys_allowed
     allowed, reason = new_buys_allowed(path, risk_release_policy)
     if not allowed:
@@ -505,6 +508,8 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_rele
         spent = 0
         trades = []
         for row in valid:
+            if max_holdings is not None and row['ticker'] not in open_costs and len(open_costs)>=max_holdings:
+                continue
             price = int(float(row["close"]))
             # Enforce the portfolio cap here as well, so stale logs or manual API
             # requests can never put the whole account into a single stock.
@@ -531,6 +536,7 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_rele
                 continue
             trades.append((now, row["ticker"], row.get("name", ""), price, quantity, cost, allocation_pct, float(row.get("score") or 0)))
             spent += cost
+            open_costs[row['ticker']] = open_costs.get(row['ticker'],0) + cost
         if not trades:
             raise ValueError("allocated amounts are below the stock prices")
         connection.executemany(
@@ -1010,7 +1016,7 @@ def active_strategy_version(path: str = DB_PATH) -> dict[str, Any]:
 
 
 def record_portfolio_risk(row: dict[str, Any], path: str = DB_PATH) -> None:
-    columns = ["created_at", "equity", "high_water", "daily_start_equity", "weekly_start_equity", "daily_return_pct", "weekly_return_pct", "drawdown_pct", "exposure_pct", "status", "reason"]
+    columns = ["created_at", "equity", "high_water", "daily_start_equity", "weekly_start_equity", "daily_return_pct", "weekly_return_pct", "drawdown_pct", "exposure_pct", "status", "reason", "deposited_total"]
     with closing(connect(path)) as connection:
         connection.execute(
             f"INSERT INTO portfolio_risk_snapshots({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",

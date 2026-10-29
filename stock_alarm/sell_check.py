@@ -33,7 +33,7 @@ POSITIONS_REPORT_LOG = "logs/positions_report.csv"
 class SellAlert:
     ticker: str
     name: str
-    entry_price: int
+    entry_price: float
     close: int
     return_pct: float
     reason: str
@@ -110,7 +110,7 @@ def _evaluate_position(
     audit row from drifting apart.
     """
     ticker = position["ticker"].strip()
-    entry_price = int(float(position["entry_price"]))
+    entry_price = float(position["entry_price"])
     # price_rows is only ever passed explicitly by the point-in-time backtest
     # (validation_backtest.py); the live path always leaves it None and fetches
     # naver_rows() itself. Reused here to gate the live-only Toss warning
@@ -284,7 +284,7 @@ def position_snapshot(
     sell_policy: dict | None = None,
 ) -> tuple[SellAlert | None, dict]:
     ticker = position["ticker"].strip()
-    entry_price = int(float(position["entry_price"]))
+    entry_price = float(position["entry_price"])
     base = {
         "position_id": position_id(position),
         "checked_at": datetime.now().isoformat(timespec="seconds"),
@@ -345,6 +345,7 @@ def find_alerts(
     virtual_quantities: dict[str, int] | None = None,
     sell_policy: dict | None = None,
     alerted_log_path: str = SELL_ALERTS_LOG,
+    history_path: str | None = None,
 ) -> list[SellAlert]:
     previous = previous_returns()
     best = max_returns()
@@ -355,7 +356,16 @@ def find_alerts(
     for position in positions:
         ticker = position["ticker"].strip()
         key = position_id(position)
-        if position_was_alerted(position, path=alerted_log_path):
+        if virtual_quantities.get(ticker) and history_path and position.get('entry_date'):
+            from .data_store import query_rows
+            history = query_rows("""SELECT close FROM position_checks WHERE ticker=? AND checked_at>=?
+                AND close>0 AND return_pct IS NOT NULL ORDER BY checked_at""",
+                (ticker,position.get('entry_date','')),path=history_path)
+            if history:
+                entry=float(position['entry_price'])
+                previous[key]=(float(history[-1]['close'])/entry-1)*100
+                best[key]=(max(float(row['close']) for row in history)/entry-1)*100
+        if not virtual_quantities.get(ticker) and position_was_alerted(position, path=alerted_log_path):
             if run_id:
                 snapshots.append({
                     "position_id": key,
@@ -585,8 +595,10 @@ def format_open_orders_message(orders: list[dict], today: date) -> str:
 def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_id: str | None, profile: dict) -> tuple[list[SellAlert], dict, set[str]]:
     from .data_store import virtual_position_states, virtual_trader_state, virtual_sell
     state = virtual_trader_state(path=profile["db_path"])
-    if profile.get("sell_alerts_log") != SELL_ALERTS_LOG:
-        positions = virtual_holding_positions(state)
+    held_positions = virtual_holding_positions(state)
+    held = {row['ticker'] for row in held_positions}
+    tracked_only = [row for row in positions if row['ticker'].strip() not in held] if profile.get("sell_alerts_log") == SELL_ALERTS_LOG else []
+    positions = held_positions + tracked_only
     quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
     # Snapshot of what's actually held before today's sells settle, so
     # notify-worthiness reflects a real position rather than a closed one.
@@ -599,7 +611,7 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
     alerts = find_alerts(
         positions, end_day, run_id,
         virtual_position_states(path=profile["db_path"]), quantities,
-        sell_policy, profile["sell_alerts_log"],
+        sell_policy, profile["sell_alerts_log"], history_path=profile['db_path'],
     )
     if alerts:
         write_log(alerts, path=profile["sell_alerts_log"])

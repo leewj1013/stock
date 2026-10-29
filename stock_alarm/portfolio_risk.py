@@ -72,16 +72,30 @@ def snapshot(state: dict, path: str = DB_PATH, now: datetime | None = None, expo
     equity = int(state.get("total_equity") or 0)
     today = now.date().isoformat()
     week_start = (now.date() - timedelta(days=now.weekday())).isoformat()
-    prior = latest_portfolio_risk(path)
-    today_rows = query_rows("SELECT equity FROM portfolio_risk_snapshots WHERE created_at >= ? ORDER BY snapshot_id LIMIT 1", (today,), path)
-    week_rows = query_rows("SELECT equity FROM portfolio_risk_snapshots WHERE created_at >= ? ORDER BY snapshot_id LIMIT 1", (week_start,), path)
-    daily_start = int(today_rows[0]["equity"]) if today_rows else int(prior.get("equity") or equity)
-    before_week = query_rows("SELECT equity FROM portfolio_risk_snapshots WHERE created_at < ? ORDER BY snapshot_id DESC LIMIT 1", (week_start,), path)
-    weekly_start = int(week_rows[0]["equity"]) if week_rows else int(before_week[0]["equity"]) if before_week else equity
+    until = now.isoformat(timespec="seconds")
+    rows = query_rows("SELECT * FROM portfolio_risk_snapshots WHERE created_at<=? ORDER BY snapshot_id DESC LIMIT 1", (until,), path)
+    prior = rows[0] if rows else {}
+    today_rows = query_rows("SELECT * FROM portfolio_risk_snapshots WHERE created_at>=? AND created_at<=? ORDER BY snapshot_id LIMIT 1", (today,until), path)
+    week_rows = query_rows("SELECT * FROM portfolio_risk_snapshots WHERE created_at>=? AND created_at<=? ORDER BY snapshot_id LIMIT 1", (week_start,until), path)
+    funds = query_rows('SELECT COALESCE(SUM(amount),0) amount FROM virtual_deposits WHERE created_at<=?',(until,),path)
+    deposited_total = int(funds[0]['amount']) if funds else 0
+    def deposits_after(anchor):
+        if anchor.get('deposited_total') is not None:
+            return max(0,deposited_total-int(anchor['deposited_total']))
+        # Legacy snapshots lack the cumulative marker; keep their original values.
+        rows = query_rows("SELECT COALESCE(SUM(amount),0) amount FROM virtual_deposits WHERE created_at>? AND created_at<=?", (anchor['created_at'],until), path)
+        return int(rows[0]['amount']) if rows else 0
+    daily_start = (int(today_rows[0]['daily_start_equity']) + deposits_after(today_rows[0]) if today_rows
+                   else int(prior['equity']) + deposits_after(prior) if prior else equity)
+    before_week = query_rows("SELECT * FROM portfolio_risk_snapshots WHERE created_at<? ORDER BY snapshot_id DESC LIMIT 1", (week_start,), path)
+    weekly_start = (int(week_rows[0]['weekly_start_equity']) + deposits_after(week_rows[0]) if week_rows
+                    else int(before_week[0]['equity']) + deposits_after(before_week[0]) if before_week else equity)
+    peak = int(prior.get('high_water') or equity) + (deposits_after(prior) if prior else 0)
     row = evaluate_risk_state(
-        state, daily_start, weekly_start, int(prior.get("high_water") or equity),
+        state, daily_start, weekly_start, peak,
         str(prior.get("status") or ""), now, exposure_limit_pct,
     )
+    row['deposited_total'] = deposited_total
     record_portfolio_risk(row, path)
     return row
 

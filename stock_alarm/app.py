@@ -1012,6 +1012,8 @@ def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, to
         held = len(virtual_trader_state(path=path or "data/stock_alarm.db").get("holdings", []))
         room = max(0, min(top_n, max_holdings - held))
     result, seen = [], set()
+    if room <= 0:
+        return result
     for _score, pick in ranked:
         if pick.ticker in seen:
             continue
@@ -1479,6 +1481,7 @@ def auto_buy_virtual_trader(
     max_position_pct_override: float | None = None,
     regime_exposure_multiplier: dict[str, float] | None = None,
     risk_release_policy: dict | None = None,
+    max_holdings_override: int | None = None,
 ) -> dict | None:
     if not picks or os.environ.get("VIRTUAL_TRADER_AUTO_BUY", "1") != "1":
         return None
@@ -1512,9 +1515,20 @@ def auto_buy_virtual_trader(
         for pick, allocation in zip(picks, allocations)
     ]
     try:
-        return virtual_buy(candidates, path=path, risk_release_policy=risk_release_policy)
+        options = {"max_holdings":max_holdings_override} if max_holdings_override is not None else {}
+        return virtual_buy(candidates, path=path, risk_release_policy=risk_release_policy, **options)
     except ValueError:
         return None
+
+
+def buy_for_profile(picks: list[Pick], profile: dict) -> dict | None:
+    limit = profile.get('max_volatility_atr_pct')
+    picks = [pick for pick in picks if limit is None or pick.atr20_pct <= limit]
+    return auto_buy_virtual_trader(picks, path=profile['db_path'],
+        sector_cap_override=profile['sector_cap_pct'], exposure_limit_override=profile['exposure_limit_pct'],
+        min_position_pct_override=profile['min_position_pct'], max_position_pct_override=profile['max_position_pct'],
+        regime_exposure_multiplier=profile['regime_exposure_multiplier'], risk_release_policy=profile.get('risk_release'),
+        max_holdings_override=profile.get('max_holdings'))
 
 
 def stop_and_target(pick: Pick) -> tuple[int, float, int, float]:
@@ -1609,7 +1623,7 @@ def run() -> None:
         from .trading_profiles import PROFILES
         from .shadow_trader import latest_trade_id, record_intraday_buys
         last_trade_id = latest_trade_id()
-        virtual_result = auto_buy_virtual_trader(picks, regime_exposure_multiplier=PROFILES["aggressive"]["regime_exposure_multiplier"])
+        virtual_result = buy_for_profile(picks, PROFILES["aggressive"])
         try:
             # Observation only: shadow the buys just made, at the same market
             # reading, before anything else changes the state they depend on.
@@ -1623,16 +1637,7 @@ def run() -> None:
         for name, profile in PROFILES.items():
             if name == "aggressive":
                 continue
-            auto_buy_virtual_trader(
-                picks_by_profile.get(name, []),
-                path=profile["db_path"],
-                sector_cap_override=profile["sector_cap_pct"],
-                exposure_limit_override=profile["exposure_limit_pct"],
-                min_position_pct_override=profile["min_position_pct"],
-                max_position_pct_override=profile["max_position_pct"],
-                regime_exposure_multiplier=profile["regime_exposure_multiplier"],
-                risk_release_policy=profile.get("risk_release"),
-            )
+            buy_for_profile(picks_by_profile.get(name, []), profile)
         finish_run(run_id)
     except Exception:
         finish_run(run_id, "failed")

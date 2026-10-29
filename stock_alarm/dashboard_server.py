@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from .app import effective_exposure_limit_pct, latest_naver_trading_day, load_env, naver_rows, write_error_log
 from .dashboard import latest_position_rows, render, today_recommendation_rows
-from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, virtual_buy, virtual_deposit, virtual_trader_state
+from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, query_rows, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
 from .sector_reference import load_sector_mapping
 from .trading_profiles import PROFILES
@@ -57,6 +57,31 @@ def valid_remote_token(authorization: str) -> bool:
 
 def recommendations() -> list[dict[str, str]]:
     return today_recommendation_rows()
+
+
+def manual_buy(profile: str) -> dict:
+    from . import app
+    if not app.is_market_alert_time():
+        raise ValueError('가상 매수는 거래일 장중에만 가능합니다.')
+    today=date.today()
+    rows=query_rows('''SELECT c.* FROM profile_candidate_selections s
+        JOIN candidate_snapshots c ON c.run_id=s.run_id AND c.ticker=s.ticker
+        WHERE s.profile=? AND s.selected=1 AND c.passed=1 AND s.run_id=(
+          SELECT run_id FROM strategy_runs WHERE run_type='recommendation' AND status='completed'
+          AND market_date=? ORDER BY started_at DESC LIMIT 1)''',(profile,today.isoformat()))
+    config=PROFILES[profile];eligible=[]
+    for row in rows:
+        app.naver_rows(row['ticker'],today-timedelta(days=90),today,max_cache_age_seconds=60)
+        evaluation=app.evaluate_naver_candidate(row['ticker'],row['name'],today,
+            int(os.environ.get('MIN_TRADING_VALUE','5000000000')),
+            float(os.environ.get('VOLUME_MULTIPLIER','1.5')),record_quality=True)
+        if evaluation.pick and evaluation.pick.score>=app.env_float('MIN_RECOMMEND_SCORE',50):
+            eligible.append((app.profile_total_score(evaluation.values,config['scoring_weights']),evaluation.pick))
+    eligible.sort(key=lambda item:item[0],reverse=True)
+    result=app.buy_for_profile([pick for _,pick in eligible],config)
+    if result is None:
+        raise ValueError('현재 성향의 유효 추천 또는 매수 가능 예산이 없습니다.')
+    return result
 
 
 def prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
@@ -357,7 +382,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(200, trader_payload(profile))
                 return
             if path == "/api/trader/buy":
-                result = virtual_buy(recommendations(), path=db_path)
+                result = manual_buy(profile)
                 self._json(200, {**trader_payload(profile), **{key: result[key] for key in ("spent", "bought", "executions")}})
                 return
             if path == "/api/trader/import":
