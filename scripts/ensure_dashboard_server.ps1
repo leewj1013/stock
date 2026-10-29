@@ -25,3 +25,9 @@ if (-not $existing) {
     Start-Process -FilePath $python -ArgumentList "-I", $runner, "stock_alarm.dashboard_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
     Start-Sleep -Seconds 2
 }
+
+$v2Port = if ($env:DASHBOARD_V2_PORT) { $env:DASHBOARD_V2_PORT } else { "8767" }
+$v2Existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ([int]$v2Port) -State Listen -ErrorAction SilentlyContinue
+if (-not $v2Existing) {
+    Start-Process -FilePath $python -ArgumentList "-I", $runner, "stock_alarm.dashboard_v2_server" -WorkingDirectory $projectRoot -WindowStyle Hidden
+}

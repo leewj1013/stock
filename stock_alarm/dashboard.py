@@ -1445,6 +1445,7 @@ def experiment_progress_cards(rows: list[dict[str, str]]) -> str:
 
 
 def research_tab() -> str:
+    from .profit_research import dashboard_section as profit_research_section
     from .sell_research import dashboard_section as sell_research_section
     from .entry_research import dashboard_section as entry_research_section
     from .risk_research import dashboard_section as risk_research_section
@@ -1456,6 +1457,7 @@ def research_tab() -> str:
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
+        + profit_research_section()
         + market_regime_card()
         + experiment_progress_cards(experiment_progress_rows())
         + market_group_section()

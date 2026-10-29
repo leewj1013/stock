@@ -79,6 +79,19 @@ class DashboardV2DataTest(unittest.TestCase):
         self.assertEqual("₩+30", account["realized"])
         self.assertEqual(["부분매도", "1", "₩530", "₩+30", "+6.00%", "1차 익절"], account["sales"][0][2:])
 
+    @patch("stock_alarm.dashboard_v2.Path.exists", return_value=True)
+    @patch("stock_alarm.dashboard_v2.recent_virtual_sales", return_value=[])
+    @patch("stock_alarm.dashboard_v2.recent_price_quality")
+    @patch("stock_alarm.dashboard_v2.recent_position_checks", return_value=[])
+    @patch("stock_alarm.dashboard_v2.query_rows", return_value=[{"created_at": "2026-10-27T15:22:00", "cash": 0, "valuation": 1100, "equity": 1100, "profit_loss": 100}])
+    @patch("stock_alarm.dashboard_v2.virtual_trader_state")
+    def test_kr_account_uses_valid_saved_price_when_position_check_is_missing(self, state, _snapshots, _checks, quality, _sales, _exists):
+        state.return_value = {"deposited": 1000, "realized_profit_loss": 0, "holdings": [{"name": "테스트", "ticker": "000001", "quantity": 2, "cost": 1000, "average_price": 500, "first_entry_at": "2026-10-27T09:00:00"}]}
+        quality.return_value = [{"ticker": "000001", "created_at": "2026-10-27T15:22:00", "status": "valid", "close": 550}]
+        account = _kr_account("neutral", "위험중립형")
+        self.assertEqual("2026-10-27 15:22", account["priceAsOf"])
+        self.assertEqual(["₩550", "2026-10-27 15:22", "₩+100", "+10.00%"], account["rows"][0][5:9])
+
     def test_comparison_chart_uses_common_dates_and_rebases_to_zero(self):
         chart = _comparison_chart([
             ("A", {"2026-10-19": 10, "2026-10-20": 21, "2026-10-21": 32}),
@@ -173,6 +186,20 @@ class DashboardV2DataTest(unittest.TestCase):
         result = dashboard_v2_payload("us", "compare")
         self.assertIn("compareChart", result)
         self.assertEqual(1, strategy.call_count)
+
+    @patch("stock_alarm.dashboard_v2._cached_signal_history")
+    def test_domestic_all_shows_one_recommendation_row_with_linked_sell(self, history):
+        history.return_value = [
+            {"date": "2026-10-21", "name": "A", "ticker": "1", "signal": "매도 신호", "reason": "매도", "status": "알림"},
+            {"date": "2026-10-20", "name": "A", "ticker": "1", "signal": "매수 추천", "reason": "추천", "status": "매도 알림", "detail": {"sellDate": "2026-10-21"}},
+            {"date": "2026-10-19", "name": "A", "ticker": "1", "signal": "매수 추천", "reason": "추천", "status": "추적 중"},
+        ]
+        result = dashboard_v2_payload("kr", "signals")
+        self.assertEqual(2, result["signalHistoryTotal"])
+        self.assertEqual("2026-10-21", result["signalHistory"][0]["detail"]["sellDate"])
+        self.assertEqual(1, dashboard_v2_payload("kr", "signals", filter_name="매도 신호")["signalHistoryTotal"])
+        self.assertEqual(1, dashboard_v2_payload("kr", "signals", filter_name="추적 중")["signalHistoryTotal"])
+        self.assertEqual(3, dashboard_v2_payload("us", "signals")["signalHistoryTotal"])
 
     @patch("stock_alarm.dashboard_v2._cached_signal_history")
     def test_signal_history_is_filtered_and_paged_on_server(self, history):

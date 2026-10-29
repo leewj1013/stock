@@ -22,4 +22,7 @@ th,td{font-size:14px}.pill{font-size:13px}.pill.buy,.pill.sell{color:#a93240}.pi
 .market-frame .axis-0{top:15.9%}.market-frame .axis-1{top:35.8%}.market-frame .axis-2{top:55.6%}.market-frame .axis-3{top:75.5%}
 .compare-frame .axis-0{top:8.9%}.compare-frame .axis-1{top:34.1%}.compare-frame .axis-2{top:59.3%}.compare-frame .axis-3{top:84.4%}
 .chart-key .series-0{background:#087d82}.chart-key .series-1{background:#e9a34c}.chart-key .series-2{background:#5873b5}
+.chart-key b.positive{color:var(--red)}.chart-key b.negative{color:var(--blue)}
 .signal-grid .reason{white-space:nowrap}.signal-grid td,.signal-grid th{white-space:nowrap}
+th[data-numeric],td[data-numeric],.metric strong,.mini-stats b,.market-item b,.market-item>span{text-align:right;font-variant-numeric:tabular-nums}
+.mini-stats b,.market-item>span{display:block}

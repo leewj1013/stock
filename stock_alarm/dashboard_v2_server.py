@@ -12,7 +12,8 @@ from .app import load_env
 from .dashboard_v2 import dashboard_v2_payload, real_account_payload
 
 
-ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path((RUNTIME_ROOT / "workspace.path").read_text(encoding="utf-8-sig").strip()) if (RUNTIME_ROOT / "workspace.path").exists() else RUNTIME_ROOT
 PORT = int(os.environ.get("DASHBOARD_V2_PORT", "8767"))
 
 

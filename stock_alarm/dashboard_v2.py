@@ -92,6 +92,10 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
             check = {}
             checked_at = ""
         price = float(check.get("close") or 0)
+        saved_price = quality.get(h["ticker"], {})
+        if price <= 0 and saved_price.get("status") == "valid" and str(saved_price.get("created_at") or "")[:10] >= entry_at:
+            price = float(saved_price.get("close") or 0)
+            checked_at = str(saved_price.get("created_at") or "") if price > 0 else ""
         cost = float(h["cost"])
         valuation = price * int(h["quantity"]) if price > 0 else None
         profit = valuation - cost if valuation is not None else None
@@ -101,7 +105,7 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
             holding_days = "기록 없음"
         if checked_at and price > 0:
             price_dates.append(checked_at)
-        if price <= 0 or quality.get(h["ticker"], {}).get("status") not in (None, "valid"):
+        if price <= 0 or saved_price.get("status") not in (None, "valid"):
             price_issues.append(h["name"] or h["ticker"])
         status = ("매도조건 충족" if check.get("decision") == "SELL" else
                   "1차 익절 완료" if h.get("position_status") == "partial" else
@@ -342,7 +346,8 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
     if view == "signals":
         term = query.casefold()
         rows = [row for row in _cached_signal_history(market, _history_source_signature(market))
-                if (filter_name == "전체" or filter_name == "매수 추천" and "매수" in row["signal"]
+                if (filter_name == "전체" and (market != "kr" or row["signal"] == "매수 추천")
+                    or filter_name == "매수 추천" and "매수" in row["signal"]
                     or filter_name == "매도 신호" and "매도" in row["signal"]
                     or filter_name == "추적 중" and "추적" in row["status"])
                 and term in f"{row['name']} {row['ticker']} {row['reason']}".casefold()]
@@ -366,10 +371,11 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
         latest_day = kospi[-1][0] if kospi else now.strftime("%Y%m%d")
         day = f"{latest_day[:4]}-{latest_day[4:6]}-{latest_day[6:8]}"
         if view == "research":
+            from .profit_research import dashboard_data as profit_research_data
             accounts = [_kr_account(key, label, include_sales=False) for key, label in (("aggressive", "적극투자형"), ("neutral", "위험중립형"))]
             research = [[row.get("experiment", "—"), row.get("risk_state", "진행 중"), row.get("progress", "—"), now.date().isoformat(), "진행"] for row in experiment_progress_rows()]
             experiments = [[row.get(key) or "기록 없음" for key in ("experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state")] for row in experiment_account_rows()]
-            return {"research": research, "experiments": experiments, "system": _kr_system(accounts, day)}
+            return {"profitResearch": profit_research_data(), "research": research, "experiments": experiments, "system": _kr_system(accounts, day)}
         picks = today_recommendation_rows()
         sells = today_sell_alert_rows()
         signals = [[r.get("name") or r.get("ticker") or "—", "매수 추천", r.get("reason") or "추천", str(r.get("created_at") or "")[-8:-3], r.get("aggressive_order_status") or "확인 중"] for r in picks]

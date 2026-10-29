@@ -224,6 +224,14 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("ensure_dashboard_server.ps1", script)
         self.assertIn("<LogonTrigger>", script)
 
+    def test_dashboard_start_task_also_starts_v2_hidden(self):
+        with open("scripts/ensure_dashboard_server.ps1", encoding="utf-8-sig") as file:
+            script = file.read()
+
+        self.assertIn('"stock_alarm.dashboard_v2_server"', script)
+        self.assertIn('DASHBOARD_V2_PORT', script)
+        self.assertIn('-WindowStyle Hidden', script)
+
     def test_register_task_registers_daily_stock_warning_collection(self):
         with open("scripts/register_daily_task.ps1", encoding="utf-8-sig") as file:
             script = file.read()
