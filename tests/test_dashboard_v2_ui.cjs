@@ -30,6 +30,7 @@ run(`sample.kr = {day:'2026-10-27', accounts:[{
 compareChart:{days:['2026-10-26','2026-10-27'],series:[{label:'계좌',color:'#000',values:[0,-2]}]}}`);
 const account = run('renderers.account()');
 assert.match(account, /총자산과 종목별 손익은 같은 저장가격/);
+assert.match(account, /장전 조회 대기/);
 assert.doesNotMatch(account, /총자산은 별도 계좌 평가 기록/);
 assert.match(account, /<td data-numeric class="negative">-2.00%<\/td>/);
 assert.match(account, /<td data-numeric class="positive">\+10.00%<\/td>/);

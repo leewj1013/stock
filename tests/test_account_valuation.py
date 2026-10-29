@@ -99,6 +99,17 @@ def test_v1_v2_share_totals_and_rows_despite_stale_snapshot_and_check():
              patch('stock_alarm.toss_client.TossClient',side_effect=ValueError('offline')):
             v1 = dashboard_server.trader_payload()
             v2 = dashboard_v2._kr_account('aggressive','test')
+            marks = [dict(ticker='A', observed_at='2026-10-30T08:30:00+09:00',
+                          price_at='2026-10-29T19:59:00+09:00', price=560,
+                          source='Toss 현재가', venue='UNSPECIFIED')]
+            with patch('stock_alarm.dashboard_server.read_premarket',return_value=(marks, {})), \
+                 patch('stock_alarm.dashboard_v2.read_premarket',return_value=(marks, {})):
+                pre_v1 = dashboard_server.trader_payload()
+                pre_v2 = dashboard_v2._kr_account('aggressive','test')
+            assert pre_v1['total_equity'] == 1220
+            assert pre_v2['asset'] == '₩1,220'
+            assert pre_v2['rows'][0][5] == '₩560'
+            assert '2026-10-29 19:59' in pre_v2['rows'][0][6]
         assert v1['total_equity'] == 1180
         assert v2['asset'] == '₩1,180'
         assert v2['cash'] == '₩100'

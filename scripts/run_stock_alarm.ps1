@@ -93,6 +93,7 @@ function RunFreshOptionalStep($name, $module) {
 }
 
 if ($mode -eq "open") {
+    RunOptionalStep "premarket_valuation" "stock_alarm.premarket_valuation"
     RunFreshStep "market_summary" "stock_alarm.market_summary"
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
     RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"

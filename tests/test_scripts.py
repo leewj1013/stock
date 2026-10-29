@@ -7,6 +7,12 @@ import tempfile
 
 
 class ScriptTest(unittest.TestCase):
+    def test_preopen_display_refresh_runs_before_market_summary(self):
+        script = Path('scripts/run_stock_alarm.ps1').read_text(encoding='utf-8-sig')
+        block = script.split('if ($mode -eq "open") {', 1)[1].split('if ($mode -eq "intraday")', 1)[0]
+        self.assertLess(block.index('RunOptionalStep "premarket_valuation"'), block.index('RunFreshStep "market_summary"'))
+        self.assertNotIn('virtual_trader_report', block)
+
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell regression")
     def test_native_stderr_does_not_abort_optional_steps(self):
         source = Path("scripts/run_stock_alarm.ps1").resolve()

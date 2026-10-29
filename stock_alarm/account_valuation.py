@@ -17,7 +17,7 @@ def price_after_entry(observed_at, entry_at):
     return observed is not None and entry is not None and observed >= entry
 
 
-def value_saved_account(state, checks, quality):
+def value_saved_account(state, checks, quality, display_marks=()):
     """Use the newest eligible check/quality mark for each current holding.
 
     Never use a historical account total with current quantities. Missing marks
@@ -35,11 +35,18 @@ def value_saved_account(state, checks, quality):
             stamp = observation_time(row.get(field))
             if stamp is None or not isfinite(price) or price <= 0:
                 continue
-            marks.setdefault(row.get('ticker'), []).append((stamp, price, row[field], source))
+            marks.setdefault(row.get('ticker'), []).append((stamp, price, row[field], source, '', ''))
+    for row in display_marks:
+        stamp = observation_time(row.get('observed_at'))
+        price_at = row.get('price_at')
+        price = row.get('price')
+        if stamp and observation_time(price_at) and isinstance(price, (int, float)) and isfinite(price) and price > 0:
+            marks.setdefault(row['ticker'], []).append((stamp, price, row['observed_at'], row['source'], price_at, row['venue']))
     holdings, missing, dates = [], [], []
     for holding in state['holdings']:
         h = dict(holding)
-        eligible = [m for m in marks.get(h['ticker'], []) if price_after_entry(m[2], h.get('first_entry_at'))]
+        eligible = [m for m in marks.get(h['ticker'], []) if price_after_entry(m[2], h.get('first_entry_at'))
+                    and (not m[4] or price_after_entry(m[4], h.get('first_entry_at')))]
         mark = max(eligible, key=lambda m: (m[0], m[3] == '가격 검증')) if eligible else None
         price = mark[1] if mark else None
         cost, quantity = float(h.get('cost') or 0), int(h.get('quantity') or 0)
@@ -47,7 +54,8 @@ def value_saved_account(state, checks, quality):
         profit = valuation - cost if valuation is not None else None
         h.update(current_price=price, valuation=valuation, profit_loss=profit,
                  return_pct=round(profit / cost * 100, 2) if profit is not None and cost else None,
-                 price_observed_at=mark[2] if mark else '', price_source=mark[3] if mark else '')
+                 price_observed_at=mark[2] if mark else '', price_source=mark[3] if mark else '',
+                 price_data_at=mark[4] if mark else '', price_venue=mark[5] if mark else '')
         holdings.append(h)
         if mark:
             dates.append(mark[2])
@@ -65,5 +73,5 @@ def value_saved_account(state, checks, quality):
             'price_unavailable_tickers': missing,
             'price_updated_at': max(dates, key=observation_time) if dates else '',
             'price_oldest_at': min(dates, key=observation_time) if dates else '',
-            'price_source': '저장된 최신 종목 점검·가격 검증 기록',
+            'price_source': '저장된 최신 종목 점검·가격 검증·장전 조회 기록',
             'price_basis_date': max(dates, key=observation_time)[:10] if dates else ''}
