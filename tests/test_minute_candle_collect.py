@@ -1,5 +1,5 @@
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,7 +9,8 @@ from stock_alarm import minute_candle_collect as collector
 
 
 def candle(time, price=100, volume=10):
-    return {"timestamp": f"2026-10-23T{time}:00+09:00", "openPrice": str(price),
+    end = datetime.fromisoformat(f"2026-10-23T{time}:00+09:00") + timedelta(minutes=1)
+    return {"timestamp": end.isoformat(), "openPrice": str(price),
             "highPrice": str(price + 1), "lowPrice": str(price - 1),
             "closePrice": str(price), "volume": str(volume)}
 
@@ -23,7 +24,7 @@ def test_fetch_pages_and_excludes_future_and_nonregular_times():
     now = datetime.fromisoformat("2026-10-23T09:40:30+09:00")
     bars = collector.fetch_day(client, "005930", date(2026, 10, 23), now)
     assert [bar[1][11:16] for bar in bars] == ["09:35", "09:00"]
-    assert all(bar[7] == "toss_unadjusted" for bar in bars)
+    assert all(bar[7] == "toss_unadjusted_start_v2" for bar in bars)
     assert client.candles.call_count == 2
     assert client.candles.call_args_list[0].kwargs["adjusted"] is False
 
@@ -86,3 +87,28 @@ def test_identical_source_duplicate_is_counted_without_creating_two_bars():
                                datetime.fromisoformat("2026-10-23T10:00:00+09:00"), diagnostics)
     assert len(rows) == 1
     assert diagnostics["duplicate_source"] == 1
+
+
+def test_end_timestamp_becomes_start_and_last_regular_minute_is_kept():
+    day = date(2026,10,23)
+    now = datetime.fromisoformat("2026-10-23T15:30:00+09:00")
+    assert collector.normalize(candle("09:00"),"005930",day,now)[1][11:16] == "09:00"
+    assert collector.normalize(candle("15:29"),"005930",day,now)[1][11:16] == "15:29"
+    assert collector.normalize(candle("15:30"),"005930",day,now) is None
+    assert collector.normalize(candle("10:00"),"005930",day,datetime.fromisoformat("2026-10-23T10:00:30+09:00")) is None
+
+
+def test_legacy_dataset_and_signals_are_archived_once(tmp_path):
+    path = str(tmp_path/"research.db")
+    with closing(research.connect(path)) as db:
+        db.execute("INSERT INTO minute_bars VALUES('A','2026-10-23T09:01:00+09:00',100,101,99,100,10,'toss_unadjusted','2026-10-23')")
+        db.execute("INSERT INTO metadata VALUES('day_signal_version','kr-opening-range-v1')")
+        db.execute("INSERT INTO day_signals VALUES('A','2026-10-23','kr-opening-range-v1','NO_SIGNAL','2026-10-23',NULL)")
+        db.commit()
+        collector.ensure_timestamp_basis(db)
+        assert db.execute("SELECT count(*) FROM minute_bars").fetchone()[0] == 0
+        assert db.execute("SELECT bar_at FROM minute_bars_timestamp_v1").fetchone()[0] == '2026-10-23T09:01:00+09:00'
+        assert db.execute("SELECT count(*) FROM day_signals_timestamp_v1").fetchone()[0] == 1
+        assert db.execute("SELECT value FROM metadata WHERE key='day_signal_version_timestamp_v1'").fetchone()[0] == 'kr-opening-range-v1'
+        collector.ensure_timestamp_basis(db)
+        assert db.execute("SELECT count(*) FROM minute_bars_timestamp_v1").fetchone()[0] == 1

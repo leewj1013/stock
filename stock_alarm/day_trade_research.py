@@ -7,7 +7,7 @@ from statistics import median
 
 KST = timezone(timedelta(hours=9))
 
-VERSION = "kr-opening-range-v1"
+VERSION = "kr-opening-range-v2"
 RULES = {"opening_start": "09:00", "opening_end": "09:29", "signal_end": "10:59",
          "relative_volume_min": 1.5, "planned_entry": "next_minute_open",
          "planned_exit": "15:20_next_minute_open", "opening_volume_excludes": "09:00"}

@@ -183,6 +183,9 @@ class TossClient:
             query["before"] = before
         return self._get(f"/api/v1/candles?{urllib.parse.urlencode(query)}").get("result", {})
 
+    def orderbook(self, symbol: str) -> dict:
+        return self._get(f"/api/v1/orderbook?{urllib.parse.urlencode({'symbol': symbol})}").get("result", {})
+
     def market_calendar_kr(self) -> dict:
         """Yesterday/today/tomorrow's KR trading hours (integrated KRX+NXT)."""
         return self._get("/api/v1/market-calendar/KR").get("result", {})

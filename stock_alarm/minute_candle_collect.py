@@ -8,6 +8,31 @@ from .domestic_horizon_research import PATH, connect, harvest
 
 KST = timezone(timedelta(hours=9))
 MAX_PAGES = 6
+TIMESTAMP_BASIS = "bar_start_v2"
+
+
+def ensure_timestamp_basis(db):
+    """Archive the incorrectly labelled dataset before collecting corrected bars."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        saved = db.execute("SELECT value FROM metadata WHERE key='minute_timestamp_basis'").fetchone()
+        if saved and saved[0] != TIMESTAMP_BASIS:
+            raise ValueError("Unknown minute timestamp basis")
+        if not saved:
+            for table in ("minute_bars", "minute_quality", "day_signals"):
+                if db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]:
+                    schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0]
+                    db.execute(f"ALTER TABLE {table} RENAME TO {table}_timestamp_v1")
+                    db.execute(schema)
+            for key in ("day_signal_version", "day_signal_rules"):
+                db.execute("INSERT OR IGNORE INTO metadata SELECT key||'_timestamp_v1',value FROM metadata WHERE key=?", (key,))
+                db.execute("DELETE FROM metadata WHERE key=?", (key,))
+            db.execute("INSERT INTO metadata VALUES ('minute_timestamp_basis',?)", (TIMESTAMP_BASIS,))
+            db.execute("INSERT INTO metadata VALUES ('minute_timestamp_migrated_at',?)", (datetime.now(KST).isoformat(timespec="seconds"),))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def normalize(candle, ticker, day, now):
@@ -15,7 +40,8 @@ def normalize(candle, ticker, day, now):
         stamp = datetime.fromisoformat(str(candle["timestamp"]).replace("Z", "+00:00"))
         if stamp.tzinfo is None:
             raise ValueError("Minute timestamp needs a timezone")
-        stamp = stamp.astimezone(KST)
+        # Toss 1m timestamps mark the end of [timestamp - 1 minute, timestamp).
+        stamp = stamp.astimezone(KST) - timedelta(minutes=1)
         if stamp.date() != day or not (9 <= stamp.hour < 16) or stamp.time() >= datetime.strptime("15:30", "%H:%M").time():
             return None
         if stamp.second or stamp.microsecond or stamp >= now.replace(second=0, microsecond=0):
@@ -29,12 +55,13 @@ def normalize(candle, ticker, day, now):
             or low > min(opening, close) or low > high or volume < 0):
         raise ValueError(f"Invalid OHLCV for {ticker} at {stamp.isoformat()}")
     return (ticker, stamp.isoformat(timespec="seconds"), opening, high, low, close,
-            volume, "toss_unadjusted", now.isoformat(timespec="seconds"))
+            volume, "toss_unadjusted_start_v2", now.isoformat(timespec="seconds"))
 
 
 def fetch_day(client, ticker, day, now, diagnostics=None):
     """Page backward until the first regular-hours minute is crossed."""
-    rows, before, seen = {}, None, set()
+    rows, seen = {}, set()
+    before = datetime.combine(day, datetime.min.time(), KST).replace(hour=15, minute=30).isoformat()
     duplicate_source = 0
     for _ in range(MAX_PAGES):
         result = client.candles(ticker, interval="1m", count=200, before=before, adjusted=False)
@@ -76,11 +103,14 @@ def run(path=PATH, source=None, client=None, now=None):
     now = now.astimezone(KST)
     harvested = harvest(source or DB_PATH, path)
     with closing(connect(path)) as db:
-        candidates = db.execute("""SELECT ticker,signal_day,updated_at,error FROM observations
-            WHERE kind='day' AND signal_day>=? AND signal_day<=? ORDER BY signal_day,ticker""",
-            ((now.date() - timedelta(days=3)).isoformat(), now.date().isoformat())).fetchall()
+        ensure_timestamp_basis(db)
+        candidates = db.execute("""SELECT o.ticker,o.signal_day,o.updated_at,o.error,q.missing
+            FROM observations o LEFT JOIN minute_quality q ON q.ticker=o.ticker AND q.signal_day=o.signal_day
+            WHERE o.kind='day' AND o.signal_day<=? ORDER BY o.signal_day,o.ticker""",
+            (now.date().isoformat(),)).fetchall()
         candidates = [row for row in candidates if row["signal_day"] == now.date().isoformat()
-                      or not row["updated_at"] or row["error"]]
+                      or row["missing"] is None or not row["updated_at"] or row["error"]
+                      or (row["missing"] and row["signal_day"] >= (now.date()-timedelta(days=3)).isoformat())]
         if not candidates:
             return {"candidates": 0, "bars_added": 0, "failures": 0, "harvested": harvested}
         if client is None:
