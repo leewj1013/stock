@@ -10,13 +10,15 @@ from .investment_calendar import calendar
 from .investment_insights import attribution, concentration, execution_quality, freshness, related_positions, saved_account
 from .investment_market import candidates, market_breadth, recommendation_changes, research_coverage
 from .trading_profiles import PROFILES
+from .investment_timeline import dashboard_data as timeline_data
+from .decision_evidence import dashboard_data as evidence_data
 
 
 def panel(title, headers, data):
     return {'title': title, 'headers': headers, **data}
 
 
-def account_panels(path, detail=True):
+def account_panels(path, detail=True, profile=None):
     state, buys, sales, deposits, refresh = saved_account(path)
     snapshots = query_rows('SELECT * FROM virtual_valuation_snapshots ORDER BY created_at DESC LIMIT 2000', path=path)
     change = attribution(state, snapshots, deposits, sales)
@@ -47,12 +49,16 @@ def account_panels(path, detail=True):
               panel('함께 움직이는 보유종목', ['종목', '비교 종목', '상관계수', '합산 비중', '가격 기준일'], related_positions(state) if detail else {'rows': []}),
               panel('매매 실행 품질', ['체결 시각', '종목', '구분', '대응 신호가', '가상 체결가', '불리한 가격 차이', '기록 비용', '순실현손익'],
                     execution_quality(buys, sales, references, checks))]
+    if detail:
+        panels.append(panel('판단 시점 기록', ['판단·체결 시각', '유형', '종목', '종목코드', '가격', '점수', '사유', '당시 규칙', '보존 구분', '기록 상태'],
+                            evidence_data(path, profile=profile, recommendation_path=PROFILES['aggressive']['db_path'])))
     return {'panels': panels, 'change': change, 'prices': prices, 'events': events}
 
 
 def _signature():
     files = [Path(p['db_path']) for p in PROFILES.values()]
     files += [Path('data/investment_calendar.db'), Path('data/market_group_snapshot.db'),
+              Path('data/investment_timeline.db'),
               Path('data/profit_research.db'), Path('data/profit_research_dips_v1.db'),
               Path('.cache/sector_mapping.json')]
     return tuple((str(p), f.stat().st_mtime_ns, f.stat().st_size)
@@ -73,7 +79,7 @@ def _cached(view, signature, bucket):
     for key, name in (('aggressive', '적극투자형'), ('neutral', '위험중립형')):
         path = PROFILES[key]['db_path']
         if Path(path).is_file():
-            accounts.append({'name': name, **account_panels(path, detail=view == 'account')})
+            accounts.append({'name': name, **account_panels(path, detail=view == 'account', profile=key)})
         else:
             accounts.append({'name': name, 'panels': [], 'change': {'available': False},
                              'prices': {'warnings': 0}, 'events': {'rows': [], 'checks': []}})
@@ -99,7 +105,8 @@ def _cached(view, signature, bucket):
                                {'rows': [r[:3] for r in sorted(upcoming, key=lambda r: r[2])[:5]],
                                 'note': '향후 30일 · 원문과 수집 상태는 계좌 분석에서 확인하세요.',
                                 'empty': '확인된 예정 일정이 없습니다. 일정 수집 상태는 계좌에서 확인하세요.'})],
-            'panels': [panel('국내 시장 내부 흐름', ['항목', '결과'], market_breadth(candidates()))]}
+            'panels': [panel('전일 대비 변경 내역', ['변경 유형', '대상', '이전', '현재'], timeline_data()),
+                       panel('국내 시장 내부 흐름', ['항목', '결과'], market_breadth(candidates()))]}
 
 
 def render_panel(item, opened=False):
@@ -113,8 +120,12 @@ def render_panel(item, opened=False):
     body = ''.join('<tr>' + ''.join(f'<td>{cell(v)}</td>' for v in row) + '</tr>' for row in item.get('rows', []))
     table = f'<div class="table-scroll"><table><thead><tr>{heads}</tr></thead><tbody>{body}</tbody></table></div>' if body else '<p class="muted">' + escape(item.get('empty') or '확인된 기록이 없습니다. 수집 상태와 비교 기준을 확인해 주세요.') + '</p>'
     extra = ''
+    if item.get('records'):
+        extra += '<details><summary>당시 전체 기록 보기</summary>' + ''.join(
+            '<details><summary>'+escape(r['title'])+'</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">'
+            +escape(r['payload'])+'</pre></details>' for r in item['records']) + '</details>'
     if item.get('sectors'):
-        extra = render_panel(panel('업종 강세·약세', ['업종', '등락률', '기준 시각'], {'rows': item['sectors']}))
+        extra += render_panel(panel('업종 강세·약세', ['업종', '등락률', '기준 시각'], {'rows': item['sectors']}))
     content = table + '<p class="muted">' + escape(item.get('note') or '') + '</p>' + extra
     return (f'<section><h2>{escape(item["title"])}</h2>{content}</section>' if opened else
             f'<details class="compact-details"><summary>{escape(item["title"])}</summary><div class="details-body">{content}</div></details>')

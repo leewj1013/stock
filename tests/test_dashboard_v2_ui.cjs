@@ -52,3 +52,9 @@ assert.match(insight, /DART 원문/);
 run(`state.market='kr'; state.account=0; sample.kr.accounts[0]={name:'계좌',kind:'가상',asset:'₩100',cash:'₩10',daily:'₩0',returnPct:'0%',hold:'0종목',unrealized:'₩0',priceIssues:[],rows:[],sales:[],insights:[{title:'계좌 변동 이유',headers:['항목'],rows:[['입금']]}]}`);
 assert.match(run('renderers.account()'), /계좌 변동 이유/);
 console.log('investment insights, escaping and account integration: OK');
+
+const preserved = run(`insightPanel(escapeData({title:'판단 시점 기록',headers:['내용'],rows:[],records:[{title:'당시 <제목>',payload:'<script>alert(1)</script>'}]}))`);
+assert.doesNotMatch(preserved, /<script>/);
+assert.match(preserved, /당시 전체 기록 보기/);
+assert.match(preserved, /&lt;script&gt;/);
+console.log('immutable decision record rendering: OK');

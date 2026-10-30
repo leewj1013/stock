@@ -165,7 +165,8 @@ function insightPanel(item, opened=false) {
   const rows = (item.rows || []).map(row=>`<tr>${row.map(value=>`<td>${cell(value)}</td>`).join('')}</tr>`);
   const body = (rows.length ? table(item.headers, rows) : `<p class="hint">${item.empty || '확인된 기록이 없습니다. 수집 상태와 비교 기준을 확인해 주세요.'}</p>`) + (item.note ? `<p class="hint">${item.note}</p>` : '');
   const sectors = item.sectors?.length ? insightPanel({title:'업종 강세·약세',headers:['업종','등락률','기준 시각'],rows:item.sectors}) : '';
-  return opened ? `<section class="panel pad insight-summary"><h2>${item.title}</h2>${body}${sectors}</section>` : `<details class="insight-details"><summary>${item.title}</summary><div>${body}${sectors}</div></details>`;
+  const records = item.records?.length ? `<details><summary>당시 전체 기록 보기</summary>${item.records.map(r=>`<details><summary>${r.title}</summary><pre class="evidence-record">${r.payload}</pre></details>`).join('')}</details>` : '';
+  return opened ? `<section class="panel pad insight-summary"><h2>${item.title}</h2>${body}${sectors}${records}</section>` : `<details class="insight-details"><summary>${item.title}</summary><div>${body}${sectors}${records}</div></details>`;
 }
 const todayWithRecords = renderers.today;
 renderers.today = function () {

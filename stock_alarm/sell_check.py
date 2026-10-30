@@ -630,7 +630,11 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
             write_error_log(error)
     result = virtual_sell([
         {"ticker": alert.ticker, "name": alert.name, "close": alert.close, "reason": alert.reason,
-         "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction}
+         "sale_type": alert.sale_type, "stage": alert.stage, "quantity_fraction": alert.quantity_fraction,
+         "entry_price": alert.entry_price, "return_pct": alert.return_pct, "holding_days": alert.holding_days,
+         "prev_close": alert.prev_close, "open_price": alert.open_price,
+         "decision_context": {'sell_policy': sell_policy, 'run_id': run_id or '',
+                              'profile': profile_label(profile['sell_alerts_log'])}}
         for alert in alerts
     ], path=profile["db_path"])
     return alerts, result, held_tickers

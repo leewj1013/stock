@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 
 DB_PATH = "data/stock_alarm.db"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 STRATEGY_VERSION = "learned-risk-managed-v6"
 
 
@@ -363,6 +363,8 @@ def connect(path: str = DB_PATH) -> sqlite3.Connection:
     for name, definition in (("validation_json", "TEXT"), ("p_value", "REAL"), ("decision_reason", "TEXT")):
         if name not in strategy_columns:
             connection.execute(f"ALTER TABLE learned_strategy_versions ADD COLUMN {name} {definition}")
+    from .decision_evidence import schema as evidence_schema
+    evidence_schema(connection)
     connection.commit()
     return connection
 
@@ -516,6 +518,7 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_rele
         portfolio_budget = max(0, int(account_equity * portfolio_limit_pct / 100) - sum(open_costs.values()))
         spent = 0
         trades = []
+        evidence_inputs = []
         for row in valid:
             if max_holdings is not None and row['ticker'] not in open_costs and len(open_costs)>=max_holdings:
                 continue
@@ -544,14 +547,22 @@ def virtual_buy(candidates: list[dict[str, Any]], path: str = DB_PATH, risk_rele
             if target_cost > 0 and cost < target_cost * min_fill_ratio:
                 continue
             trades.append((now, row["ticker"], row.get("name", ""), price, quantity, cost, allocation_pct, float(row.get("score") or 0)))
+            evidence_inputs.append({key: row[key] for key in ('ticker','name','close','score','allocation_pct','portfolio_limit_pct','price_quality') if key in row})
             spent += cost
             open_costs[row['ticker']] = open_costs.get(row['ticker'],0) + cost
         if not trades:
             raise ValueError("allocated amounts are below the stock prices")
-        connection.executemany(
-            """INSERT INTO virtual_trades(created_at,ticker,name,price,quantity,cost,allocation_pct,score)
-               VALUES(?,?,?,?,?,?,?,?)""", trades,
-        )
+        from .decision_evidence import append as evidence_append
+        for trade, decision_input in zip(trades, evidence_inputs):
+            cursor = connection.execute(
+                """INSERT INTO virtual_trades(created_at,ticker,name,price,quantity,cost,allocation_pct,score)
+                   VALUES(?,?,?,?,?,?,?,?)""", trade)
+            evidence_append(connection, 'buy', cursor.lastrowid, trade[1], now,
+                            {'execution': dict(zip(('created_at','ticker','name','price','quantity','cost','allocation_pct','score'), trade)),
+                             'input': decision_input, 'rules': {'environment': collection_settings(),
+                             'max_position_pct': max_position_pct, 'min_fill_ratio': min_fill_ratio,
+                             'max_holdings': max_holdings, 'risk_release_policy': risk_release_policy},
+                             'batch_before': {'cash': cash, 'equity_at_cost': account_equity, 'portfolio_budget': portfolio_budget}})
         for trade in trades:
             connection.execute(
                 """INSERT INTO virtual_position_states(ticker,status,remaining_quantity,updated_at)
@@ -622,6 +633,7 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
         connection.execute("BEGIN IMMEDIATE")
         total_proceeds = 0
         sales = []
+        evidence_inputs = []
         # A stale duplicate position row (e.g. an old closed entry never
         # pruned from data/positions.csv) can make find_alerts() emit two
         # alerts for the same ticker in one call. Sales for earlier alerts
@@ -654,14 +666,20 @@ def virtual_sell(alerts: list[dict[str, Any]], path: str = DB_PATH) -> dict[str,
             proceeds = price * sale_quantity
             stage = str(alert.get("stage") or "")
             sales.append((now, ticker, alert.get("name") or bought[2] or "", price, sale_quantity, proceeds, sale_cost_basis, proceeds - sale_cost_basis, alert.get("reason", ""), sale_type, stage))
+            evidence_inputs.append({key: alert[key] for key in ('ticker','name','close','reason','sale_type','stage','quantity_fraction','quantity','entry_price','return_pct','holding_days','prev_close','open_price','decision_context') if key in alert})
             reserved_quantity[ticker] = reserved_quantity.get(ticker, 0) + sale_quantity
             reserved_cost_basis[ticker] = reserved_cost_basis.get(ticker, 0) + sale_cost_basis
             total_proceeds += proceeds
         if sales:
-            connection.executemany(
-                """INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason,sale_type,stage)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""", sales,
-            )
+            from .decision_evidence import append as evidence_append
+            for sale, decision_input in zip(sales, evidence_inputs):
+                cursor = connection.execute(
+                    """INSERT INTO virtual_sales(created_at,ticker,name,price,quantity,proceeds,cost_basis,realized_profit_loss,reason,sale_type,stage)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""", sale)
+                evidence_append(connection, 'sell', cursor.lastrowid, sale[1], now,
+                                {'execution': dict(zip(('created_at','ticker','name','price','quantity','proceeds','cost_basis','realized_profit_loss','reason','sale_type','stage'), sale)),
+                                 'input': decision_input, 'rules': {'environment': collection_settings(),
+                                 'decision_context': decision_input.get('decision_context', {})}})
             for sale in sales:
                 remaining = connection.execute(
                     """SELECT COALESCE(SUM(quantity),0) -
@@ -767,6 +785,8 @@ def write_candidates(run_id: str, rows: Iterable[dict[str, Any]], path: str = DB
             f"INSERT OR REPLACE INTO candidate_snapshots (run_id,{','.join(columns)}) VALUES ({placeholders})",
             values,
         )
+        from .decision_evidence import recommendations
+        recommendations(connection, run_id)
         connection.commit()
 
 
@@ -782,6 +802,8 @@ def write_profile_selections(run_id: str, profile: str, rows: Iterable[dict[str,
             "INSERT OR REPLACE INTO profile_candidate_selections (run_id,profile,ticker,rank,selected,profile_score) VALUES (?,?,?,?,?,?)",
             values,
         )
+        from .decision_evidence import recommendations
+        recommendations(connection, run_id)
         connection.commit()
 
 
@@ -809,6 +831,8 @@ def write_position_checks(run_id: str, rows: Iterable[dict[str, Any]], path: str
             f"INSERT OR REPLACE INTO position_checks (run_id,{','.join(columns)}) VALUES ({placeholders})",
             values,
         )
+        from .decision_evidence import sell_checks
+        sell_checks(connection, run_id)
         connection.commit()
 
 
