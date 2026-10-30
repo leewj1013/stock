@@ -2161,7 +2161,7 @@ function renderTrader(message="") {{
   document.getElementById("home-price-updated").textContent=(trader.queried_at||"확인 중").replace("T"," ");
   document.getElementById("home-price-basis").textContent=trader.price_basis_date||"확인 불가";
   const unavailable=trader.price_unavailable_tickers || [];
-  document.getElementById("trader-price-status").textContent = (unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · 가격 기준 ${{trader.price_basis_date || "확인 불가"}} · 관측 ${{(trader.price_oldest_at || "").replace("T"," ")}} ~ ${{(trader.price_updated_at || "").replace("T"," ")}} · 화면 조회 ${{(trader.queried_at || "").replace("T"," ")}}`) + ` · ${{trader.premarket_label || "장전 조회 대기"}}`;
+  document.getElementById("trader-price-status").textContent = (unavailable.length ? `가격 확인 불가: ${{unavailable.join(", ")}}` : `${{trader.price_source || ""}} · 가격 기준 ${{trader.price_basis_date || "확인 불가"}} · 관측 ${{(trader.price_oldest_at || "").replace("T"," ")}} ~ ${{(trader.price_updated_at || "").replace("T"," ")}} · 화면 조회 ${{(trader.queried_at || "").replace("T"," ")}}`) + ` · ${{trader.premarket_label || "장전 조회 대기"}} · ${{trader.market_session || ""}}`;
   const body = document.getElementById("trader-holdings"); body.textContent = "";
   (trader.holdings || []).forEach(item => {{
     const row = document.createElement("tr");

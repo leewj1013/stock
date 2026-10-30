@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot "deploy_secure_runtime.ps1") | Out-Host
 $runtimePointer = Join-Path $env:USERPROFILE ".stockAlarmSecure\current_runtime.path"
@@ -61,7 +61,7 @@ $intradayXml = @"
       <Enabled>true</Enabled>
       <Repetition>
       <Interval>PT5M</Interval>
-        <Duration>PT6H50M</Duration>
+        <Duration>PT9H10M</Duration>
         <StopAtDurationEnd>true</StopAtDurationEnd>
       </Repetition>
       <ScheduleByWeek>
@@ -139,7 +139,7 @@ $dashboardServerXml = @"
       <Enabled>true</Enabled>
       <Repetition>
         <Interval>PT15M</Interval>
-        <Duration>PT6H50M</Duration>
+        <Duration>PT9H10M</Duration>
         <StopAtDurationEnd>true</StopAtDurationEnd>
       </Repetition>
       <ScheduleByWeek>

@@ -14,6 +14,8 @@ from .market_summary import _read_us_cache
 from .trading_profiles import PROFILES
 from .account_valuation import value_saved_account, price_after_entry as _price_after_entry
 from .premarket_valuation import read_premarket, refresh_label, refresh_check
+from .market_sessions import label as session_label
+from .stock_events import display as stock_event_display
 from .us_dashboard import STALE_DAYS, STATE_LABELS, max_drawdown_pct, read_csv, read_ledger, read_strategy
 from .us_strategy_account import ACCOUNTS
 
@@ -86,6 +88,7 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
         checks.setdefault(check["ticker"], check)
     rows = []
     price_issues = []
+    event_issues=[]
     for h in state["holdings"]:
         check = checks.get(h["ticker"], {})
         entry_at = str(h.get("first_entry_at") or "")
@@ -111,6 +114,11 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
         status = ("매도조건 충족" if check.get("decision") == "SELL" else
                   "1차 익절 완료" if h.get("position_status") == "partial" else
                   "정상 보유" if check else "점검 기록 없음")
+        event=stock_event_display(h['ticker'],bool(entry_at and entry_at[:10]<date.today().isoformat()))
+        if event['reasons']:
+            status='매매 보류: '+'; '.join(event['reasons']);event_issues.append(h['name'] or h['ticker'])
+        if event['advisories']:
+            status+=' · 기업행동 공시 제목 확인(효력일 미확인)'
         stop_pct = float(check.get("dynamic_stop_loss_pct") or -5) if check else None
         stop = _money(round(float(h["average_price"]) * (1 + stop_pct / 100)), "kr") if stop_pct is not None else "기록 없음"
         rows.append([f"{h['name'] or h['ticker']} ({h['ticker']})", str(h["quantity"]),
@@ -129,7 +137,7 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
                       str(sale.get("quantity") or "—"), _money(sale.get("price"), "kr"),
                       _money(realized, "kr", True), _pct(realized / basis * 100) if basis else "기록 없음",
                       sale.get("reason") or "—"])
-    return {"name": name, "kind": "가상매매 · 현재 잔량 × 최신 저장가격", "asset": _money(total, "kr"), "daily": _money(recent_change, "kr", True), "cash": _money(state.get("cash", 0), "kr"), "marketValue": _money(state["holdings_value"], "kr"), "unrealized": _money(state["unrealized_profit_loss"], "kr", True), "hold": f"{len(rows)}종목", "returnPct": _pct(state['total_return_pct']), "priceAsOf": state['price_updated_at'].replace("T", " ")[:16] or "기록 없음", "priceOldestAt": state['price_oldest_at'].replace("T", " ")[:16] or "기록 없음", "priceIssues": price_issues, "premarketStatus": refresh_label(refresh_status), "premarketCheck": refresh_check(refresh_status), "realized": _money(state["realized_profit_loss"], "kr", True), "sales": sales, "rows": rows}
+    return {"name": name, "kind": "가상매매 · 현재 잔량 × 최신 저장가격", "asset": _money(total, "kr"), "daily": _money(recent_change, "kr", True), "cash": _money(state.get("cash", 0), "kr"), "marketValue": _money(state["holdings_value"], "kr"), "unrealized": _money(state["unrealized_profit_loss"], "kr", True), "hold": f"{len(rows)}종목", "returnPct": _pct(state['total_return_pct']), "priceAsOf": state['price_updated_at'].replace("T", " ")[:16] or "기록 없음", "priceOldestAt": state['price_oldest_at'].replace("T", " ")[:16] or "기록 없음", "priceIssues": price_issues, "premarketStatus": refresh_label(refresh_status), "marketSession":session_label(), "eventIssues":event_issues, "premarketCheck": refresh_check(refresh_status), "realized": _money(state["realized_profit_loss"], "kr", True), "sales": sales, "rows": rows}
 
 
 def _us_account(account, data: dict | None = None) -> dict:
@@ -253,6 +261,8 @@ def _kr_system(accounts: list[dict] | None = None, market_day: str = "") -> dict
                  operational[key]["time"].replace("T", " ")[:16]] for key, name in labels]
     issues = [[row.get("source") or "—", row.get("item") or "—", row.get("status") or "—"] for row in actionable_issue_rows()]
     for account in accounts or []:
+        if account.get('eventIssues'):
+            issues.append(['종목 예외',account['name'],f"매매 보류 확인 {len(account['eventIssues'])}종목"])
         if account.get("priceIssues"):
             services[2][1] = "확인 필요"
             issues.append(["가격 데이터", account["name"], f"종목별 점검 필요 {len(account['priceIssues'])}건"])

@@ -330,6 +330,10 @@ def is_trading_day(today: date | None = None) -> bool:
 
 def is_market_alert_time(now: datetime | None = None) -> bool:
     now = now or datetime.now()
+    from .market_sessions import regular_allowed
+    official = regular_allowed(now)
+    if official is not None:
+        return official and is_trading_day(now.date())
     return time(9, 0) <= now.time() <= time(15, 30) and is_trading_day(now.date())
 
 
@@ -1489,6 +1493,14 @@ def auto_buy_virtual_trader(
     from .portfolio_risk import buy_allocation_scale, new_buys_allowed
     state = virtual_trader_state(path=path)
     if state.get("cash", 0) <= 0:
+        return None
+    from .stock_events import blocked
+    held={h['ticker']:h for h in state.get('holdings',[])}
+    excluded=blocked([p.ticker for p in picks],held)
+    if excluded:
+        print('virtual_buy stock_review_skipped='+','.join(sorted(excluded)))
+    picks=[p for p in picks if p.ticker not in excluded]
+    if not picks:
         return None
     allowed, _reason = new_buys_allowed(path=path, release_policy=risk_release_policy)
     if not allowed:

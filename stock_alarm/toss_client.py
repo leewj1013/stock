@@ -118,6 +118,13 @@ class TossClient:
         result = self._get(f"/api/v1/prices?{query}").get("result", [])
         return result if isinstance(result, list) else []
 
+    def stocks(self, symbols: list[str]) -> list[dict]:
+        if not symbols or len(symbols)>200:
+            raise ValueError('symbols must contain between 1 and 200 items')
+        query=urllib.parse.urlencode({'symbols':','.join(symbols)})
+        result=self._get('/api/v1/stocks?'+query).get('result',[])
+        return result if isinstance(result,list) else []
+
     def accounts(self) -> list[dict]:
         result = self._get("/api/v1/accounts").get("result", [])
         return result if isinstance(result, list) else []

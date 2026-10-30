@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 # Windows PowerShell 5.1 writes `>>` redirections as UTF-16LE by default,
@@ -10,6 +10,18 @@ $projectRoot = if (Test-Path -LiteralPath $workspaceMarker) { (Get-Content -Lite
 Set-Location $projectRoot
 $env:PYTHONIOENCODING = "utf-8"
 $mode = if ($args.Count -gt 0) { $args[0] } else { "daily" }
+# A delayed exchange close must not hold the trading mutex while waiting.
+if ($mode -eq "daily") {
+    $closePython = Join-Path $runtimeRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $closePython)) { $closePython = (Get-Command python).Source }
+    $closeRunner = Join-Path $runtimeRoot "stock_alarm\isolated_runner.py"
+    $closeOutput = & $closePython -I $closeRunner stock_alarm.market_sessions --close-wait-seconds
+    $closeSeconds = 0
+    if ([int]::TryParse([string]$closeOutput, [ref]$closeSeconds) -and $closeSeconds -gt 0 -and $closeSeconds -le 7200) {
+        $closeDeadline = (Get-Date).AddSeconds($closeSeconds)
+        while ((Get-Date) -lt $closeDeadline) { Start-Sleep -Seconds ([Math]::Min(30, [Math]::Max(1, [int]($closeDeadline - (Get-Date)).TotalSeconds))) }
+    }
+}
 $executionMutex = [System.Threading.Mutex]::new($false, "stockAlarmExecutionMutex")
 $mutexAcquired = $false
 
@@ -93,12 +105,15 @@ function RunFreshOptionalStep($name, $module) {
 }
 
 if ($mode -eq "open") {
+    RunOptionalStep "stock_events" "stock_alarm.stock_events"
     RunOptionalStep "premarket_valuation" "stock_alarm.premarket_valuation"
     RunFreshStep "market_summary" "stock_alarm.market_summary"
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
     RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
 }
 if ($mode -eq "intraday") {
+    RunOptionalStep "premarket_catchup" "stock_alarm.premarket_valuation"
+    RunOptionalStep "stock_events" "stock_alarm.stock_events"
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
     RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
     RunFreshStep "recommendation" "stock_alarm"
@@ -116,6 +131,7 @@ if ($mode -eq "sell") {
 }
 if ($mode -eq "daily") {
     RunFreshOptionalStep "positions_report" "stock_alarm.positions_report"
+    RunOptionalStep "stock_events_close" "stock_alarm.stock_events"
 }
 if ($mode -eq "daily" -or $mode -eq "performance") {
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"

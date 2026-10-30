@@ -7,6 +7,13 @@ import tempfile
 
 
 class ScriptTest(unittest.TestCase):
+    def test_delayed_close_wait_is_outside_trading_mutex(self):
+        source=Path('scripts/run_stock_alarm.ps1').read_text(encoding='utf-8-sig')
+        self.assertLess(source.index('stock_alarm.market_sessions --close-wait-seconds'),source.index('$executionMutex ='))
+        self.assertLess(source.index('Start-Sleep -Seconds ([Math]::Min(30'),source.index('$executionMutex ='))
+        self.assertIn('RunOptionalStep "premarket_catchup"',source)
+        self.assertIn('RunOptionalStep "stock_events_close"',source)
+
     def test_preopen_display_refresh_runs_before_market_summary(self):
         script = Path('scripts/run_stock_alarm.ps1').read_text(encoding='utf-8-sig')
         block = script.split('if ($mode -eq "open") {', 1)[1].split('if ($mode -eq "intraday")', 1)[0]
@@ -139,7 +146,7 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("-Daily -At 16:00", script)
         self.assertIn("<Interval>PT5M</Interval>", script)
         self.assertIn("T08:50:00", script)
-        self.assertIn("<Duration>PT6H50M</Duration>", script)
+        self.assertIn("<Duration>PT9H10M</Duration>", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1030\"", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1330\"", script)
         self.assertIn("Unregister-ScheduledTask -TaskName \"stockAlarmIntraday1500\"", script)

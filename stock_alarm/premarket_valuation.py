@@ -20,6 +20,11 @@ KST = timezone(timedelta(hours=9))
 
 
 def in_refresh_window(now):
+    from .market_sessions import day_info,local_time
+    now=local_time(now)
+    official=day_info(now)
+    if official is not None:
+        return bool(official['open'] and official['pre_start']<=now<official['pre_end'])
     return (now.weekday() < 5 and now.date() not in KR_MARKET_HOLIDAYS
             and time(8) <= now.time().replace(tzinfo=None) < time(8, 50))
 
@@ -45,6 +50,11 @@ def validate_mark(row, now):
     previous = now.date() - timedelta(days=1)
     while previous.weekday() >= 5 or previous in KR_MARKET_HOLIDAYS:
         previous -= timedelta(days=1)
+    from .market_sessions import day_info
+    official=day_info(now)
+    if official and official['open']:
+        from datetime import date
+        previous=date.fromisoformat(official['previous_date'])
     if stamp > now:
         raise ValueError('future_price')
     if stamp.astimezone(KST).date() not in {now.date(), previous}:
@@ -184,29 +194,33 @@ REASON_LABELS = {'missing_timestamp': '시세 시각 없음', 'invalid_timestamp
 
 def refresh_check(status, now=None):
     now = (now or datetime.now(KST)).astimezone(KST)
+    from .market_sessions import day_info
+    official=day_info(now)
+    expected=official['expected_refresh'] if official and official['open'] else now.replace(hour=8,minute=30,second=0,microsecond=0)
     stamp = observation_time(status.get('attempted_at'))
     if status.get('state') == 'unavailable':
         run_state = 'unavailable'
-    elif now.weekday() >= 5 or now.date() in KR_MARKET_HOLIDAYS:
+    elif (official is not None and not official['open']) or (official is None and (now.weekday() >= 5 or now.date() in KR_MARKET_HOLIDAYS)):
         run_state = 'non_trading_day'
     elif stamp and stamp.astimezone(KST).date() == now.date():
         run_state = status.get('state', 'failed')
         if run_state == 'running' and (now - stamp).total_seconds() >= 300:
             run_state = 'delayed'
-    elif now.time() < time(8, 30):
+    elif now < expected:
         run_state = 'scheduled'
-    elif now.time() < time(8, 35):
+    elif now < expected + timedelta(minutes=5):
         run_state = 'pending'
     else:
         run_state = 'missed'
-    return {**status, 'run_state': run_state,
+    return {**status, 'run_state': run_state, 'expected_at':expected.isoformat(),
             'needs_attention': run_state in {'unavailable', 'missed', 'partial', 'failed', 'delayed'}}
 
 
 def refresh_label(status, now=None):
     checked = refresh_check(status, now)
     if checked['run_state'] in {'scheduled', 'pending', 'missed', 'non_trading_day', 'running', 'delayed'}:
-        label = {'scheduled': '장전 조회 예정 08:30', 'pending': '장전 조회 대기 · 08:35 실행 여부 확인',
+        expected=datetime.fromisoformat(checked['expected_at'])
+        label = {'scheduled': f'장전 조회 예정 {expected:%H:%M}', 'pending': f'장전 조회 대기 · {expected+timedelta(minutes=5):%H:%M} 실행 여부 확인',
                  'missed': '오늘 장전 조회 완료 기록 없음 · 예약 실행/지연 확인 필요',
                  'running': '장전 조회 진행 중', 'delayed': '장전 조회 5분 이상 지연 · 작업 확인 필요',
                  'non_trading_day': '비거래일 · 장전 조회 대상 아님'}[checked['run_state']]
@@ -232,6 +246,13 @@ def refresh_label(status, now=None):
 def main():
     from .app import load_env
     load_env()
+    # The intraday catch-up handles shifted opening days, without repeating
+    # a completed/failed preopen batch every five minutes.
+    now=datetime.now(KST)
+    statuses=[read_premarket(p['db_path'])[1] for p in PROFILES.values() if Path(p['db_path']).is_file()]
+    if statuses and all(observation_time(s.get('attempted_at')) and observation_time(s['attempted_at']).date()==now.date() for s in statuses):
+        print(json.dumps({'state':'skipped','reason':'already_attempted_today'}))
+        return 0
     result = refresh()
     print(json.dumps(result, ensure_ascii=True))
     return 1 if result.get('failed_tickers') else 0

@@ -102,6 +102,11 @@ def current_prices(path: str = "data/stock_alarm.db") -> dict[str, int]:
 
 def run() -> dict:
     load_env()
+    from .market_sessions import day_info,KST
+    now=datetime.now(KST);session=day_info(now)
+    if session and (not session['open'] or now<session['start']):
+        print('virtual_trader skipped preopen_display_only')
+        return {'status':'preopen_display_only'}
     from .trading_profiles import PROFILES
     primary_result: dict = {}
     for name, profile in PROFILES.items():

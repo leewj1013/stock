@@ -599,6 +599,15 @@ def _run_profile_sell_check(positions: list[dict[str, str]], end_day: date, run_
     held = {row['ticker'] for row in held_positions}
     tracked_only = [row for row in positions if row['ticker'].strip() not in held] if profile.get("sell_alerts_log") == SELL_ALERTS_LOG else []
     positions = held_positions + tracked_only
+    from .stock_events import blocked
+    excluded=blocked([p['ticker'] for p in positions],{h['ticker']:h for h in state['holdings']})
+    positions=[p for p in positions if p['ticker'] not in excluded]
+    if excluded and run_id:
+        from .data_store import write_position_checks
+        write_position_checks(run_id,[{'position_id':position_id(p),'ticker':p['ticker'],'name':p.get('name'),
+            'checked_at':datetime.now().isoformat(timespec='seconds'),'entry_date':p.get('entry_date'),
+            'entry_price':float(p['entry_price']),'decision':'REVIEW_REQUIRED','reasons':'; '.join(excluded[p['ticker']])}
+            for p in held_positions+tracked_only if p['ticker'] in excluded])
     quantities = {holding["ticker"]: int(holding["quantity"]) for holding in state["holdings"]}
     # Snapshot of what's actually held before today's sells settle, so
     # notify-worthiness reflects a real position rather than a closed one.

@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, quote, urlparse
 from .app import effective_exposure_limit_pct, load_env, write_error_log
 from .account_valuation import value_saved_account, price_after_entry
 from .premarket_valuation import read_premarket, refresh_label, refresh_check
+from .market_sessions import label as session_label
+from .stock_events import display as stock_event_display
 from .dashboard import render
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, query_rows, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
@@ -131,6 +133,8 @@ def trader_payload(profile: str = "aggressive") -> dict:
             warnings_by_ticker = dict(zip(holding_ticker_list, pool.map(fetch_warnings, holding_ticker_list)))
 
     for holding in state["holdings"]:
+        event=stock_event_display(holding['ticker'],bool((holding.get('first_entry_at') or '')[:10]<date.today().isoformat() and holding.get('first_entry_at')))
+        holding['corporate_events']=event
         check = latest_checks.get(holding.get("ticker"), {})
         if not price_after_entry(check.get('checked_at'), holding.get('first_entry_at')):
             check = {}
@@ -144,7 +148,9 @@ def trader_payload(profile: str = "aggressive") -> dict:
         active_warnings = warnings_by_ticker.get(str(holding.get("ticker") or ""), set())
         blocking = active_warnings & BLOCKING_STOCK_WARNINGS
         non_blocking = active_warnings - BLOCKING_STOCK_WARNINGS
-        if blocking:
+        if event['reasons']:
+            watch_state='매매 보류: '+'; '.join(event['reasons'])
+        elif blocking:
             watch_state = f"종목 경고: {','.join(sorted(blocking))}"
         elif holding.get("position_status") == "partial":
             watch_state = "1차 익절 완료"
@@ -166,6 +172,8 @@ def trader_payload(profile: str = "aggressive") -> dict:
             "stop_price": stop_price,
             "ma20": check.get("ma20"),
         })
+        if event['advisories']:
+            holding['watch_state']+=' · 기업행동 공시 제목 확인(효력일 미확인)'
     try:
         from .screener import fundamentals_for
         fundamentals = fundamentals_for(holding_ticker_list)
@@ -192,6 +200,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         "queried_at": datetime.now().isoformat(timespec="seconds"),
         "premarket_status": refresh_check(refresh_status),
         "premarket_label": refresh_label(refresh_status),
+        "market_session": session_label(),
         "risk": risk,
         "strategy_version": strategy.get("version_id", "기본 전략"),
         "price_unavailable_tickers": unavailable,

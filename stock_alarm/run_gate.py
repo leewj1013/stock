@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from .app import is_trading_day, load_env
 
@@ -50,6 +50,19 @@ KR_MARKET_HOLIDAYS = {
 
 def should_run(mode: str, now: datetime | None = None) -> bool:
     now = now or datetime.now()
+    from .market_sessions import day_info
+    official = day_info(now)
+    if official is not None:
+        if not official['open']:
+            return mode not in {'intraday','sell','open','daily','issue_alert'}
+        current=now.replace(tzinfo=official['start'].tzinfo) if now.tzinfo is None else now
+        if mode in {'intraday','sell'}:
+            begin=official['expected_refresh'] if mode=='intraday' else official['start']-timedelta(minutes=10)
+            return begin<=current<=official['end']+timedelta(minutes=10)
+        if mode in {'daily','issue_alert'}:
+            return current>=official['end']
+        if mode=='open':
+            return True
     if mode in {"intraday", "sell"}:
         if now.weekday() >= 5:
             return False
@@ -73,6 +86,12 @@ def should_run(mode: str, now: datetime | None = None) -> bool:
 def main() -> int:
     load_env()
     mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
+    from .market_sessions import refresh, configured, day_info
+    if configured():
+        refresh()
+        if day_info() is None and mode in {'intraday','sell','open','daily','issue_alert'}:
+            print('skip calendar_unavailable')
+            return 2
     if should_run(mode):
         print(f"run {mode}")
         return 0

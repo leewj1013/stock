@@ -14,6 +14,9 @@ def isolated_env(tmp_path, monkeypatch):
     # mode, credentials) into every later test. Point the env files at nothing
     # and undo all environ changes after each test.
     from stock_alarm import app
+    from stock_alarm import market_sessions,stock_events
+    monkeypatch.setattr(market_sessions,'CACHE_PATH',tmp_path/'market_sessions.json')
+    monkeypatch.setattr(stock_events,'CACHE_PATH',tmp_path/'stock_events.db')
 
     missing = str(tmp_path / "no-such.env")
     for name in ("DEFAULT_ENV_PATH", "DEFAULT_SECURE_ENV_PATH"):
