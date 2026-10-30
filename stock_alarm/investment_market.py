@@ -65,6 +65,9 @@ def market_breadth(rows, bars_fn=price_bars, now=None):
 
 
 def recommendation_changes(rows):
+    from .dashboard import display_value
+    extra_labels = {'score_or_portfolio_filter': '점수·보유 비중·종목 수 기준으로 미선정',
+                    'average_range': '평균 변동폭 기준 초과'}
     latest, picks = {}, {}
     for row in sorted(rows, key=lambda r: r['evaluated_at'], reverse=True):
         latest.setdefault(row['ticker'], row)
@@ -79,11 +82,13 @@ def recommendation_changes(rows):
         delta = updated - score if score is not None and updated is not None else None
         status = ('최근 평가에서 선정' if current.get('selected') else
                   '조건 통과·미선정' if current.get('passed') else '최근 평가 조건 미달')
+        reasons = ', '.join(extra_labels.get(part.strip(), display_value(part.strip()))
+                            for part in (current.get('rejection_reasons') or '').split(',') if part.strip())
         result.append([pick['evaluated_at'][:10], pick.get('name') or ticker,
                        f'{first:,.0f}원' if first else '기록 없음', f'{last:,.0f}원' if last else '기록 없음',
                        f'{change:+.2f}%' if change is not None else '기록 없음',
                        f'{score:.1f} → {updated:.1f} ({delta:+.1f})' if delta is not None else '점수 기록 없음',
-                       status, current.get('rejection_reasons') or '—', current['evaluated_at'][:16]])
+                       status, reasons or '—', current['evaluated_at'].replace('T', ' ')[:16]])
     return {'rows': result, 'note': '종목별 가장 최근 추천 이후의 완료 평가 비교 · 공통 후보 점수 기준. 미선정은 자동 매도 사유가 아니며 과거 추천이 현재 매수 유효함을 뜻하지 않습니다.'}
 
 

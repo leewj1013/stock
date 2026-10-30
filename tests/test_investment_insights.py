@@ -190,3 +190,10 @@ def test_historical_samples_are_labelled_separately_from_forward_samples(tmp_pat
     assert len(rows) == 1
     assert rows[0][1] == '48종료 거래 · 과거'
     assert rows[0][-1] == '과거 탐색 · 전향 검증과 별개'
+
+
+def test_recommendation_rejection_codes_are_readable_korean():
+    row = {'ticker': 'A', 'evaluated_at': '2026-10-30T10:00:00', 'selected': 1, 'close': 100,
+           'rejection_reasons': 'volume_ratio,below_ma20,score_or_portfolio_filter'}
+    text = recommendation_changes([row])['rows'][0][7]
+    assert text == '거래량 기준 미달, 20일선 아래, 점수·보유 비중·종목 수 기준으로 미선정'
