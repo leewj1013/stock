@@ -4,6 +4,7 @@ secrets.env
 data/positions.csv
 data/stock_alarm.db
 data/stock_alarm_neutral.db
+data/dashboard_premarket.db*
 data/stock_alarm_exp_*.db
 data/sell_research*.db
 data/sell_research*.db-shm

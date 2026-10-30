@@ -13,7 +13,7 @@ from .data_store import query_rows, recent_position_checks, recent_price_quality
 from .market_summary import _read_us_cache
 from .trading_profiles import PROFILES
 from .account_valuation import value_saved_account, price_after_entry as _price_after_entry
-from .premarket_valuation import read_premarket, refresh_label
+from .premarket_valuation import read_premarket, refresh_label, refresh_check
 from .us_dashboard import STALE_DAYS, STATE_LABELS, max_drawdown_pct, read_csv, read_ledger, read_strategy
 from .us_strategy_account import ACCOUNTS
 
@@ -79,7 +79,7 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
     saved_checks = recent_position_checks(1000, path=path)
     saved_quality = recent_price_quality(100, path=path)
     display_marks, refresh_status = read_premarket(path)
-    state = value_saved_account(state, saved_checks, saved_quality, display_marks)
+    state = value_saved_account(state, saved_checks, saved_quality, display_marks, refresh_status)
     total = state['total_equity']
     checks = {}
     for check in saved_checks:
@@ -98,13 +98,15 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
         price_label = price_at.replace('T', ' ')[:16] or '기록 없음'
         if h['price_data_at']:
             price_label += ' · 시세 기준 ' + h['price_data_at'].replace('T', ' ')[:16] + ' · 시장 미제공'
+        if price_at:
+            price_label += ' · ' + h['price_status_label']
         cost = float(h["cost"])
         valuation, profit = h['valuation'], h['profit_loss']
         try:
             holding_days = f"{(date.today() - date.fromisoformat(entry_at[:10])).days}일"
         except ValueError:
             holding_days = "기록 없음"
-        if price is None:
+        if h['price_warning']:
             price_issues.append(h["name"] or h["ticker"])
         status = ("매도조건 충족" if check.get("decision") == "SELL" else
                   "1차 익절 완료" if h.get("position_status") == "partial" else
@@ -127,7 +129,7 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
                       str(sale.get("quantity") or "—"), _money(sale.get("price"), "kr"),
                       _money(realized, "kr", True), _pct(realized / basis * 100) if basis else "기록 없음",
                       sale.get("reason") or "—"])
-    return {"name": name, "kind": "가상매매 · 현재 잔량 × 최신 저장가격", "asset": _money(total, "kr"), "daily": _money(recent_change, "kr", True), "cash": _money(state.get("cash", 0), "kr"), "marketValue": _money(state["holdings_value"], "kr"), "unrealized": _money(state["unrealized_profit_loss"], "kr", True), "hold": f"{len(rows)}종목", "returnPct": _pct(state['total_return_pct']), "priceAsOf": state['price_updated_at'].replace("T", " ")[:16] or "기록 없음", "priceOldestAt": state['price_oldest_at'].replace("T", " ")[:16] or "기록 없음", "priceIssues": price_issues, "premarketStatus": refresh_label(refresh_status), "realized": _money(state["realized_profit_loss"], "kr", True), "sales": sales, "rows": rows}
+    return {"name": name, "kind": "가상매매 · 현재 잔량 × 최신 저장가격", "asset": _money(total, "kr"), "daily": _money(recent_change, "kr", True), "cash": _money(state.get("cash", 0), "kr"), "marketValue": _money(state["holdings_value"], "kr"), "unrealized": _money(state["unrealized_profit_loss"], "kr", True), "hold": f"{len(rows)}종목", "returnPct": _pct(state['total_return_pct']), "priceAsOf": state['price_updated_at'].replace("T", " ")[:16] or "기록 없음", "priceOldestAt": state['price_oldest_at'].replace("T", " ")[:16] or "기록 없음", "priceIssues": price_issues, "premarketStatus": refresh_label(refresh_status), "premarketCheck": refresh_check(refresh_status), "realized": _money(state["realized_profit_loss"], "kr", True), "sales": sales, "rows": rows}
 
 
 def _us_account(account, data: dict | None = None) -> dict:

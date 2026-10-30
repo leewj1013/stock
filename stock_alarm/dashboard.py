@@ -2180,6 +2180,12 @@ function renderTrader(message="") {{
         detail.append(summary,info); cell.appendChild(detail);
       }}
       if(index===8 && watchStatePillClass(watchState)) {{const pill=document.createElement("span"); pill.className=`status-pill ${{watchStatePillClass(watchState)}}`; pill.textContent=value; cell.appendChild(pill);}}
+      else if(index===5) {{
+        cell.textContent=value;
+        const freshness=document.createElement("small"); freshness.textContent=item.price_status_label||"";
+        freshness.style.display="block"; freshness.style.whiteSpace="normal";
+        freshness.className=item.price_warning?"neg":"muted"; cell.appendChild(freshness);
+      }}
       else if(index!==0) cell.textContent=value;
       if(index>=1&&index<=7)cell.className="num";if(index===6||index===7)cell.className+=Number(item.profit_loss)>0?" pos":Number(item.profit_loss)<0?" neg":" zero";
       row.appendChild(cell);

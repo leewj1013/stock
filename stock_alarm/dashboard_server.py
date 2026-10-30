@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from .app import effective_exposure_limit_pct, load_env, write_error_log
 from .account_valuation import value_saved_account, price_after_entry
-from .premarket_valuation import read_premarket, refresh_label
+from .premarket_valuation import read_premarket, refresh_label, refresh_check
 from .dashboard import render
 from .data_store import active_strategy_version, import_legacy_virtual_trader, latest_portfolio_risk, recent_equity_trend, recent_position_checks, recent_price_quality, recent_virtual_sales, query_rows, virtual_deposit, virtual_trader_state
 from .market_breadth import CACHE_PATH as MARKET_BREADTH_CACHE_PATH
@@ -87,7 +87,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
     quality = recent_price_quality(100, path)
     checks = recent_position_checks(1000, path)
     display_marks, refresh_status = read_premarket(path)
-    state = value_saved_account(virtual_trader_state(path=path), checks, quality, display_marks)
+    state = value_saved_account(virtual_trader_state(path=path), checks, quality, display_marks, refresh_status)
     holding_tickers = {str(row.get("ticker") or "") for row in state["holdings"]}
     try:
         sectors = load_sector_mapping(holding_tickers)
@@ -190,7 +190,7 @@ def trader_payload(profile: str = "aggressive") -> dict:
         "profile": profile,
         "equity_trend": recent_equity_trend(7, path),
         "queried_at": datetime.now().isoformat(timespec="seconds"),
-        "premarket_status": refresh_status,
+        "premarket_status": refresh_check(refresh_status),
         "premarket_label": refresh_label(refresh_status),
         "risk": risk,
         "strategy_version": strategy.get("version_id", "기본 전략"),

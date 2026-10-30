@@ -1,6 +1,6 @@
 """Shared dashboard valuation from saved, post-entry observations only."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from math import isfinite
 
 
@@ -17,12 +17,15 @@ def price_after_entry(observed_at, entry_at):
     return observed is not None and entry is not None and observed >= entry
 
 
-def value_saved_account(state, checks, quality, display_marks=()):
+def value_saved_account(state, checks, quality, display_marks=(), refresh_status=None, now=None):
     """Use the newest eligible check/quality mark for each current holding.
 
     Never use a historical account total with current quantities. Missing marks
     leave the account valuation unknown, while cash and realized P&L stay usable.
     """
+    now = observation_time(now) if isinstance(now, str) else now or datetime.now(timezone(timedelta(hours=9)))
+    now = now.astimezone(timezone(timedelta(hours=9)))
+    refresh_status = refresh_status or {}
     marks = {}
     for rows, field, source in ((checks, 'checked_at', '종목 점검'), (quality, 'created_at', '가격 검증')):
         for row in rows:
@@ -56,6 +59,26 @@ def value_saved_account(state, checks, quality, display_marks=()):
                  return_pct=round(profit / cost * 100, 2) if profit is not None and cost else None,
                  price_observed_at=mark[2] if mark else '', price_source=mark[3] if mark else '',
                  price_data_at=mark[4] if mark else '', price_venue=mark[5] if mark else '')
+        stamp = observation_time(h['price_data_at'] or h['price_observed_at'])
+        age = max(0, int((now - stamp).total_seconds() / 60)) if stamp else None
+        age_text = ('시세 기준 ' if h['price_data_at'] else '관측 후 ') + (
+            f'{age // 1440}일 {age % 1440 // 60}시간' if age is not None and age >= 1440 else
+            f'{age // 60}시간 {age % 60}분' if age is not None and age >= 60 else f'{age}분') if stamp else '기록 없음'
+        prior_day = stamp is not None and stamp.astimezone(now.tzinfo).date() < now.date()
+        basis = ('기록 없음' if not stamp else '이전 거래일 가격' if prior_day else
+                 '당일 장전가' if h['price_data_at'] and stamp.astimezone(now.tzinfo).time() < time(9)
+                 else '당일 점검가')
+        attempted = observation_time(refresh_status.get('attempted_at'))
+        refresh_failed = (h['ticker'] in refresh_status.get('failed_tickers', []) and attempted is not None
+                          and attempted.date() == now.date() and (not mark or mark[0] <= attempted))
+        delayed = bool(stamp and now.weekday() < 5 and time(9) <= now.time().replace(tzinfo=None) < time(15, 30) and age > 15)
+        label = basis + ' · ' + age_text if stamp else '기록 없음'
+        if refresh_failed:
+            label += ' · 장전 갱신 실패/마지막 유효가격'
+        elif delayed and not prior_day:
+            label += ' · 갱신 지연'
+        h.update(price_age_minutes=age, price_status_label=label, price_basis_kind=basis,
+                 price_warning=bool(not stamp or prior_day or delayed or refresh_failed))
         holdings.append(h)
         if mark:
             dates.append(mark[2])
@@ -71,6 +94,7 @@ def value_saved_account(state, checks, quality, display_marks=()):
             'holdings_return_pct': round(profit / cost * 100, 2) if profit is not None and cost else (0 if not holdings else None),
             'total_return_pct': round((equity / deposited - 1) * 100, 2) if equity is not None and deposited else None,
             'price_unavailable_tickers': missing,
+            'price_warning_tickers': [h['ticker'] for h in holdings if h['price_warning']],
             'price_updated_at': max(dates, key=observation_time) if dates else '',
             'price_oldest_at': min(dates, key=observation_time) if dates else '',
             'price_source': '저장된 최신 종목 점검·가격 검증·장전 조회 기록',

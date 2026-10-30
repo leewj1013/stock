@@ -76,7 +76,9 @@ class DashboardV2DataTest(unittest.TestCase):
         account = _kr_account("aggressive", "계좌")
         row = account["rows"][0]
         self.assertEqual(["테스트 (000001)", "2", "+91.67%"], row[:3])
-        self.assertEqual(["₩500", "₩550", "2026-10-22 15:30", "₩+100", "+10.00%", "매도조건 충족", "₩470", "₩520"], row[4:])
+        self.assertEqual(["₩500", "₩550"], row[4:6])
+        self.assertTrue(row[6].startswith("2026-10-22 15:30"))
+        self.assertEqual(["₩+100", "+10.00%", "매도조건 충족", "₩470", "₩520"], row[7:])
         self.assertEqual("₩+30", account["realized"])
         self.assertEqual(["부분매도", "1", "₩530", "₩+30", "+6.00%", "1차 익절"], account["sales"][0][2:])
 
@@ -91,7 +93,9 @@ class DashboardV2DataTest(unittest.TestCase):
         quality.return_value = [{"ticker": "000001", "created_at": "2026-10-27T15:22:00", "status": "valid", "close": 550}]
         account = _kr_account("neutral", "위험중립형")
         self.assertEqual("2026-10-27 15:22", account["priceAsOf"])
-        self.assertEqual(["₩550", "2026-10-27 15:22", "₩+100", "+10.00%"], account["rows"][0][5:9])
+        self.assertEqual("₩550", account["rows"][0][5])
+        self.assertTrue(account["rows"][0][6].startswith("2026-10-27 15:22"))
+        self.assertEqual(["₩+100", "+10.00%"], account["rows"][0][7:9])
 
     def test_reentered_holding_rejects_same_day_prices_before_entry(self):
         holding={"name":"A","ticker":"A","quantity":1,"cost":100,"average_price":100,
