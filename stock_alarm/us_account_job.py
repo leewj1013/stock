@@ -6,7 +6,7 @@ import sys
 from datetime import date, datetime
 
 from .app import load_env
-from .us_strategy_account import ACCOUNTS, current_config, read_status
+from .us_strategy_account import ACCOUNTS, current_config, read_status,write_status
 
 
 class AccountUpdateError(RuntimeError):
@@ -27,11 +27,14 @@ def preflight() -> dict[str, str]:
     return states
 
 
-def run(*, retry: bool = False, today: date | None = None) -> dict:
+def _run(*, retry: bool = False, today: date | None = None) -> dict:
     load_env()
     today = today or date.today()
     states = preflight()
     if any(state == "config_changed" for state in states.values()):
+        for account in ACCOUNTS:
+            if states.get(account.key)=='config_changed':
+                write_status(account,state='config_changed',detail='Frozen US engine/settings differ; update not started')
         raise RuntimeError(f"US strategy frozen settings differ: {states}")
 
     from .us_spy_hold import update as update_spy
@@ -51,7 +54,7 @@ def run(*, retry: bool = False, today: date | None = None) -> dict:
         if all(status.get("state") == "ok" and status.get("last_day") == latest_day for status in statuses):
             return {"spy_days": spy_days, "accounts": "already_current", "korean_names_added": 0}
     warnings = []
-    results = update_all(notify=warnings.append)
+    results = update_all(notify=warnings.append,expected_day=latest_date.isoformat())
     from .notifier import send_notification
     from .us_account_audit import diagnose, snapshot
 
@@ -101,6 +104,18 @@ def run(*, retry: bool = False, today: date | None = None) -> dict:
     if audit_errors or any(result.get("state") not in ("ok", "waiting") for result in results.values()):
         raise AccountUpdateError(f"US strategy update failed: {results}; diagnostics: {reports}; audit_errors: {audit_errors}")
     return {"spy_days": spy_days, "accounts": results, "korean_names_added": enriched, "research": research}
+
+
+def run(*,retry: bool=False,today: date|None=None) -> dict:
+    try:
+        return _run(retry=retry,today=today)
+    except AccountUpdateError:
+        raise
+    except Exception as error:
+        for account in ACCOUNTS:
+            if read_status(account).get('state')!='config_changed':
+                write_status(account,state='error',detail=f'US job failed before completion: {type(error).__name__}')
+        raise
 
 
 def main() -> None:

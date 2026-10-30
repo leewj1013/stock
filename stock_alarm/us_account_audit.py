@@ -20,7 +20,8 @@ def _write_inputs(a: account.Account, target, manifest: dict) -> None:
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps(manifest, sort_keys=True))
             for ticker in dict.fromkeys([*account.read_universe(a), "SPY"]):
-                archive.write(account.SRC / f"{ticker}.csv", f"ohlcv/{ticker}.csv")
+                effective=a.work_dir/'source_ohlcv'/f'{ticker}.csv'
+                archive.write(effective if effective.exists() else account.SRC / f"{ticker}.csv", f"ohlcv/{ticker}.csv")
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)

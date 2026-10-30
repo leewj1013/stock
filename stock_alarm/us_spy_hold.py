@@ -7,6 +7,10 @@ import csv
 import json
 import os
 import urllib.request
+import math
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from datetime import timedelta
 
 LEDGER_PATH = "data/us_spy_hold.csv"
 START_DATE = "20261005"
@@ -14,25 +18,37 @@ CAPITAL_USD = 100_000
 
 
 def spy_closes(start: str = START_DATE) -> list[tuple[str, float]]:
-    url = f"https://api.stock.naver.com/chart/foreign/item/SPY/day?startDateTime={start}0000&endDateTime=209912310000"
+    from .us_history_collect import completed_day
+    cutoff=completed_day()
+    end=(cutoff+timedelta(days=1)).strftime('%Y%m%d0000')
+    url = f"https://api.stock.naver.com/chart/foreign/item/SPY/day?startDateTime={start}0000&endDateTime={end}"
     request = urllib.request.Request(url, headers={"User-Agent": "stockAlarm/1.0"})
     with urllib.request.urlopen(request, timeout=30) as response:
-        return [(row["localDate"], float(row["closePrice"])) for row in json.load(response)]
+        return [(row["localDate"], float(row["closePrice"])) for row in json.load(response) if row['localDate']<=cutoff.strftime('%Y%m%d')]
 
 
 def update(path: str = LEDGER_PATH) -> int:
     closes = spy_closes()
     if not closes or closes[0][0] != START_DATE:
         raise RuntimeError(f"SPY series does not start at {START_DATE}: {closes[:1]}")
+    days=[day for day,_ in closes]
+    if days!=sorted(set(days)) or any(not math.isfinite(close) or close<=0 for _,close in closes):
+        raise ValueError('Invalid SPY dates/prices; previous ledger preserved')
     shares = int(CAPITAL_USD // closes[0][1])
     cash = round(CAPITAL_USD - shares * closes[0][1], 2)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["date", "spy_close", "shares", "cash_usd", "equity_usd", "return_pct"])
-        for day, close in closes:
-            equity = round(shares * close + cash, 2)
-            writer.writerow([day, close, shares, cash, equity, round((equity / CAPITAL_USD - 1) * 100, 4)])
+    target=Path(path);target.parent.mkdir(parents=True,exist_ok=True)
+    with NamedTemporaryFile(dir=target.parent,mode='w',encoding='utf-8',newline='',delete=False) as file:
+        temporary=Path(file.name)
+        try:
+            writer = csv.writer(file)
+            writer.writerow(["date", "spy_close", "shares", "cash_usd", "equity_usd", "return_pct"])
+            for day, close in closes:
+                equity = round(shares * close + cash, 2)
+                writer.writerow([day, close, shares, cash, equity, round((equity / CAPITAL_USD - 1) * 100, 4)])
+        except BaseException:
+            file.close();temporary.unlink(missing_ok=True);raise
+    try:os.replace(temporary,target)
+    finally:temporary.unlink(missing_ok=True)
     return len(closes)
 
 

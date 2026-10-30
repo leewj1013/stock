@@ -8,6 +8,8 @@ import os
 import sys
 import time
 import urllib.request
+from datetime import datetime,timedelta,time as clock_time
+from zoneinfo import ZoneInfo
 
 OUT_DIR = "data/backtest_us"
 BASE = "https://api.stock.naver.com/"
@@ -30,8 +32,18 @@ def top_by_market_cap(n: int) -> list[dict]:
     return rows[:n]
 
 
-def history(code: str) -> list[dict]:
-    return get(f"chart/foreign/item/{code}/day?startDateTime=201801010000&endDateTime=202612310000")
+def completed_day(now=None):
+    zone=ZoneInfo('America/New_York')
+    now=now or datetime.now(zone)
+    now=now.replace(tzinfo=now.tzinfo or zone).astimezone(zone)
+    return now.date() if now.time()>=clock_time(16,15) else now.date()-timedelta(days=1)
+
+
+def history(code: str,now=None) -> list[dict]:
+    cutoff=completed_day(now)
+    end=(cutoff+timedelta(days=1)).strftime('%Y%m%d0000')
+    return [r for r in get(f"chart/foreign/item/{code}/day?startDateTime=201801010000&endDateTime={end}")
+            if r['localDate']<=cutoff.strftime('%Y%m%d')]
 
 
 def write_universe(n: int) -> list[dict]:

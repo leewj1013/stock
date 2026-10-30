@@ -13,8 +13,8 @@ from pathlib import Path
 
 from .us_strategy_account import ACCOUNTS, SRC
 
-PATH = "data/us_research.db"
-VERSION = "us-entry-observation-v1"
+PATH = "data/us_research_entry_v2.db"
+VERSION = "us-entry-observation-v2-prior-session"
 MARKET_HISTORY = "data/us_market_history.csv"
 COST = 0.0015
 HORIZONS = (1, 3, 5, 10, 20)
@@ -111,10 +111,14 @@ def context(ticker: str, entry_day: str, bars=None, spy=None, vix=None) -> dict:
     if index is None or index == 0 or spy_index is None:
         raise ValueError("entry or prior-session price is unavailable")
     prior, current = float(bars[index - 1]["close"]), bars[index]
-    spy_closes = [float(row["close"]) for row in spy[max(0, spy_index - 19):spy_index + 1]]
+    if spy_index==0:
+        raise ValueError('prior SPY session unavailable')
+    spy_closes = [float(row["close"]) for row in spy[max(0, spy_index - 20):spy_index]]
     spy_close = spy_closes[-1]
     spy_ma20 = sum(spy_closes) / len(spy_closes) if len(spy_closes) == 20 else None
-    vix = _vix(entry_day) if vix is None else vix
+    prior_day=spy[spy_index-1]['date']
+    prior_day=f'{prior_day[:4]}-{prior_day[4:6]}-{prior_day[6:]}'
+    vix = _vix(prior_day) if vix is None else vix
     defensive = (vix is not None and vix >= 25) or (spy_ma20 is not None and spy_close < spy_ma20)
     return {"bars": bars, "index": index, "prior_close": prior,
             "gap_pct": (float(current["open"]) / prior - 1) * 100,

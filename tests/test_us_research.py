@@ -61,3 +61,17 @@ def test_dashboard_explains_empty_forward_observation(tmp_path):
         pass
     page = research.dashboard_section(path)
     assert "미국 진입 관찰실험" in page and "첫 가상매수 체결을 기다리고" in page
+
+
+def test_risk_choice_is_invariant_to_entry_session_closes(monkeypatch):
+    stock=bars([('20261019',100,100),('20261020',100,110)])
+    prior=[(f'202609{i:02d}',100,100) for i in range(1,21)]
+    spy_a=bars(prior+[('20261020',100,50)])
+    spy_b=bars(prior+[('20261020',100,200)])
+    looked=[];monkeypatch.setattr(research,'_vix',lambda day:looked.append(day) or 20)
+    a=research.context('X','2026-10-20',stock,spy_a)
+    b=research.context('X','2026-10-20',stock,spy_b)
+    assert a['defensive']==b['defensive']==False
+    assert a['spy_ma20']==b['spy_ma20']==100
+    assert looked==['2026-09-20','2026-09-20']
+    assert research.simulate(a,False)['1']['risk_scaled']==research.simulate(b,False)['1']['risk_scaled']

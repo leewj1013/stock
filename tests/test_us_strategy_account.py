@@ -277,3 +277,57 @@ def test_diagnosis_reports_changed_finalized_state_without_rewriting_ledger(worl
     assert report["ledger_hashes_match"] is True
     assert Path(report["current_input_archive"]).exists()
     assert ACCOUNT.path("checkpoint.json").read_bytes() == before
+
+
+def test_legacy_engine_binding_requires_exact_prefix_replay(world):
+    assert acc.update(ACCOUNT,failed=[],today=world.today)['state']=='ok'
+    before=acc.ledger_hashes(ACCOUNT)
+    old=json.loads(ACCOUNT.path('config.json').read_text())
+    old.pop('engine_bundle_sha256');old.pop('replay_contract')
+    ACCOUNT.path('config.json').write_text(json.dumps(old))
+    assert acc.migrate_legacy_engine(ACCOUNT)['state']=='bound'
+    assert acc.ledger_hashes(ACCOUNT)==before
+    assert json.loads(ACCOUNT.path('config.json').read_text())==acc.current_config(ACCOUNT)
+
+
+def test_provider_revisions_cannot_change_confirmed_pending_orders(world):
+    assert acc.update(ACCOUNT,failed=[],today=world.today)['state']=='ok'
+    before=ACCOUNT.path('checkpoint.json').read_bytes()
+    source=acc.SRC/'AAA.O.csv'
+    rows=list(csv.DictReader(source.open()))
+    rows[-1]['volume']=str(int(rows[-1]['volume'])*10)
+    with source.open('w',newline='') as f:
+        w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+    assert acc.update(ACCOUNT,failed=[],today=world.today)['state']=='ok'
+    assert ACCOUNT.path('checkpoint.json').read_bytes()==before
+
+
+def test_missing_latest_constituent_blocks_publication(world):
+    assert acc.update(ACCOUNT,failed=[],today=world.today)['state']=='ok'
+    before=acc.ledger_hashes(ACCOUNT)
+    source=acc.SRC/'CCC.O.csv'
+    rows=source.read_text().splitlines();source.write_text('\n'.join(rows[:-1])+'\n')
+    result=acc.update(ACCOUNT,failed=[],today=world.today)
+    assert result['state']=='data_problem'
+    assert any('CCC.O: missing benchmark sessions' in s for s in result['problems'])
+    assert acc.ledger_hashes(ACCOUNT)==before
+
+
+def test_engine_bundle_is_distinct_and_tampering_is_rejected(tmp_path,monkeypatch):
+    from stock_alarm import us_engine,app
+    assert us_engine.module('app') is not app
+    invalid=tmp_path/'invalid.zip';invalid.write_bytes(b'not the engine')
+    monkeypatch.setattr(us_engine,'BUNDLE',invalid)
+    with pytest.raises(ValueError,match='bundle changed'):us_engine.verify()
+
+
+def test_missing_confirmed_inputs_refuses_legacy_binding(world):
+    assert acc.update(ACCOUNT,failed=[],today=world.today)['state']=='ok'
+    config=json.loads(ACCOUNT.path('config.json').read_text())
+    config.pop('engine_bundle_sha256');config.pop('replay_contract')
+    ACCOUNT.path('config.json').write_text(json.dumps(config))
+    archive=acc.BACKUP_DIR/'inputs'/ACCOUNT.key/'2026-06-30.zip';archive.unlink()
+    before=acc.ledger_hashes(ACCOUNT)
+    with pytest.raises(ValueError,match='archive missing'):acc.migrate_legacy_engine(ACCOUNT)
+    assert acc.ledger_hashes(ACCOUNT)==before
+    assert json.loads(ACCOUNT.path('config.json').read_text())==config

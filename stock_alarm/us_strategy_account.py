@@ -14,8 +14,11 @@ from collections import Counter
 import json
 import os
 import shutil
+import io
+import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 DATA = Path("data")
@@ -67,12 +70,13 @@ ACCOUNTS = (
 
 def current_config(a: Account) -> dict:
     from .strategy_learning import active_weights
+    from . import us_engine
     env = {k: os.environ.get(k, "") for k in FROZEN_ENV}
     env.update({k: v for k, v in sorted(os.environ.items()) if k.startswith("SELL_")})
-    engine_hashes = {name: hashlib.sha256(Path(__file__).with_name(name).read_text("utf-8").encode()).hexdigest()
-                     for name in ENGINE_FILES}
+    engine_hashes = us_engine.hashes(ENGINE_FILES)
     return {"engine_hashes": engine_hashes, "weights": active_weights(), "env": env, "capital_usd": CAPITAL_USD, "start_signal_day": a.start_signal_day,
-            "universe_size": a.universe_size}
+            "universe_size": a.universe_size, "engine_bundle_sha256":us_engine.BUNDLE_SHA256,
+            "replay_contract":"confirmed-input-prefix-v2"}
 
 
 def read_status(a: Account) -> dict:
@@ -96,7 +100,8 @@ def _convert(a: Account, code: str, out: str) -> None:
     with open(a.work_dir / "ohlcv" / f"{out}.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["date", "open", "high", "low", "close", "volume"])
-        for r in csv.DictReader(open(SRC / f"{code}.csv", encoding="utf-8")):
+        source=a.work_dir/'source_ohlcv'/f'{code}.csv'
+        for r in csv.DictReader(open(source if source.exists() else SRC / f"{code}.csv", encoding="utf-8")):
             o, h, l, c = (round(float(r[k]) * 100) for k in ("open", "high", "low", "close"))
             h, l = max(h, o, c, l), min(l, o, c, h)
             if min(o, h, l, c) > 0:
@@ -104,9 +109,30 @@ def _convert(a: Account, code: str, out: str) -> None:
 
 
 def prepare(a: Account, codes: list[str]) -> None:
-    from .backtest_data import label_market_regimes, read_rows
+    from .us_engine import module
+    backtest_data=module('backtest_data')
+    label_market_regimes,read_rows=backtest_data.label_market_regimes,backtest_data.read_rows
     shutil.rmtree(a.work_dir, ignore_errors=True)
     (a.work_dir / "ohlcv").mkdir(parents=True)
+    source=a.work_dir/'source_ohlcv';source.mkdir()
+    checkpoint=json.loads(a.path('checkpoint.json').read_text('utf-8')) if a.path('checkpoint.json').exists() else None
+    archive_path=BACKUP_DIR/'inputs'/a.key/f"{checkpoint['finalized_through']}.zip" if checkpoint else None
+    if checkpoint and not archive_path.exists():
+        raise ValueError('Confirmed input archive missing; no historical replay changes allowed')
+    with zipfile.ZipFile(archive_path) if checkpoint else nullcontext(None) as archive:
+        for code in dict.fromkeys([*codes,'SPY']):
+            fresh=_read_csv(SRC/f'{code}.csv')
+            if archive:
+                cutoff=checkpoint['finalized_through'].replace('-','')
+                frozen=list(csv.DictReader(io.StringIO(archive.read('ohlcv/'+code+'.csv').decode('utf-8-sig'))))
+                prefix=[r for r in frozen if r['date']<=cutoff]
+                by_day={r['date']:r for r in fresh}
+                if prefix and prefix[-1]['date'] in by_day:
+                    prior=float(prefix[-1]['close']);current=float(by_day[prefix[-1]['date']]['close'])
+                    if abs(current/prior-1)>.005:
+                        raise ValueError(f'{code}: confirmed price basis changed; review required')
+                fresh=prefix+[r for r in fresh if r['date']>cutoff]
+            _write_csv(source/f'{code}.csv',['date','open','high','low','close','volume'],fresh)
     for code in codes:
         _convert(a, code, code)
     _convert(a, "SPY", "KOSPI")  # the engine's benchmark file name
@@ -118,21 +144,8 @@ def prepare(a: Account, codes: list[str]) -> None:
 
 
 def replay(a: Account, names: dict[str, str]):
-    from . import benchmark_comparison as bc
-    from .validation_backtest import BacktestEngine
-    saved = os.environ.get("MIN_TRADING_VALUE")
-    os.environ["MIN_TRADING_VALUE"] = MIN_TRADING_VALUE_CENTS
-    try:
-        engine = BacktestEngine(data_dir=a.work_dir / "ohlcv", report_dir=a.work_dir,
-                                score_weights=json.loads(a.path("config.json").read_text("utf-8"))["weights"],
-                                names=names, pit_store_path=a.work_dir / "none.sqlite3")
-        sim = bc.PortfolioSimulator(engine, CAPITAL_USD * 100, 10.0, apply_live_constraints=False)
-        sim.days = [d for d in sim.days if d >= a.start_signal_day]
-        if not sim.days:
-            return engine, sim, None
-        return engine, sim, sim.run("stock_alarm", sim.build_candidate_cache(), 20260828, liquidate_at_end=False)
-    finally:
-        os.environ.pop("MIN_TRADING_VALUE", None) if saved is None else os.environ.__setitem__("MIN_TRADING_VALUE", saved)
+    from .us_engine import module
+    return module('us_strategy_account').replay(a,names)
 
 
 def decision_rows(result) -> list[dict]:
@@ -185,10 +198,37 @@ def check_finalized(a: Account, result) -> list[str]:
     return problems
 
 
-def validate(codes: list[str], previous_counts: dict, today: date | None = None) -> tuple[list[str], dict, list[dict]]:
+def migrate_legacy_engine(a: Account) -> dict:
+    """Bind the legacy source-exact engine only after its confirmed replay matches."""
+    from .us_engine import SOURCE_REVISION
+    old=json.loads(a.path('config.json').read_text('utf-8'))
+    new=current_config(a)
+    if old==new:return {'account':a.key,'state':'already_bound'}
+    legacy={key:new.get(key) for key in old}
+    if old!=legacy or old.get('engine_bundle_sha256'):
+        raise ValueError('Legacy engine/settings mismatch; automatic binding refused')
+    names=read_universe(a);prepare(a,list(names))
+    _engine,_sim,result=replay(a,names)
+    problems=check_finalized(a,result)
+    if problems:raise ValueError('Confirmed replay mismatch; binding refused: '+str(problems))
+    before=ledger_hashes(a)
+    stamp=datetime.now().strftime('%Y%m%d%H%M%S%f')
+    folder=BACKUP_DIR/'engine_binding'/f'{a.key}-{stamp}';folder.mkdir(parents=True)
+    for name in LEDGER_NAMES:
+        if a.path(name).exists():shutil.copy2(a.path(name),folder/a.path(name).name)
+    _atomic_json(a.path('config.json'),new)
+    assert ledger_hashes(a)==before
+    report={'account':a.key,'state':'bound','source_revision':SOURCE_REVISION,
+            'ledger_hashes_unchanged':before,'backup':str(folder)}
+    _atomic_json(folder/'binding.json',report)
+    return report
+
+
+def validate(codes: list[str], previous_counts: dict, today: date | None = None, expected_day=None, finalized_through=None) -> tuple[list[str], dict, list[dict]]:
     """Structural check of the downloaded bars. Returns (halting problems, rows per series, informational anomalies)."""
     today = today or date.today()
     problems, counts, anomalies = [], {}, []
+    latest={};available={}
     for code in dict.fromkeys(codes + ["SPY"]):
         try:
             rows = list(csv.DictReader(open(SRC / f"{code}.csv", encoding="utf-8")))
@@ -197,6 +237,8 @@ def validate(codes: list[str], previous_counts: dict, today: date | None = None)
             continue
         days = [r["date"] for r in rows]
         counts[code] = len(rows)
+        latest[code]=days[-1] if days else ''
+        available[code]=set(days)
         if not rows:
             problems.append(f"{code}: no rows")
         elif days != sorted(set(days)):
@@ -215,6 +257,14 @@ def validate(codes: list[str], previous_counts: dict, today: date | None = None)
         last = datetime.strptime(list(csv.DictReader(open(SRC / "SPY.csv", encoding="utf-8")))[-1]["date"], "%Y%m%d").date()
         if (today - last).days > SPY_STALE_DAYS:
             problems.append(f"SPY: newest bar {last} is older than {SPY_STALE_DAYS} days")
+        benchmark=latest['SPY']
+        if expected_day and benchmark!=expected_day.replace('-',''):
+            problems.append(f'SPY: incomplete session {benchmark}; expected {expected_day}')
+        required={d for d in available['SPY'] if d>(finalized_through or benchmark).replace('-','')}
+        required.add(benchmark)
+        for code in codes:
+            missing=required-available.get(code,set())
+            if missing:problems.append(f'{code}: missing benchmark sessions {sorted(missing)}; verified halt/coverage review required')
     return problems, counts, anomalies
 
 
@@ -290,7 +340,7 @@ def read_universe(a: Account) -> dict[str, str]:
     return {r["code"]: r["name_eng"] for r in csv.DictReader(open(a.path("universe.csv"), encoding="utf-8"))}
 
 
-def update(a: Account, failed: list | None = None, today: date | None = None) -> dict:
+def update(a: Account, failed: list | None = None, today: date | None = None, expected_day=None) -> dict:
     """Update one account. `failed` are the refresh failures of a shared download; None means download this account's codes."""
     freeze(a)
     if a.path("pending.json").exists():
@@ -309,7 +359,8 @@ def update(a: Account, failed: list | None = None, today: date | None = None) ->
     if frozen != now:
         write_status(a, state="config_changed", detail="strategy settings differ from the frozen config; ledgers not updated", refresh_failures=failed)
         return {"state": "config_changed"}
-    problems, counts, anomalies = validate(codes, read_status(a).get("bar_counts", {}), today)
+    checkpoint=json.loads(a.path('checkpoint.json').read_text('utf-8')) if a.path('checkpoint.json').exists() else {}
+    problems, counts, anomalies = validate(codes, read_status(a).get("bar_counts", {}), today,expected_day,checkpoint.get('finalized_through') or (date.fromisoformat(a.start_signal_day)-timedelta(days=1)).isoformat())
     if problems:
         write_status(a, state="data_problem", detail=problems[:20], refresh_failures=failed)
         return {"state": "data_problem", "problems": problems}
@@ -338,6 +389,8 @@ def update(a: Account, failed: list | None = None, today: date | None = None) ->
     a.path("pending.json").unlink()
     write_status(a, state="ok", last_day=last_day, stale_holdings=stale, refresh_failures=failed, universe=len(codes),
                  anomalies=anomalies, bar_counts=counts)
+    from .us_account_audit import snapshot
+    snapshot(a)
     backup(a)
     return {"state": "ok", "last_day": last_day}
 
@@ -362,7 +415,7 @@ def alert_if_needed(a: Account, state: str, notify) -> bool:
     return True
 
 
-def update_all(notify=None) -> dict:
+def update_all(notify=None,expected_day=None) -> dict:
     """Refresh the bars once for every account, update each account independently, then alert on problems."""
     from .us_history_collect import refresh
     for a in ACCOUNTS:
@@ -378,7 +431,8 @@ def update_all(notify=None) -> dict:
     results = {}
     for a in ACCOUNTS:
         try:
-            results[a.key] = update(a, failed) if a.path("universe.csv").exists() else {"state": "error"}
+            options={'expected_day':expected_day} if expected_day else {}
+            results[a.key] = update(a, failed,**options) if a.path("universe.csv").exists() else {"state": "error"}
         except Exception as error:
             write_status(a, state="error", detail=f"{type(error).__name__}: {error}")
             results[a.key] = {"state": "error"}

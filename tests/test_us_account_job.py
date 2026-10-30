@@ -21,6 +21,7 @@ def test_preflight_rejects_changed_frozen_settings_before_account_update(tmp_pat
     assert job.preflight() == {"test": "config_changed"}
     with pytest.raises(RuntimeError, match="frozen settings differ"):
         job.run()
+    assert strategy.read_status(account)['state']=='config_changed'
 
 
 def test_retry_skips_replay_when_both_accounts_match_latest_spy_day(tmp_path, monkeypatch):
@@ -81,7 +82,7 @@ def test_reported_account_failure_uses_single_detailed_warning(tmp_path, monkeyp
     ledger.write_text("date\n20261022\n", encoding="utf-8")
     monkeypatch.setattr(us_spy_hold, "LEDGER_PATH", str(ledger))
     monkeypatch.setattr(us_spy_hold, "update", lambda: 1)
-    monkeypatch.setattr(strategy, "update_all", lambda notify: (notify("300종목: 기록된 주문을 재현하지 못해"), {"300": {"state": "diverged"}})[1])
+    monkeypatch.setattr(strategy, "update_all", lambda notify, **_: (notify("300종목: 기록된 주문을 재현하지 못해"), {"300": {"state": "diverged"}})[1])
     from stock_alarm import us_account_audit, notifier
     monkeypatch.setattr(us_account_audit, "diagnose", lambda _: {"daily_state_differences": [{"date": "2026-10-21", "fields": {
         "pending_json": {"saved": '["CSX.O"]', "current": '["HON.O"]'}}}]})
