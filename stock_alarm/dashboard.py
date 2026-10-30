@@ -1445,6 +1445,7 @@ def experiment_progress_cards(rows: list[dict[str, str]]) -> str:
 
 
 def research_tab() -> str:
+    from .investment_dashboard import sections as investment_sections
     from .profit_research import dashboard_section as profit_research_section
     from .sell_research import dashboard_section as sell_research_section
     from .entry_research import dashboard_section as entry_research_section
@@ -1457,6 +1458,7 @@ def research_tab() -> str:
     return (
         "<div class='home-heading'><div><h2>전략 연구</h2><p class='muted'>진행 중인 실험이 판단 기준에 얼마나 다가갔는지, "
         "지금까지 무엇을 검증하고 결정했는지 봅니다.</p></div></div>"
+        + investment_sections('research')
         + profit_research_section()
         + market_regime_card()
         + experiment_progress_cards(experiment_progress_rows())
@@ -1781,6 +1783,7 @@ def status_class(value: str) -> str:
 
 
 def render() -> str:
+    from .investment_dashboard import sections as investment_sections
     logo_data_uri = dashboard_logo_data_uri()
     checks = "".join(f"<li>{e(line)}</li>" for line in daily_check_lines())
     task_log = "".join(f"<li>{e(line)}</li>" for line in tail_text("logs/task.out.log", 10))
@@ -1812,6 +1815,7 @@ def render() -> str:
 <div class="home-heading"><div><h2>오늘의 투자 현황</h2><p class="muted">추천과 가상 주문 결과를 한눈에 확인하세요.</p></div></div>
 {us_overnight_note()}
 {home_notice}
+{investment_sections('today')}
 <section class="home-operation"><h2>현재 운영 상태</h2><div class="operation-grid">
   <div><span>자동매매</span><b id="home-auto-status" class="state-badge state-neutral">확인 중</b></div>
   <div><span>장 운영 상태</span><b id="home-market-mode" class="state-badge {'state-neutral' if market_session in {'휴장', '장 종료'} else 'state-ok'}">{e(market_session)}</b></div>
@@ -1843,6 +1847,7 @@ def render() -> str:
 <div class="tracking-summary">{tracking_cards}</div>
 {details(f"재무 스크리닝 결과 · {screener_caption()}", user_table("재무 스크리닝 (관찰 전용)", screener_rows(), ["name", "market", "per", "pbr", "free_cash_flow", "revenue_growth_pct", "operating_income_growth_pct", "period"], "python -m stock_alarm.screener 를 실행하면 결과가 표시됩니다."))}
 {user_table("추천 추적 내역", tracking_rows, ["name", "pick_date", "score", "entry_price", "current_price", "return_pct", "tracking_status", "sell_alert_date", "sell_alert_price", "sell_alert_return_pct", "sell_reason", "virtual_bought"], "아직 추적할 추천종목이 없습니다.")}
+{investment_sections('signals')}
 """
     # Order: what the account is and may do now, how it got here and how the
     # comparison experiments are doing, what it holds and sold, then
@@ -1868,7 +1873,7 @@ def render() -> str:
 </div>
 <div class="trader-status" aria-live="polite"><span id="trader-price-status">가격 기준시각 확인 중</span><span>적용 전략 <b id="trader-strategy">기본 전략</b> · 일간 <b id="trader-daily-return">0.00%</b> · 주간 <b id="trader-weekly-return">0.00%</b> · 최대낙폭 <b id="trader-drawdown">0.00%</b></span></div></section>
 <div class="section-divider"><h2>현재 가상계좌 운용</h2><p class="muted">실제 알림과 가상 주문에 사용하는 계좌 상태입니다.</p></div>
-""" + equity_curve_section() + """
+""" + investment_sections('account') + equity_curve_section() + """
 <details class="observation-details"><summary>관찰용 전략 실험 보기</summary><div class="details-body">
 <p class="muted">알림과 주문에는 사용하지 않는 비교 실험입니다. 시작일이 다른 계좌의 성과는 같은 기간으로 직접 비교하지 마세요.</p>
 """ + table("규칙 비교 실험 (관찰 전용 · 알림/실주문 없음)", experiment_account_rows(), ["experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state"]) + """

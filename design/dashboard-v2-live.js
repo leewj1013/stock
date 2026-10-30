@@ -160,6 +160,40 @@ renderers.research = function () {
     `<details class="research-detail" ${detailsOpen?'open':''}><summary>계산 조건·매도 내역·전체 기록 보기</summary><div>${renderResearchDetails()}</div></details>`;
 };
 
+function insightPanel(item, opened=false) {
+  const cell = value => /^https:\/\/dart\.fss\.or\.kr\/dsaf001\/main\.do\?rcpNo=\d{14}$/.test(String(value)) ? `<a href="${value}" target="_blank" rel="noopener noreferrer">DART 원문</a>` : value;
+  const rows = (item.rows || []).map(row=>`<tr>${row.map(value=>`<td>${cell(value)}</td>`).join('')}</tr>`);
+  const body = (rows.length ? table(item.headers, rows) : `<p class="hint">${item.empty || '확인된 기록이 없습니다. 수집 상태와 비교 기준을 확인해 주세요.'}</p>`) + (item.note ? `<p class="hint">${item.note}</p>` : '');
+  const sectors = item.sectors?.length ? insightPanel({title:'업종 강세·약세',headers:['업종','등락률','기준 시각'],rows:item.sectors}) : '';
+  return opened ? `<section class="panel pad insight-summary"><h2>${item.title}</h2>${body}${sectors}</section>` : `<details class="insight-details"><summary>${item.title}</summary><div>${body}${sectors}</div></details>`;
+}
+const todayWithRecords = renderers.today;
+renderers.today = function () {
+  const html = todayWithRecords();
+  if (state.market !== 'kr') return html;
+  const data = sample.kr.todayInsights || {};
+  const overview = `<div class="insights-overview">${(data.overview || []).map(item=>insightPanel(item,true)).join('')}</div>`;
+  return html.replace('<div class="notice', overview + (data.panels || []).map(item=>insightPanel(item)).join('') + '<div class="notice');
+};
+const accountWithRecords = renderers.account;
+renderers.account = function () {
+  const html = accountWithRecords();
+  const account = sample[state.market].accounts[state.account] || {};
+  if (state.market !== 'kr' || account.source === 'real') return html;
+  const panels = (account.insights || []).map(item=>insightPanel(item)).join('');
+  return html.replace('<h2 class="section-title">현재 보유종목', panels + '<h2 class="section-title">현재 보유종목');
+};
+const signalsWithRecords = renderers.signals;
+renderers.signals = function () {
+  return signalsWithRecords() + (state.market === 'kr' ? (sample.kr.signalInsights?.panels || []).map(item=>insightPanel(item)).join('') : '');
+};
+const researchWithRecords = renderers.research;
+renderers.research = function () {
+  const html = researchWithRecords();
+  const panels = state.market === 'kr' ? (sample.kr.researchInsights?.panels || []).map(item=>insightPanel(item)).join('') : '';
+  return html.replace('<details class="research-detail"', panels + '<details class="research-detail"');
+};
+
 const loadedViews = new Set();
 const loadingViews = new Set();
 let activeSignalKey = '';

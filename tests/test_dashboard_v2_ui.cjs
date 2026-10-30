@@ -43,3 +43,12 @@ assert.match(run('renderers.account()'), /<td data-numeric class="negative">-2.0
 run(`state.market='us'; sample.us={day:'2026-10-27',accounts:[{name:'미국',kind:'가상매매',asset:'$100',cash:'$10',daily:'$+1',returnPct:'+2.00%',hold:'1종목',rows:[['종목','10%','—','+2.00%','보유 중']]}]}`);
 assert.match(run('renderers.account()'), /<td data-numeric class="positive">\+2.00%<\/td>/);
 console.log('v2 return colors: OK');
+
+const insight = run(`insightPanel(escapeData({title:'저장 <제목>',headers:['내용'],rows:[['<img src=x onerror=1>'],['https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261030000001']]}))`);
+assert.doesNotMatch(insight, /<img /);
+assert.match(insight, /&lt;제목&gt;/);
+assert.match(insight, /rel="noopener noreferrer"/);
+assert.match(insight, /DART 원문/);
+run(`state.market='kr'; state.account=0; sample.kr.accounts[0]={name:'계좌',kind:'가상',asset:'₩100',cash:'₩10',daily:'₩0',returnPct:'0%',hold:'0종목',unrealized:'₩0',priceIssues:[],rows:[],sales:[],insights:[{title:'계좌 변동 이유',headers:['항목'],rows:[['입금']]}]}`);
+assert.match(run('renderers.account()'), /계좌 변동 이유/);
+console.log('investment insights, escaping and account integration: OK');

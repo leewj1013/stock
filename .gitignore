@@ -7,6 +7,7 @@ data/stock_alarm_neutral.db
 data/dashboard_premarket.db*
 data/market_sessions.json
 data/stock_events.db*
+data/investment_calendar.db*
 data/market_sessions.tmp
 data/stock_alarm_exp_*.db
 data/sell_research*.db

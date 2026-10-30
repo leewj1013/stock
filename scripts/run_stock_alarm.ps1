@@ -110,6 +110,7 @@ if ($mode -eq "open") {
     RunFreshStep "market_summary" "stock_alarm.market_summary"
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"
     RunOptionalStep "naver_market_signals" "stock_alarm.naver_market_signals"
+    RunOptionalStep "investment_calendar" "stock_alarm.investment_calendar"
 }
 if ($mode -eq "intraday") {
     RunOptionalStep "premarket_catchup" "stock_alarm.premarket_valuation"
@@ -132,6 +133,7 @@ if ($mode -eq "sell") {
 if ($mode -eq "daily") {
     RunFreshOptionalStep "positions_report" "stock_alarm.positions_report"
     RunOptionalStep "stock_events_close" "stock_alarm.stock_events"
+    RunOptionalStep "investment_calendar_close" "stock_alarm.investment_calendar"
 }
 if ($mode -eq "daily" -or $mode -eq "performance") {
     RunOptionalStep "market_group_snapshot" "stock_alarm.market_group_snapshot"

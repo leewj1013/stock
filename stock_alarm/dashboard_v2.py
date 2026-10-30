@@ -18,6 +18,7 @@ from .market_sessions import label as session_label
 from .stock_events import display as stock_event_display
 from .us_dashboard import STALE_DAYS, STATE_LABELS, max_drawdown_pct, read_csv, read_ledger, read_strategy
 from .us_strategy_account import ACCOUNTS
+from .investment_dashboard import data as investment_data
 
 
 def _money(value: float | int | None, market: str, signed: bool = False) -> str:
@@ -361,12 +362,17 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
                     or filter_name == "매도 신호" and "매도" in row["signal"]
                     or filter_name == "추적 중" and "추적" in row["status"])
                 and term in f"{row['name']} {row['ticker']} {row['reason']}".casefold()]
-        return {"signalHistory": rows[page * 20:(page + 1) * 20], "signalHistoryTotal": len(rows)}
+        return {"signalHistory": rows[page * 20:(page + 1) * 20], "signalHistoryTotal": len(rows),
+                **({'signalInsights': investment_data('signals')} if market == 'kr' else {})}
 
     now = datetime.now()
     if market == "kr":
         if view == "account":
-            return {"accounts": [_kr_account(key, label) for key, label in (("aggressive", "적극투자형"), ("neutral", "위험중립형"))]}
+            accounts = [_kr_account(key, label) for key, label in (("aggressive", "적극투자형"), ("neutral", "위험중립형"))]
+            details = investment_data('account')['accounts']
+            for account, detail in zip(accounts, details):
+                account['insights'] = detail['panels']
+            return {"accounts": accounts}
         if view == "compare":
             curves = [(label, time_weighted_returns(PROFILES[key]["db_path"]))
                       for key, label in (("aggressive", "적극투자형"), ("neutral", "위험중립형"))]
@@ -385,7 +391,8 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
             accounts = [_kr_account(key, label, include_sales=False) for key, label in (("aggressive", "적극투자형"), ("neutral", "위험중립형"))]
             research = [[row.get("experiment", "—"), row.get("risk_state", "진행 중"), row.get("progress", "—"), now.date().isoformat(), "진행"] for row in experiment_progress_rows()]
             experiments = [[row.get(key) or "기록 없음" for key in ("experiment", "rule", "since", "equity", "total_return_pct", "mdd_pct", "sharpe", "bear_return_pct", "cash_pct", "risk_state")] for row in experiment_account_rows()]
-            return {"profitResearch": profit_research_data(), "research": research, "experiments": experiments, "system": _kr_system(accounts, day)}
+            return {"profitResearch": profit_research_data(), "research": research, "experiments": experiments, "system": _kr_system(accounts, day),
+                    'researchInsights': investment_data('research')}
         picks = today_recommendation_rows()
         sells = today_sell_alert_rows()
         signals = [[r.get("name") or r.get("ticker") or "—", "매수 추천", r.get("reason") or "추천", str(r.get("created_at") or "")[-8:-3], r.get("aggressive_order_status") or "확인 중"] for r in picks]
@@ -397,7 +404,8 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
                 "accounts": [{key: value for key, value in account.items() if key not in {"rows", "sales"}} for account in accounts],
                 "signals": signals,
                 "heldSells": [[r.get("name") or r.get("ticker") or "—", r.get("aggressive_status") or "—", r.get("neutral_status") or "—"] for r in held_sells],
-                "bench": "KOSPI", "chart": kospi[-252:], "signalHistoryCount": 0, "recentDecisions": []}
+                "bench": "KOSPI", "chart": kospi[-252:], "signalHistoryCount": 0, "recentDecisions": [],
+                'todayInsights': investment_data('today')}
 
     strategies = [read_strategy(account) for account in ACCOUNTS]
     if view == "compare":

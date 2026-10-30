@@ -32,3 +32,9 @@ th[data-numeric],td[data-numeric],.metric strong,.mini-stats b,.market-item b,.m
 .research-study .hint{margin:14px 0 0}.research-detail>.page-heading,.research-detail>div>.page-heading{display:none}
 .research-pending,.research-detail{margin-top:18px}.research-detail>div{padding-top:8px}
 @media(max-width:1050px){.research-study-grid{grid-template-columns:minmax(0,1fr)}}
+/* Saved investment explanations: concise overview, expandable evidence. */
+.insights-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}
+.insight-summary{min-width:0}.insight-summary h2{margin:0 0 12px}.insight-summary table{font-size:13px}
+.insight-details{margin:12px 0}.insight-details>div{padding:16px;min-width:0}.insight-details summary{cursor:pointer}
+.insight-details td{max-width:360px;overflow-wrap:anywhere;white-space:normal}
+@media(max-width:1024px){.insights-overview{grid-template-columns:1fr}.insight-details>div{padding:12px}}
