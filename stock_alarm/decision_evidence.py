@@ -130,7 +130,11 @@ def backfill(path, limit=300):
             for row in db.execute(f'SELECT * FROM {table} ORDER BY {id_field} DESC LIMIT ?', (limit,)).fetchall():
                 append(db, kind, row[id_field], row['ticker'], row['created_at'],
                        {'execution': dict(row), 'note': '기존 체결 원장만 복원 · 당시 추가 입력·규칙 미기록'}, origin='restored')
-        runs = db.execute("SELECT run_id FROM strategy_runs WHERE run_type='recommendation' ORDER BY started_at DESC LIMIT 30").fetchall()
+        runs = db.execute('''SELECT r.run_id FROM strategy_runs r WHERE r.run_type='recommendation' AND (
+            EXISTS(SELECT 1 FROM profile_candidate_selections p WHERE p.run_id=r.run_id
+                   AND p.selected=1 AND p.profile IN ('aggressive','neutral')) OR
+            EXISTS(SELECT 1 FROM candidate_snapshots c WHERE c.run_id=r.run_id AND c.selected=1))
+            ORDER BY r.started_at DESC LIMIT 30''').fetchall()
         for run in runs:
             selected = db.execute('''SELECT c.*,p.profile,p.profile_score FROM candidate_snapshots c
                 JOIN profile_candidate_selections p USING(run_id,ticker) WHERE c.run_id=?

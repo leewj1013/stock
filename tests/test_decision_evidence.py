@@ -88,3 +88,16 @@ def test_backfill_never_claims_old_trades_were_captured_live(tmp_path):
     row = store.query_rows('SELECT * FROM decision_evidence', path=path)[0]
     assert row['origin'] == 'restored'
     assert 'rules' not in json.loads(row['payload'])
+
+
+def test_backfill_limit_counts_selected_runs_not_empty_market_filter_runs(tmp_path):
+    path = str(tmp_path / 'account.db')
+    with store.connect(path) as db:
+        for index in range(32):
+            db.execute('''INSERT INTO strategy_runs(run_id,run_type,started_at,strategy_version,schema_version,settings_json,status)
+                VALUES(?,?,?,?,?,?,?)''', (str(index),'recommendation',f'2026-10-{29 if index==0 else 30}T10:{index:02d}:00','v',9,'{}','completed'))
+        db.execute("INSERT INTO candidate_snapshots(run_id,ticker,evaluated_at,passed,selected,close) VALUES('0','A','2026-10-29T10:00:00',1,1,100)")
+    assert backfill(path) == 1
+    row = store.query_rows("SELECT * FROM decision_evidence WHERE kind='recommendation'", path=path)[0]
+    assert row['origin'] == 'restored'
+    assert json.loads(row['payload'])['candidate']['close'] == 100
