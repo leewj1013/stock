@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from stock_alarm.investment_insights import attribution, concentration, execution_quality, related_positions
 from stock_alarm.investment_calendar import collect, calendar, event_details
-from stock_alarm.investment_market import market_breadth, recommendation_changes, research_coverage
+from stock_alarm.investment_market import market_breadth, recommendation_changes, research_coverage, historical_coverage
 from stock_alarm.investment_dashboard import render_panel
 from stock_alarm.investment_insights import saved_account
 
@@ -180,3 +180,13 @@ def test_budget_exhaustion_marks_deferred_tickers_instead_of_success(tmp_path):
     path = str(tmp_path / 'events.db')
     collect(['A'], path, lambda *a, **kw: [], budget_seconds=0)
     assert '시간 제한' in calendar([{'ticker': 'A'}], path)['checks'][0][2]
+
+
+def test_historical_samples_are_labelled_separately_from_forward_samples(tmp_path):
+    folder = tmp_path / 'current_data_experiment'
+    folder.mkdir()
+    (folder / 'results.json').write_text(json.dumps({'generated_at': '2026-10-29T15:00:00', 'included': 48}), encoding='utf-8')
+    rows = historical_coverage(tmp_path)
+    assert len(rows) == 1
+    assert rows[0][1] == '48종료 거래 · 과거'
+    assert rows[0][-1] == '과거 탐색 · 전향 검증과 별개'

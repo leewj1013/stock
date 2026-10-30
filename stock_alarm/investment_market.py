@@ -1,6 +1,7 @@
 """Market breadth, recommendation changes and research coverage from saved data."""
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from .data_store import DB_PATH, query_rows
 from .investment_insights import price_bars
@@ -94,6 +95,30 @@ def market_regime(entry, bars):
     return 'bear' if values[-1] < sum(values)/60 and sum(values[-20:])/20 < sum(values)/60 else 'other'
 
 
+def historical_coverage(directory=Path('reports')):
+    """Report historical coverage separately; never add it to forward samples."""
+    rows = []
+    for slug, label in (('current_data_experiment', '익절·손절 과거 탐색'),
+                        ('target_bear_research', '목표 도달·하락장 과거 진단'),
+                        ('bear_account_research', '하락장 계좌 원장 재현')):
+        try:
+            report = json.loads((Path(directory) / slug / 'results.json').read_text(encoding='utf-8'))
+            as_of = str(report['generated_at'])[:16]
+            if slug == 'bear_account_research':
+                sample = f"{report['buys']}매수 · {report['sales']}매도"
+                period = f"{report['start']}–{report['cutoff']} · 분석 {as_of}"
+            else:
+                sample = f"{report['included']}종료 거래 · 과거"
+                period = '분석 ' + as_of + ' · 기간은 원 보고서 참조'
+            bear = f"{len(report['bear_cases'])}건 · 상세 결과 참조" if 'bear_cases' in report else '장세별 차이 미집계'
+            other = f"{report['bear_nonbear']}건 · 별도 비교 없음" if 'bear_nonbear' in report else '장세별 차이 미집계'
+            unknown = f"{report['bear_unknown']}건" if 'bear_unknown' in report else '미집계'
+            rows.append([label, sample, period, bear, other, unknown, '과거 탐색 · 전향 검증과 별개'])
+        except (OSError, KeyError, TypeError, ValueError):
+            continue
+    return rows
+
+
 def research_coverage(bars_fn=price_bars):
     from .profit_research import LABELS, DIP_LABELS, PATH, DIP_PATH
     rows = []
@@ -122,4 +147,4 @@ def research_coverage(bars_fn=price_bars):
                          grouped('bear'), grouped('other'),
                          f"{sum(regime=='unknown' for _,_,regime in eligible)}건",
                          '전향 관찰 · 독립 검증 전' if eligible else '표본 누적 대기'])
-    return {'rows': rows, 'note': '완료·오류 없는 거래만 집계. 수치는 기존 청산 대비 거래별 평균 순수익률 차이이며 계좌 수익률이 아닙니다. 하락장은 진입 직전 완료 KOSPI 종가와 20일선이 모두 60일선 아래인 경우, 나머지는 상승·횡보 포함입니다. 같은 종목·기간의 표본은 독립이 아니며 자동 매매 채택 근거로 확정하지 않습니다.'}
+    return {'rows': rows + historical_coverage(), 'note': '신규 관찰은 완료·오류 없는 적격 거래/등록 수, 과거 탐색은 기존 보고서의 분석 표본을 따로 표시하며 합산하지 않습니다. 수치는 기존 청산 대비 거래별 평균 순수익률 차이이며 계좌 수익률이 아닙니다. 하락장은 진입 직전 완료 KOSPI 종가와 20일선이 모두 60일선 아래인 경우, 나머지는 상승·횡보 포함입니다. 같은 종목·기간의 표본은 독립이 아니며 자동 매매 채택 근거로 확정하지 않습니다.'}
