@@ -15,7 +15,7 @@ marketChart = function () {
 
 renderers.today = function () {
   const d = sample[state.market], buys = d.signals.filter(x => x[1] === '매수 추천').length, sells = d.signals.filter(x => x[1] === '매도 검토').length;
-  const notice = state.market === 'us' ? `최근 전략 결정 ${d.signalHistoryCount}건 · 상세 기록은 추천·신호에서 확인` : `저장된 매수 추천 ${buys}건 · 매도 검토 ${sells}건`;
+  const notice = state.market === 'us' ? `${d.accounts.filter(a=>a.ledgerDay).map(a=>`${a.name} (${a.ledgerDay} 마감 기준 · ${a.freshness || "갱신 상태 미확인"})${a.updateState && a.updateState !== "ok" ? " · 갱신 확인 필요" : ""} · 다음 시가 매수 대기: ${a.pendingBuys?.join(", ") || "없음"}`).join(" / ") || "전략 장부 기준일 미확인"}` : `저장된 매수 추천 ${buys}건 · 매도 검토 ${sells}건`;
   const virtual = d.accounts.filter(a=>a.source!=='real');
   const price = state.market === 'kr' ? `<div class="account-info"><b>가상계좌 가격 점검</b> · ${virtual.map(a=>`${a.name} ${a.priceAsOf || '기록 없음'}`).join(' / ')} · 확인 필요 ${virtual.reduce((n,a)=>n+(a.priceIssues?.length||0),0)}종목 <a href="#account" data-link="account">계좌에서 확인 →</a></div>` : '';
   const heldSells = state.market === 'kr' && d.heldSells.length ? `<section class="panel pad held-sells-panel"><div class="panel-head"><h2>보유종목 매도 신호</h2><small>${d.heldSells.length}건</small></div>${table(['종목','적극투자형','위험중립형'],d.heldSells.map(x=>`<tr>${x.map((v,i)=>`<td class="${i===0?'name':''}">${v}</td>`).join('')}</tr>`),'held-sells',15)}</section>` : '';
@@ -42,23 +42,77 @@ renderers.signals = function () {
   return heading('추천·신호','지금까지 저장된 국내 추천·매도 알림과 미국 전략 결정 기록입니다.') + `<section class="panel pad signal-grid"><div class="toolbar"><div class="chips">${(domestic?['전체','매도 신호','추적 중']:['전체','매수 추천','매도 신호','추적 중']).map(x=>`<button type="button" data-filter="${x}" aria-pressed="${state.filter===x}">${x}</button>`).join('')}</div><input class="search" type="search" aria-label="종목 검색" placeholder="종목·이유 검색"></div><p class="hint">현재 조건 ${total}건 · 최근 기록부터 표시${domestic?' · 전체는 추천일·종목당 한 행이며 매도 알림을 함께 표시합니다. 개별 알림은 매도 신호 탭에서 확인하세요. 현재가는 마지막 저장 추적가입니다. 매도 신호일·알림가는 실제 체결 기록이 아닙니다.':''}</p>${body.length ? table(headers,body) + pager : '<div class="empty">해당 조건의 저장 기록이 없습니다.</div>'}</section>`;
 };
 
-function comparisonChart() {
-  const data = sample[state.market].compareChart || {days:[],series:[]};
-  if (data.days.length < 2 || !data.series.length) return '<div class="empty">비교할 공통 거래일 기록이 부족합니다.</div>';
-  const all = data.series.flatMap(s=>s.values).concat(0), low = Math.min(...all), high = Math.max(...all), span = high-low || 1;
-  const y = v => 20+(high-v)/span*170;
-  const grid = [0,1,2,3].map(i=>{const value=high-span*i/3, pos=y(value).toFixed(1);return `<path d="M52 ${pos}H420" stroke="#e5eaed" stroke-dasharray="2 3"/>`}).join('');
-  const labels = [0,1,2,3].map(i=>{const value=high-span*i/3;return `<span class="axis-y axis-${i}">${value.toFixed(1)}%</span>`}).join('');
-  const lines = data.series.map(s=>`<polyline points="${s.values.map((v,i)=>`${(52+i*360/(data.days.length-1)).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
-  const legend = data.series.map((s,i)=>`<span><i class="series-${i%3}"></i>${s.label} <b class="${changeClass(s.values.at(-1))}">${s.values.at(-1).toFixed(2)}%</b></span>`).join('');
-  return `<div class="chart-key">${legend}</div><div class="chart-frame compare-frame"><svg class="compare-chart" viewBox="0 0 430 225" preserveAspectRatio="none" role="img" aria-label="${data.days[0]}부터 ${data.days.at(-1)}까지 공통 거래일 누적 수익률 비교">${grid}${lines}</svg>${labels}<span class="axis-x axis-start">${data.days[0].slice(5)}</span><span class="axis-x axis-end">${data.days.at(-1).slice(5)}</span></div>`;
+const comparisonOptions = {};
+function comparisonData() {
+  const original = sample[state.market].compareChart || {days:[],series:[]};
+  const opt = comparisonOptions[state.market] ||= {period:0, hidden:[], start:'', end:''};
+  let indices = original.days.map((_,i)=>i).filter(i=>(!opt.start || original.days[i]>=opt.start) && (!opt.end || original.days[i]<=opt.end));
+  if (opt.period) indices=indices.slice(-opt.period);
+  const series=original.series.filter((_,i)=>!opt.hidden.includes(i)).map(s=>{
+    const base=1+Number(s.values[indices[0]])/100;
+    const values=indices.map(i=>((1+Number(s.values[i])/100)/base-1)*100);
+    let peak=1;
+    const drawdowns=values.map(v=>{const equity=1+v/100;peak=Math.max(peak,equity);return (equity/peak-1)*100;});
+    return {...s,values,drawdowns};
+  });
+  return {days:indices.map(i=>original.days[i]),series,opt,original};
 }
+function comparisonChart() {
+  const d=comparisonData(), data=d.original;
+  const controls=`<div class="compare-controls"><div role="group" aria-label="비교 기간">${[[0,'전체'],[22,'최근 1개월'],[66,'최근 3개월']].map(([n,label])=>`<button type="button" data-compare-period="${n}" aria-pressed="${d.opt.period===n}" ${n && data.days.length<n?'disabled':''}>${label}</button>`).join('')}</div><div><label>시작 <input type="date" data-compare-date="start" value="${d.opt.start}" min="${data.days[0] || ''}" max="${data.days.at(-1) || ''}"></label> <label>종료 <input type="date" data-compare-date="end" value="${d.opt.end}" min="${d.opt.start || data.days[0] || ''}" max="${data.days.at(-1) || ''}"></label></div><div role="group" aria-label="비교 계좌">${data.series.map((s,i)=>`<button type="button" data-compare-series="${i}" aria-pressed="${!d.opt.hidden.includes(i)}">${s.label}</button>`).join('')}</div></div>`;
+  if(d.days.length<2 || !d.series.length)return controls+'<p class="empty">선택한 기간의 공통 평가일이 2개 이상 필요합니다. 계좌도 하나 이상 선택해 주세요.</p>';
+  const panel=(key,title)=>`<h3 class="compare-plot-title">${title}</h3><svg class="enhanced-compare ${key==='values'?'compare-return':'compare-drawdown'}" data-compare-chart="${key}" role="img" aria-label="${title} · ${d.days[0]}부터 ${d.days.at(-1)}"></svg>`;
+  return controls+`<p class="hint">${d.days[0]} ~ ${d.days.at(-1)} · 공통 평가일 ${d.days.length}개 · 선택 기간 첫 평가를 0%로 환산 · 국내 비용 미차감 / 미국 엔진 가정 비용 · 장중 낙폭 제외</p><div class="chart-key compare-metrics">${d.series.map(s=>`<span style="border-left:4px solid ${s.color};padding-left:6px">${s.label} <b class="${changeClass(s.values.at(-1))}">${s.values.at(-1).toFixed(2)}%</b></span>`).join('')}</div>${panel('values','누적수익률')}${panel('drawdowns','고점 대비 낙폭')}<label class="compare-date-slider">날짜별 비교 <input data-compare-index type="range" min="0" max="${d.days.length-1}" value="${d.days.length-1}" aria-label="비교 날짜"></label><output id="compare-readout">${comparisonReadout(d,d.days.length-1)}</output><details class="compare-summary"><summary>선택 기간 요약 · 수익률과 최대낙폭</summary>${table(['계좌','구간 수익률','최대낙폭'],d.series.map(s=>`<tr><td>${s.label}</td><td>${s.values.at(-1).toFixed(2)}%</td><td>${Math.min(...s.drawdowns).toFixed(2)}%</td></tr>`))}</details>`;
+}
+let comparisonResizeObserver;
+function mountComparisonCharts() {
+  comparisonResizeObserver?.disconnect();
+  const charts=document.querySelectorAll('[data-compare-chart]');
+  if(!charts.length)return;
+  const draw=svg=>{
+    const d=comparisonData(),key=svg.dataset.compareChart;
+    const width=Math.max(240,svg.getBoundingClientRect().width),height=key==='values'?200:112;
+    const left=62,right=width-16,top=14,bottom=height-28;
+    const all=d.series.flatMap(s=>s[key]).concat(0),low=Math.min(...all),high=Math.max(...all),span=high-low||1;
+    const y=v=>top+(high-v)/span*(bottom-top),x=i=>left+i*(right-left)/(d.days.length-1);
+    const ticks=key==='values'?4:3;
+    svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+    svg.setAttribute('height',height);
+    svg.innerHTML=`<g fill="#52616d" font-size="12">${Array.from({length:ticks},(_,i)=>{const v=high-span*i/(ticks-1);return `<line x1="${left}" x2="${right}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e9ee"/><text x="${left-9}" y="${y(v)+4}" text-anchor="end">${v.toFixed(1)}%</text>`;}).join('')}${d.series.map(s=>`<polyline points="${s[key].map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2" vector-effect="non-scaling-stroke"><title>${s.label}</title></polyline>`).join('')}<text x="${left}" y="${height-6}">${width<500?d.days[0].slice(5):d.days[0]}</text><text x="${right}" y="${height-6}" text-anchor="end">${width<500?d.days.at(-1).slice(5):d.days.at(-1)}</text></g>`;
+  };
+  comparisonResizeObserver=new ResizeObserver(entries=>entries.forEach(e=>draw(e.target)));
+  charts.forEach(svg=>{draw(svg);comparisonResizeObserver.observe(svg);});
+}
+function comparisonReadout(d,i) {
+  return `<b>${d.days[i]}</b> · `+d.series.map(s=>`${s.label}: ${s.values[i].toFixed(2)}% · 낙폭 ${s.drawdowns[i].toFixed(2)}%`).join(' / ');
+}
+document.addEventListener('click',event=>{
+  const el=event.target.closest('[data-compare-period],[data-compare-series]');if(!el)return;
+  const opt=comparisonData().opt;
+  if(el.dataset.comparePeriod!==undefined){opt.period=Number(el.dataset.comparePeriod);opt.start='';opt.end='';}
+  else {const n=Number(el.dataset.compareSeries);opt.hidden=opt.hidden.includes(n)?opt.hidden.filter(i=>i!==n):[...opt.hidden,n];}
+  render();
+});
+document.addEventListener('change',event=>{
+  const el=event.target;if(!el.matches('[data-compare-date]'))return;
+  const opt=comparisonData().opt;opt[el.dataset.compareDate]=el.value;opt.period=0;render();
+});
+document.addEventListener('input',event=>{
+  if(event.target.matches('[data-compare-index]'))document.querySelector('#compare-readout').innerHTML=comparisonReadout(comparisonData(),Number(event.target.value));
+});
+document.addEventListener('pointermove',event=>{
+  const svg=event.target.closest('[data-compare-chart]');if(!svg)return;
+  const rect=svg.getBoundingClientRect(),d=comparisonData();
+  const i=Math.max(0,Math.min(d.days.length-1,Math.round((event.clientX-rect.left-62)/(rect.width-78)*(d.days.length-1))));
+  document.querySelector('#compare-readout').innerHTML=comparisonReadout(d,i);
+  document.querySelector('[data-compare-index]').value=i;
+});
 
 renderers.compare = function () {
   const d = sample[state.market];
   const pct = value => value === '기록 없음' ? value : `${value}%`;
   const experiments = `<h2 class="section-title">관찰용 실험 계좌 · 위험지표</h2><section class="panel pad">${d.experiments.length?table(['실험 계좌','시작일','현재 자산','총수익률','최대낙폭','샤프지수','상태'],d.experiments.map(x=>`<tr><td class="name">${x[0]}</td><td>${x[2]}</td><td>${x[3]}</td><td class="${changeClass(x[4])}">${pct(x[4])}</td><td>${pct(x[5])}</td><td>${x[6]}</td><td>${x[9]}</td></tr>`),'experiments',15):'<div class="empty">실험 계좌 기록이 없습니다.</div>'}</section><p class="hint">관찰 전용 계좌입니다. 시작일이 다르면 총수익률을 직접 비교하지 마세요. 미국 최대낙폭은 저장된 첫 평가일 이후 기준이며 샤프지수는 수익률 기록이 20개 이상일 때 표시합니다.</p>`;
-  return heading('성과 비교','공통 거래일을 시작점 0%로 맞춰 계좌와 지수를 비교합니다.') + `<section class="panel pad"><div class="panel-head"><h2>같은 기간의 누적 수익률</h2><small>${d.compareChart.days.length}거래일</small></div>${comparisonChart()}</section><h2 class="section-title">계좌별 현재 기록</h2><section class="panel pad">${table(['계좌','총자산',state.market==='kr'?'입금액 대비 수익률':'누적 수익률',state.market==='kr'?'최근 저장 평가 변화':'최근 평가 변화'],d.accounts.filter(a=>a.source!=='real').map(a=>`<tr><td class="name">${a.name}</td><td>${a.asset}</td><td class="${changeClass(a.returnPct)}">${a.returnPct}</td><td class="${changeClass(a.daily)}">${a.daily}</td></tr>`))}</section>${experiments}<div class="footer-note">차트는 입금 영향을 제거한 국내 가상계좌 수익률과 미국 전략·SPY 장부의 공통 날짜만 사용합니다.</div>`;
+  return heading('성과 비교','공통 거래일을 시작점 0%로 맞춰 계좌와 지수를 비교합니다.') + `<section class="panel pad compare-compact"><div class="panel-head"><h2>같은 기간의 누적 수익률</h2><small>${comparisonData().days.length}개 평가일</small></div>${comparisonChart()}</section><h2 class="section-title">계좌별 현재 기록</h2><section class="panel pad">${table(['계좌','총자산',state.market==='kr'?'입금액 대비 수익률':'누적 수익률',state.market==='kr'?'최근 저장 평가 변화':'최근 평가 변화'],d.accounts.filter(a=>a.source!=='real').map(a=>`<tr><td class="name">${a.name}</td><td>${a.asset}</td><td class="${changeClass(a.returnPct)}">${a.returnPct}</td><td class="${changeClass(a.daily)}">${a.daily}</td></tr>`))}</section>${experiments}<div class="footer-note">차트는 입금 영향을 제거한 국내 가상계좌 수익률과 미국 전략·SPY 장부의 공통 날짜만 사용합니다.</div>`;
 };
 
 renderers.account = function () {
@@ -67,7 +121,11 @@ renderers.account = function () {
   if (a.source !== 'real') {
     const domestic = state.market === 'kr';
     const headers = domestic ? ['종목','수량','보유 비중','보유일수','평균매수가','저장 평가가','가격 관측 시각','평가손익','수익률','매도 감시상태','손절 기준','20일선'] : ['종목','보유 비중','평가손익','수익률','상태'];
-    return heading('계좌','계좌별 자산과 보유종목의 저장 기록을 확인합니다.') + choices + `<div class="account-info"><b>${a.name}</b> · ${a.kind}</div><div class="wide-metrics">${metric('총자산',a.asset)}${metric(domestic?'최근 저장 평가 변화':'최근 평가 변화',a.daily)}${metric('현금',a.cash)}${metric(domestic?'입금액 대비 수익률':'누적 수익률',a.returnPct)}</div><h2 class="section-title">현재 보유종목 · ${a.hold}</h2><section class="panel pad">${a.rows.length ? table(headers,a.rows.map(row=>`<tr>${row.map((cell,i)=>`<td class="${i===0?'name':(domestic?[7,8]:[2,3]).includes(i)?changeClass(cell):''}">${cell}</td>`).join('')}</tr>`),'holdings',15) : '<div class="empty">보유종목 기록이 없습니다.</div>'}</section>${domestic?`<p class="hint">${a.marketSession || ""} · ${a.premarketStatus || "장전 조회 대기"} · 가격 관측 ${a.priceOldestAt || a.priceAsOf} ~ ${a.priceAsOf} · 가격 확인 필요 ${a.priceIssues.length}종목${a.priceIssues.length?` (${a.priceIssues.join(', ')})`:''} · 총자산과 종목별 손익은 같은 저장가격으로 계산합니다. 유효 가격이 없는 종목이 있으면 계좌 평가액·수익률을 표시하지 않습니다. 최근 저장 평가 변화는 과거 계좌 평가 기록 간 차이입니다.</p><h2 class="section-title">매도 내역 · 누적 실현손익 ${a.realized}</h2><section class="panel pad">${a.sales.length?table(['매도일','종목','구분','수량','매도가','실현손익','수익률','사유'],a.sales.map(row=>`<tr>${row.map((cell,i)=>`<td class="${i===1?'name':i===7?'reason':[5,6].includes(i)?changeClass(cell):''}">${cell}</td>`).join('')}</tr>`),'sales',15):'<div class="empty">저장된 매도 내역이 없습니다.</div>'}</section>`:''}`;
+    const notices = domestic ? [
+      a.priceIssues?.length && `가격 확인 필요: ${a.priceIssues.join(', ')}${a.asset === '기록 없음' ? ' · 총자산 평가 불가' : ''}`,
+      a.eventIssues?.length && `매매 보류: ${a.eventIssues.join(', ')}`
+    ].filter(Boolean) : [];
+    return heading('계좌','계좌별 자산과 보유종목의 저장 기록을 확인합니다.') + choices + `<div class="account-info"><b>${a.name}</b> · ${a.kind} · ${domestic ? "거래비용 미차감 장부" : (a.costBasis || "비용 기준 미확인")}${!domestic && a.updateState && a.updateState !== "ok" ? ` · 갱신 확인 필요 (${a.updateState})` : ""}${!domestic && a.ledgerDay ? ` · 장부 기준 ${a.ledgerDay} · 미실현 가격손익 ${a.unrealized}` : ""}${domestic && a.rows.length ? ` · 최근 가격 관측 ${a.priceAsOf || "기록 없음"}` : ""}</div>${notices.length ? `<p class="account-info"><strong>확인 필요</strong> · ${notices.join(" / ")}</p>` : ""}<div class="wide-metrics">${metric('총자산',a.asset)}${metric(domestic?'최근 저장 평가 변화':'최근 평가 변화',a.daily)}${metric('현금',a.cash)}${metric(domestic?'입금액 대비 수익률':'누적 수익률',a.returnPct)}</div><h2 class="section-title">현재 보유종목 · ${a.hold}</h2><section class="panel pad">${a.rows.length ? table(domestic ? [headers[0],headers[1],headers[4],headers[5],headers[7],headers[8]] : headers,a.rows.map(row=>`<tr>${(domestic ? [row[0],row[1],row[4],row[5],row[7],row[8]] : row).map((cell,i)=>`<td class="${i===0?'name':(domestic?[4,5]:[2,3]).includes(i)?changeClass(cell):''}">${cell}</td>`).join('')}</tr>`),'holdings',15) : '<div class="empty">보유종목 기록이 없습니다.</div>'}</section>${domestic?`<details class="research-detail"><summary>가격 점검 상세</summary><p class="hint">${a.marketSession || ""} · ${a.premarketStatus || "장전 조회 대기"} · 가격 관측 ${a.priceOldestAt || a.priceAsOf} ~ ${a.priceAsOf} · 가격 확인 필요 ${(a.priceIssues || []).length}종목${(a.priceIssues || []).length?` (${a.priceIssues.join(', ')})`:''} · 총자산과 종목별 손익은 같은 저장가격으로 계산합니다. 유효 가격이 없는 종목이 있으면 계좌 평가액·수익률을 표시하지 않습니다. 최근 저장 평가 변화는 과거 계좌 평가 기록 간 차이입니다.</p>${a.rows.length ? table([headers[0],headers[2],headers[3],...headers.slice(9),headers[6]],a.rows.map(row=>`<tr>${[row[0],row[2],row[3],...row.slice(9),row[6]].map(cell=>`<td>${cell}</td>`).join('')}</tr>`),'holding-checks',15) : ''}</details><details class="research-detail"><summary>누적 실현손익 ${a.realized || "기록 없음"} · 매도 내역 보기</summary><section class="panel pad">${a.sales?.length?table(['매도일','종목','구분','수량','매도가','실현손익','수익률','사유'],a.sales.map(row=>`<tr>${row.map((cell,i)=>`<td class="${i===1?'name':i===7?'reason':[5,6].includes(i)?changeClass(cell):''}">${cell}</td>`).join('')}</tr>`),'sales',15):'<div class="empty">저장된 매도 내역이 없습니다.</div>'}</section></details>`:''}`;
   }
   const intro = heading('계좌','토스증권 국내주식 실계좌를 읽기 전용으로 조회합니다.') + choices;
   if (a.connected === null) return intro + '<section class="panel pad"><div class="empty">실계좌를 조회하고 있습니다.</div></section>';
@@ -175,14 +233,6 @@ renderers.today = function () {
   const data = sample.kr.todayInsights || {};
   const overview = `<div class="insights-overview">${(data.overview || []).map(item=>insightPanel(item,true)).join('')}</div>`;
   return html.replace('<div class="notice', overview + (data.panels || []).map(item=>insightPanel(item)).join('') + '<div class="notice');
-};
-const accountWithRecords = renderers.account;
-renderers.account = function () {
-  const html = accountWithRecords();
-  const account = sample[state.market].accounts[state.account] || {};
-  if (state.market !== 'kr' || account.source === 'real') return html;
-  const panels = (account.insights || []).map(item=>insightPanel(item)).join('');
-  return html.replace('<h2 class="section-title">현재 보유종목', panels + '<h2 class="section-title">현재 보유종목');
 };
 const signalsWithRecords = renderers.signals;
 renderers.signals = function () {

@@ -141,6 +141,23 @@ def _kr_account(key: str, name: str, include_sales: bool = True) -> dict:
     return {"name": name, "kind": "가상매매 · 현재 잔량 × 최신 저장가격", "asset": _money(total, "kr"), "daily": _money(recent_change, "kr", True), "cash": _money(state.get("cash", 0), "kr"), "marketValue": _money(state["holdings_value"], "kr"), "unrealized": _money(state["unrealized_profit_loss"], "kr", True), "hold": f"{len(rows)}종목", "returnPct": _pct(state['total_return_pct']), "priceAsOf": state['price_updated_at'].replace("T", " ")[:16] or "기록 없음", "priceOldestAt": state['price_oldest_at'].replace("T", " ")[:16] or "기록 없음", "priceIssues": price_issues, "premarketStatus": refresh_label(refresh_status), "marketSession":session_label(), "eventIssues":event_issues, "premarketCheck": refresh_check(refresh_status), "realized": _money(state["realized_profit_loss"], "kr", True), "sales": sales, "rows": rows}
 
 
+def us_update_label(ledger_day, now=None):
+    from datetime import timedelta, timezone
+    now = now or datetime.now().astimezone()
+    try:
+        calendar = read_csv("reports/research/us-source-validation/nyse_sessions.csv")
+        if not calendar or now.date().isoformat() > calendar[-1]["session"]:
+            return "거래일 달력 확인 필요"
+        # The retry job finishes at 07:45 KST; allow 15 minutes before flagging a delay.
+        due = [r["session"] for r in calendar if now >= max(
+            datetime.fromisoformat(r["market_close"]) + timedelta(minutes=15),
+            datetime.fromisoformat(r["market_close"]).astimezone(timezone(timedelta(hours=9))).replace(hour=8, minute=0))]
+        expected = max(due, default="")
+        return "갱신 지연 · " + expected + " 마감 자료 확인" if ledger_day < expected else "최신 확정 장부"
+    except (OSError, ValueError, KeyError):
+        return "거래일 달력 확인 필요"
+
+
 def _us_account(account, data: dict | None = None) -> dict:
     data = data if data is not None else read_strategy(account)
     equity = data["equity"]
@@ -149,8 +166,22 @@ def _us_account(account, data: dict | None = None) -> dict:
     last = equity[-1]
     asset, cash = float(last["equity_usd"]), float(last["cash_usd"])
     daily = asset - float(equity[-2]["equity_usd"]) if len(equity) > 1 else None
-    rows = [[data["names"].get(h["ticker"], h["ticker"]), f"{float(h['shares']) * float(h['last_usd']) / asset * 100:.1f}%" if asset else "—", "—", _pct(h.get("return_pct")), "보유 중"] for h in data["holdings"]]
-    return {"name": account.label, "kind": "가상매매", "asset": _money(asset, "us"), "daily": _money(daily, "us", True), "cash": _money(cash, "us"), "marketValue": _money(asset - cash, "us"), "unrealized": "기록 없음", "hold": f"{len(rows)}종목", "returnPct": _pct(last.get("return_pct")), "rows": rows}
+    rows, profits = [], []
+    for h in data["holdings"]:
+        shares, mark = float(h["shares"]), float(h["last_usd"])
+        pnl = (mark - float(h["entry_usd"])) * shares if h.get("entry_usd") else None
+        profits.append(pnl)
+        rows.append([data["names"].get(h["ticker"], h["ticker"]), f"{shares * mark / asset * 100:.1f}%" if asset else "—",
+                     _money(pnl, "us", True), _pct(h.get("return_pct")), "보유 중"])
+    return {"name": account.label, "kind": "가상매매", "asset": _money(asset, "us"), "daily": _money(daily, "us", True),
+            "cash": _money(cash, "us"), "marketValue": _money(asset - cash, "us"),
+            "unrealized": _money(sum(profits) if all(p is not None for p in profits) else None, "us", True),
+            "hold": f"{len(rows)}종목", "returnPct": _pct(last.get("return_pct")), "rows": rows,
+            "ledgerDay": last["date"], "pendingBuys": (last.get("pending") or "").split(),
+            "costBasis": "엔진 가정 비용 반영 · 실제 체결비용 미확인",
+            "updateState": data.get("status", {}).get("state", "unknown"),
+            "updatedAt": data.get("status", {}).get("updated_at", ""),
+            "freshness": us_update_label(last["date"])}
 
 
 def _index_cache(symbol: str) -> list[tuple[str, float]]:
@@ -232,7 +263,7 @@ def _cached_signal_history(market: str, signature: tuple) -> list[dict]:
 def _comparison_chart(curves: list[tuple[str, dict[str, float]]]) -> dict:
     if not curves or any(len(points) < 2 for _, points in curves):
         return {"days": [], "series": []}
-    days = sorted(set.intersection(*(set(points) for _, points in curves)))[-90:]
+    days = sorted(set.intersection(*(set(points) for _, points in curves)))
     if len(days) < 2:
         return {"days": [], "series": []}
     colors = ("#087d82", "#e9a34c", "#5873b5")
@@ -418,6 +449,25 @@ def dashboard_v2_payload(market: str | None = None, view: str = "today", *, page
         us_market = _read_us_cache()
         day = max((str(row.get("market_date") or "") for row in us_market), default="")
         research = [[account.label, strategy["status"].get("state", "기록 대기"), "장부 갱신 확인", day or "—", "진행"] for account, strategy in zip(ACCOUNTS, strategies)]
+        for account, strategy in zip(ACCOUNTS, strategies):
+            ledger_day = strategy["equity"][-1]["date"] if strategy["equity"] else ""
+            folder = Path("reports/research/us-execution") / ledger_day
+            try:
+                study = json.loads((folder / f"{account.key}.json").read_text(encoding="utf-8"))
+                paired = json.loads((folder / f"{account.key}-paired.json").read_text(encoding="utf-8"))
+                stock, etf = paired["net_pct"]
+                if study["end"] == ledger_day and paired["daily"][-1]["date"] == ledger_day:
+                    research.append([account.label + " · 다음 시가/업종 ETF", "연구", f"{ledger_day}까지 {len(paired['daily'])}개 평가일 · 업종 대비 {stock-etf:+.2f}%p · 관찰 중 · 다음 검토 11/13", ledger_day, "관찰"])
+            except (OSError, ValueError, KeyError, IndexError):
+                research.append([account.label + " · 다음 시가/업종 ETF", "대기", "해당 장부 기준일 연구 자료 대기", ledger_day, "대기"])
+        evidence_path = Path("data/us_research_entry_v2.db")
+        if evidence_path.exists():
+            import sqlite3
+            with sqlite3.connect(evidence_path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+                total, complete, days, errors = connection.execute(
+                    "SELECT count(*),sum(state='COMPLETE'),count(distinct entry_day),sum(error IS NOT NULL) FROM episodes").fetchone()
+            research.append(["미국 진입 연구", "관찰 중",
+                             f"완료 {complete or 0}/{total}건 · 고유 진입일 {days}일 · 오류 {errors or 0}건 · 다음 검토 11/13", "", "관찰"])
         return {"research": research, "experiments": _us_experiments(strategies),
                 "system": _us_system(read_ledger(), ACCOUNTS, strategies, day)}
     accounts = [_us_account(account, strategy) for account, strategy in zip(ACCOUNTS, strategies)]

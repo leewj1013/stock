@@ -989,7 +989,7 @@ def profile_total_score(values: dict, weights: dict[str, float]) -> float:
     return round(sum(category_value(category) * weight for category, weight in weights.items()), 2)
 
 
-def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, top_n: int, path: str | None = None) -> list[Pick]:
+def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, top_n: int, path: str | None = None, *, cutoff_record: dict | None = None) -> list[Pick]:
     """Re-rank the shared, already quality-filtered candidate pool with one
     profile's own category weights, volatility cap, and max-holdings limit.
     Never loosens the safety filters `evaluations` already applied -- a
@@ -1015,6 +1015,17 @@ def select_for_profile(evaluations: list[CandidateEvaluation], profile: dict, to
         from .data_store import virtual_trader_state
         held = len(virtual_trader_state(path=path or "data/stock_alarm.db").get("holdings", []))
         room = max(0, min(top_n, max_holdings - held))
+    if cutoff_record is not None:
+        by_ticker = {}
+        for score, pick in ranked:
+            by_ticker.setdefault(pick.ticker, (score, pick))
+        unique = list(by_ticker.values())
+        cutoff_record.update(room=room, top_n=top_n, eligible=len(unique), state="no_full_pair")
+        if room == top_n and top_n > 0 and len(unique) > top_n:
+            a, b = unique[top_n-1:top_n+1]
+            tied = any(sum(score == mark for score, _ in unique) > 1 for mark in (a[0], b[0]))
+            cutoff_record.update(state="tied" if tied else "await_sector_liquidity",
+                                 selected=a[1].ticker, runner=b[1].ticker, scores=[a[0], b[0]])
     result, seen = [], set()
     if room <= 0:
         return result
@@ -1046,7 +1057,24 @@ def recommend_for_profiles(end_day: date, top_n: int, min_trading_value: int, vo
     )}
     picks_by_profile: dict[str, list[Pick]] = {}
     for name, profile in PROFILES.items():
-        selected = select_for_profile(evaluations, profile, top_n, path=profile["db_path"])
+        cutoff_record = {} if name == "aggressive" else None
+        selected = select_for_profile(evaluations, profile, top_n, path=profile["db_path"], cutoff_record=cutoff_record)
+        if cutoff_record is not None:
+            try:
+                from pathlib import Path
+                import json
+                dest = Path("reports/research/2026-11-02-last-slot/forward")
+                dest.mkdir(parents=True, exist_ok=True)
+                for field in ("selected", "runner"):
+                    if field in cutoff_record:
+                        values = next(e.values for e in evaluations if e.ticker == cutoff_record[field])
+                        cutoff_record[field + "_trading_value"] = values.get("trading_value")
+                with (dest / (run_id + ".json")).open("x", encoding="utf-8") as file:
+                    json.dump(dict(run_id=run_id, day=end_day.isoformat(), **cutoff_record), file)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                print(f"last-slot research write failed: {exc}", flush=True)
         picks_by_profile[name] = selected
         selected_tickers = {pick.ticker for pick in selected}
         weights = profile.get("scoring_weights")

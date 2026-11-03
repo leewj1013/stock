@@ -15,10 +15,20 @@ SOURCE = ROOT / "reports/revalidation/2026-10-17-execution-timing"
 OUTPUT = ROOT / "reports/revalidation/2026-10-18-sell-timing"
 
 
-def next_open_run(buy_policy="existing"):
+def next_open_run(buy_policy="existing", engine_module=bc, sector_budget=False):
     """Reuse the frozen simulator with next-open sells and optional research buy filters."""
     assert buy_policy in ("existing", "positive_volume", "prior_volume_1pct")
-    source = inspect.getsource(bc.PortfolioSimulator.run)
+    source = inspect.getsource(engine_module.PortfolioSimulator.run)
+    if sector_budget:
+        anchor = "                shares = int(budget // open_price)\n"
+        assert source.count(anchor) == 1
+        source = source.replace(anchor, """                sector = self.research_sectors.get(ticker)
+                invested = sum(p["shares"] * self._open_mark(t, day, p["entry_price"]) for t, p in positions.items()
+                               if self.research_sectors.get(t) == sector)
+                if sector is None:
+                    raise ValueError(f"unmapped sector: {ticker}")
+                budget = min(budget, max(0, marked_equity * 0.30 - invested))
+""" + anchor)
     if buy_policy != "existing":
         anchor = '                if not item or float(item[1][1]) <= 0 or len(positions) >= position_limit:\n'
         assert source.count(anchor) == 1
@@ -57,7 +67,7 @@ def next_open_run(buy_policy="existing"):
     assert source.count(anchor) == 1
     source = source.replace(anchor, "        self.pending_sell_orders = dict(pending_sells)\n" + anchor)
     source = source.replace("        cash = self.initial_cash\n", "        assert not liquidate_at_end, 'Research audit leaves terminal positions marked'\n        cash = self.initial_cash\n", 1)
-    namespace = dict(vars(bc), fill_sells=fill_sells)
+    namespace = dict(vars(engine_module), fill_sells=fill_sells)
     exec(compile(textwrap.dedent(source), str(OUTPUT / "generated_run.py"), "exec"), namespace)
     return namespace["run"]
 

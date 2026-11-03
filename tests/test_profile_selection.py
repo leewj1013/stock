@@ -1,4 +1,8 @@
 import unittest
+import os
+import tempfile
+import json
+from pathlib import Path
 from datetime import date
 from unittest.mock import patch
 
@@ -97,7 +101,15 @@ class RecommendForProfilesTest(unittest.TestCase):
             "aggressive": {"db_path": "data/stock_alarm.db", "scoring_weights": {"momentum": 1.0}, "max_volatility_atr_pct": None, "max_holdings": None},
             "neutral": {"db_path": "data/stock_alarm_neutral.db", "scoring_weights": {"stability": 1.0}, "max_volatility_atr_pct": None, "max_holdings": None},
         }, clear=True):
-            picks_by_profile = recommend_for_profiles(date(2026, 9, 4), top_n=1, min_trading_value=0, volume_multiplier=1.5, run_id="run-1")
+            previous = os.getcwd()
+            with tempfile.TemporaryDirectory() as tmp:
+                try:
+                    os.chdir(tmp)
+                    picks_by_profile = recommend_for_profiles(date(2026, 9, 4), top_n=1, min_trading_value=0, volume_multiplier=1.5, run_id="run-1")
+                    evidence = json.loads(Path("reports/research/2026-11-02-last-slot/forward/run-1.json").read_text())
+                    self.assertEqual((evidence["selected"], evidence["runner"]), ("B", "A"))
+                finally:
+                    os.chdir(previous)
 
         self.assertEqual(["B"], [pick.ticker for pick in picks_by_profile["aggressive"]])
         self.assertEqual(["A"], [pick.ticker for pick in picks_by_profile["neutral"]])

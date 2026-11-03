@@ -5,7 +5,6 @@ import csv
 import json
 import os
 import sqlite3
-import urllib.request
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from html import escape
@@ -60,9 +59,10 @@ def _ticker(symbol: str) -> str:
 
 
 def _get_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": os.environ.get("SEC_USER_AGENT", "stockAlarm/1.0 research")})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
+    import requests
+    response = requests.get(url, headers={"User-Agent": os.environ.get("SEC_USER_AGENT", "stockAlarm/1.0 research")}, timeout=20)
+    response.raise_for_status()
+    return response.json()
 
 
 def sec_tickers(cache=Path(".cache/sec_company_tickers.json")) -> dict[str, str]:

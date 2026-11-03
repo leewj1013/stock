@@ -53,7 +53,7 @@ def test_refresh_updates_display_prices_only_and_deduplicates_profiles(tmp_path)
     assert state['total_equity'] == 1000
     assert state['holdings'][0]['price_data_at'] == '2026-10-29T19:59:00+09:00'
     assert status['state'] == 'completed'
-    assert '거래시장 미제공' in refresh_label(status)
+    assert '거래시장 미제공' in refresh_label(status, datetime(2026, 10, 30, 9, tzinfo=KST))
     assert ledger_hash(path) == before
     assert ledger_hash(other_path) == other_before
     later = value_saved_account(data_store.virtual_trader_state(path=path),
@@ -72,7 +72,7 @@ def test_failed_refresh_retains_previous_valid_mark_and_displays_failure(tmp_pat
     assert result['failed_tickers'] == ['A', 'B']
     assert status['state'] == 'failed'
     assert len(marks) == 2
-    assert '마지막 유효가격 유지' in refresh_label(status)
+    assert '마지막 유효가격 유지' in refresh_label(status, datetime(2026, 10, 30, 9, tzinfo=KST))
     assert value_saved_account(data_store.virtual_trader_state(path=path), [], [], marks)['total_equity'] == 1000
 
 
@@ -126,7 +126,7 @@ def test_unreadable_sidecar_does_not_break_account_read(tmp_path):
     path = tmp_path / 'invalid.db'; path.write_text('invalid', encoding='utf-8')
     marks, status = read_premarket('unused', str(path))
     assert marks == []
-    assert '확인 불가' in refresh_label(status)
+    assert '확인 불가' in refresh_label(status, datetime(2026, 10, 30, 9, tzinfo=KST))
 
 
 def test_retry_requests_only_failures_and_records_recovered_reason(tmp_path):
